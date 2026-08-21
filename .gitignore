@@ -1,0 +1,49 @@
+# ── 비밀정보 / 개인정보 (절대 커밋 금지) ──────────────────────────
+# 전화번호 토큰 → 실제 번호 매핑. 계약서 3절 개인정보 처리 규칙.
+data/private/
+.env
+.env.local
+.env.*.local
+
+# ── 수집 원본 / 생성물 ────────────────────────────────────────────
+# 크롤링한 HTML 캐시. 용량이 크고 재생성 가능하므로 저장소에 넣지 않는다.
+data/raw/
+# 데모 중 생성되는 민원 카드. 통화 내용(개인정보)이 들어간다.
+data/complaints/
+
+# ── Python ───────────────────────────────────────────────────────
+__pycache__/
+*.pyc
+*.pyo
+*.pyd
+.venv/
+venv/
+env/
+*.egg-info/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+
+# ── Node ─────────────────────────────────────────────────────────
+node_modules/
+npm-debug.log*
+yarn-error.log*
+
+# ── 에디터 / OS ──────────────────────────────────────────────────
+.DS_Store
+Thumbs.db
+.idea/
+.vscode/
+*.swp
+
+# ── 오디오 임시 파일 ─────────────────────────────────────────────
+*.tmp.wav
+*.tmp.mp3
+
+# ── 경상북도청 조직도 파생 데이터 (공공누리 제3유형 · 재배포하지 않는다) ──
+# 아래 파일은 저장소에 올리지 않는다. 이용자가 직접 스크레이퍼를 실행해 로컬에서 생성한다:
+#   python3 scripts/scrape_gb_departments.py
+# 근거: docs/DATA_LICENSE.md 2절
+data/gb_departments.json
+data/gb_departments.csv
+mcp_server/fixtures/gb_departments.json

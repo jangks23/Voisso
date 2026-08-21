@@ -1,0 +1,3189 @@
+{
+ "meta": {
+  "version": "1.0.0",
+  "region": "경상북도 (동남 방언)",
+  "register": "정중체 — 어르신 대상 공공 민원 서비스",
+  "honesty": "방언 음향 모델을 학습시키지 않았다. 어휘·어미 사전 기반 결정론적 변환이다. AI Hub 방언 코퍼스(dataSetSn=119)에서 가져온 항목은 하나도 없다 (이용정책 제5항 제3자 제공 금지 — docs/DATA_LICENSE.md §1).",
+  "entry_count": 355,
+  "rule_count": 64,
+  "license": "CC BY-SA 4.0 — voisso/dialect/SOURCES.md 참조"
+ },
+ "entries": [
+  {
+   "dialect": "또랑",
+   "standard": "도랑",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "또랑물",
+   "standard": "도랑물",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "새미",
+   "standard": "우물",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "수도물",
+   "standard": "수돗물",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "구영",
+   "standard": "구멍",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "구녕",
+   "standard": "구멍",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "수채구영",
+   "standard": "하수구",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "콧구영",
+   "standard": "콧구멍",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "고이가꼬",
+   "standard": "고여서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "맥히",
+   "standard": "막히",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수",
+   "stem": true
+  },
+  {
+   "dialect": "맥혔",
+   "standard": "막혔",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수",
+   "stem": true
+  },
+  {
+   "dialect": "멕히",
+   "standard": "막히",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수",
+   "stem": true
+  },
+  {
+   "dialect": "물끼",
+   "standard": "물기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "흑탕물",
+   "standard": "흙탕물",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "뻘",
+   "standard": "진흙",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "정낭",
+   "standard": "화장실",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "통시",
+   "standard": "변소",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "도랑치기",
+   "standard": "도랑 치우기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "장매",
+   "standard": "장마",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "소내기",
+   "standard": "소나기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "우빡",
+   "standard": "우박",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "뻔개",
+   "standard": "번개",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "앙개",
+   "standard": "안개",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "바램",
+   "standard": "바람",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "질바닥",
+   "standard": "길바닥",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "질가",
+   "standard": "길가",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "한질",
+   "standard": "큰길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "질목",
+   "standard": "길목",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "눈질",
+   "standard": "눈길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "골묵",
+   "standard": "골목",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "골묵질",
+   "standard": "골목길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "자갈질",
+   "standard": "자갈길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "논두렁질",
+   "standard": "논두렁길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "비알",
+   "standard": "비탈",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "산비알",
+   "standard": "산비탈",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "돌땡이",
+   "standard": "돌멩이",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "무너지가꼬",
+   "standard": "무너져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "신작로",
+   "standard": "큰길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "고샅",
+   "standard": "골목길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "가리등",
+   "standard": "가로등",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "정지",
+   "standard": "부엌",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "정지간",
+   "standard": "부엌",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "부석",
+   "standard": "아궁이",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "담부랑",
+   "standard": "담벼락",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "담부락",
+   "standard": "담벼락",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "삽짝",
+   "standard": "사립문",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "베람빡",
+   "standard": "벽",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "벼름빡",
+   "standard": "벽",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "천정",
+   "standard": "천장",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "구둘",
+   "standard": "구들",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "아랫묵",
+   "standard": "아랫목",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "윗묵",
+   "standard": "윗목",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "장독간",
+   "standard": "장독대",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "뒤안",
+   "standard": "뒤뜰",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "고방",
+   "standard": "광",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "슬레트",
+   "standard": "슬레이트",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "지붕때기",
+   "standard": "지붕",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "비게",
+   "standard": "베개",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "비자루",
+   "standard": "빗자루",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "그륵",
+   "standard": "그릇",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "숟구락",
+   "standard": "숟가락",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "젓구락",
+   "standard": "젓가락",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "종바리",
+   "standard": "종지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "까새",
+   "standard": "가위",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "저구리",
+   "standard": "저고리",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "두루매기",
+   "standard": "두루마기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "마실",
+   "standard": "마을",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "부락",
+   "standard": "마을",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "동사무소",
+   "standard": "행정복지센터",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "맹글",
+   "standard": "만들",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "마을행정",
+   "stem": true
+  },
+  {
+   "dialect": "나락",
+   "standard": "벼",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "지심",
+   "standard": "김",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "호매이",
+   "standard": "호미",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "짝대기",
+   "standard": "작대기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "소구시",
+   "standard": "구유",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "바심",
+   "standard": "타작",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "꼬치",
+   "standard": "고추",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "마널",
+   "standard": "마늘",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "능금",
+   "standard": "사과",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "배차",
+   "standard": "배추",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "무시",
+   "standard": "무",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "고매",
+   "standard": "고구마",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "감재",
+   "standard": "감자",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "강냉이",
+   "standard": "옥수수",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "정구지",
+   "standard": "부추",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "부루",
+   "standard": "상추",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "물외",
+   "standard": "오이",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "복숭",
+   "standard": "복숭아",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "폿",
+   "standard": "팥",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "새비",
+   "standard": "새우",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "산돼지",
+   "standard": "멧돼지",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "도야지",
+   "standard": "돼지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "달구",
+   "standard": "닭",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "달구새끼",
+   "standard": "닭",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "강생이",
+   "standard": "강아지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "송치",
+   "standard": "송아지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "괴기",
+   "standard": "고기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "멩태",
+   "standard": "명태",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "깨구리",
+   "standard": "개구리",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "까재",
+   "standard": "가재",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "소죽",
+   "standard": "쇠죽",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "빙원",
+   "standard": "병원",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "약방",
+   "standard": "약국",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "의사선생",
+   "standard": "의사",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "물팍",
+   "standard": "무릎",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "폴",
+   "standard": "팔",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "이망",
+   "standard": "이마",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "손꼬락",
+   "standard": "손가락",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "발꼬락",
+   "standard": "발가락",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "지침",
+   "standard": "기침",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "고뿔",
+   "standard": "감기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "허리빙",
+   "standard": "허리병",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "아푸",
+   "standard": "아프",
+   "pos": "형용사어간",
+   "source": "curated:민원도메인",
+   "domain": "보건의료",
+   "stem": true
+  },
+  {
+   "dialect": "아푼",
+   "standard": "아픈",
+   "pos": "관형형",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "아파가",
+   "standard": "아파서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "배아푸",
+   "standard": "배 아프",
+   "pos": "형용사어간",
+   "source": "curated:민원도메인",
+   "domain": "보건의료",
+   "stem": true
+  },
+  {
+   "dialect": "배고푸",
+   "standard": "배고프",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "보건의료",
+   "stem": true
+  },
+  {
+   "dialect": "어지렵",
+   "standard": "어지럽",
+   "pos": "형용사어간",
+   "source": "curated:민원도메인",
+   "domain": "보건의료",
+   "stem": true
+  },
+  {
+   "dialect": "씨리",
+   "standard": "시리",
+   "pos": "형용사어간",
+   "source": "curated:민원도메인",
+   "domain": "보건의료",
+   "stem": true
+  },
+  {
+   "dialect": "쑤시가",
+   "standard": "쑤셔서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "무숩",
+   "standard": "무섭",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "차부",
+   "standard": "버스터미널",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "정거장",
+   "standard": "정류장",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "뻐스",
+   "standard": "버스",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "자전차",
+   "standard": "자전거",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "추럭",
+   "standard": "트럭",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "오도바이",
+   "standard": "오토바이",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "찻삯",
+   "standard": "차비",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "빗",
+   "standard": "빚",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "금전"
+  },
+  {
+   "dialect": "헹편",
+   "standard": "형편",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "금전"
+  },
+  {
+   "dialect": "비싸가",
+   "standard": "비싸서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "금전"
+  },
+  {
+   "dialect": "할배",
+   "standard": "할아버지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "할매",
+   "standard": "할머니",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "아부지",
+   "standard": "아버지",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "아배",
+   "standard": "아버지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "어무이",
+   "standard": "어머니",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "어머이",
+   "standard": "어머니",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "어매",
+   "standard": "어머니",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "아재",
+   "standard": "아저씨",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "아지매",
+   "standard": "아주머니",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "얼라",
+   "standard": "아기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "아아",
+   "standard": "아이",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "머스마",
+   "standard": "사내아이",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "머심아",
+   "standard": "사내아이",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "가시나",
+   "standard": "계집아이",
+   "pos": "명사",
+   "source": "wikipedia:동남_방언#어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "지집아",
+   "standard": "계집아이",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "사우",
+   "standard": "사위",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "메느리",
+   "standard": "며느리",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "동상",
+   "standard": "동생",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "사램",
+   "standard": "사람",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "사램들",
+   "standard": "사람들",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사람"
+  },
+  {
+   "dialect": "지비",
+   "standard": "집",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "주거"
+  },
+  {
+   "dialect": "새복",
+   "standard": "새벽",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "저녁답",
+   "standard": "저녁때",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "아침답",
+   "standard": "아침때",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "어지",
+   "standard": "어제",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "그지께",
+   "standard": "그저께",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "올개",
+   "standard": "올해",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "낼",
+   "standard": "내일",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "시방",
+   "standard": "지금",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "인자",
+   "standard": "이제",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "언자",
+   "standard": "이제",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "언지",
+   "standard": "언제",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "어데",
+   "standard": "어디",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true,
+   "stem": true
+  },
+  {
+   "dialect": "어대",
+   "standard": "어디",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "여어",
+   "standard": "여기",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "거어",
+   "standard": "거기",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "저어",
+   "standard": "저기",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "이짝",
+   "standard": "이쪽",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "그짝",
+   "standard": "그쪽",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "저짝",
+   "standard": "저쪽",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "요짝",
+   "standard": "이쪽",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "머",
+   "standard": "뭐",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "머하",
+   "standard": "뭐 하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "머라꼬",
+   "standard": "뭐라고",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "머시",
+   "standard": "무엇이",
+   "pos": "대명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "머슨",
+   "standard": "무슨",
+   "pos": "관형사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우예",
+   "standard": "어떻게",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true
+  },
+  {
+   "dialect": "우째",
+   "standard": "어떻게",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우얀",
+   "standard": "어떤",
+   "pos": "관형사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우얄",
+   "standard": "어떡할",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우야",
+   "standard": "어떡하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "멫",
+   "standard": "몇",
+   "pos": "관형사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "을매",
+   "standard": "얼마",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "얼매",
+   "standard": "얼마",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "얼매나",
+   "standard": "얼마나",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "만다꼬",
+   "standard": "뭐 하러",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "쪼매",
+   "standard": "조금",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true
+  },
+  {
+   "dialect": "쪼깨",
+   "standard": "조금",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "째매",
+   "standard": "조금",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "억수로",
+   "standard": "아주",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "디기",
+   "standard": "되게",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "마이",
+   "standard": "많이",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true
+  },
+  {
+   "dialect": "퍼뜩",
+   "standard": "빨리",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true
+  },
+  {
+   "dialect": "언능",
+   "standard": "얼른",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "reverse": true
+  },
+  {
+   "dialect": "후딱",
+   "standard": "얼른",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "단디",
+   "standard": "제대로",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "매매",
+   "standard": "단단히",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "고마",
+   "standard": "그만",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "가차이",
+   "standard": "가까이",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "가찹",
+   "standard": "가깝",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "항꾸네",
+   "standard": "함께",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "살째기",
+   "standard": "살짝",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "참말로",
+   "standard": "정말로",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "천지삐까리",
+   "standard": "아주 많이",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "바뿌",
+   "standard": "바쁘",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "나뿌",
+   "standard": "나쁘",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "예뿌",
+   "standard": "예쁘",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "슬푸",
+   "standard": "슬프",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "모리",
+   "standard": "모르",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "맨들",
+   "standard": "만들",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "심들",
+   "standard": "힘들",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "갠찮",
+   "standard": "괜찮",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "곤치",
+   "standard": "고치",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "지둘리",
+   "standard": "기다리",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "댕기",
+   "standard": "다니",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "내삐리",
+   "standard": "내버리",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "치아",
+   "standard": "치워",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "엄따",
+   "standard": "없다",
+   "pos": "형용사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "엄써",
+   "standard": "없어",
+   "pos": "형용사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "엄는",
+   "standard": "없는",
+   "pos": "관형형",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "아이다",
+   "standard": "아니다",
+   "pos": "형용사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "아이라",
+   "standard": "아니라",
+   "pos": "형용사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "아이가",
+   "standard": "아닌가",
+   "pos": "형용사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "맞다아이가",
+   "standard": "맞잖아",
+   "pos": "감탄사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "디비",
+   "standard": "뒤집",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "챙피",
+   "standard": "창피",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "짐치",
+   "standard": "김치",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "지짐",
+   "standard": "부침개",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "부치기",
+   "standard": "부침개",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "국시",
+   "standard": "국수",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "밀가리",
+   "standard": "밀가루",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "소곰",
+   "standard": "소금",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "노물",
+   "standard": "나물",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "메역",
+   "standard": "미역",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "고디",
+   "standard": "다슬기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "음식"
+  },
+  {
+   "dialect": "물괴기",
+   "standard": "물고기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "밥그륵",
+   "standard": "밥그릇",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "마싰",
+   "standard": "맛있",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "음식",
+   "stem": true
+  },
+  {
+   "dialect": "배부리",
+   "standard": "배부르",
+   "pos": "형용사어간",
+   "source": "curated:일반어휘",
+   "domain": "음식",
+   "stem": true
+  },
+  {
+   "dialect": "묵고",
+   "standard": "먹고",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "묵는다",
+   "standard": "먹는다",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "묵었다",
+   "standard": "먹었다",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "묵어",
+   "standard": "먹어",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "묵을",
+   "standard": "먹을",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "묵지",
+   "standard": "먹지",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "무우라",
+   "standard": "먹어라",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "자시",
+   "standard": "드시",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "음식",
+   "stem": true
+  },
+  {
+   "dialect": "봉다리",
+   "standard": "봉지",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "항어리",
+   "standard": "항아리",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "소두방",
+   "standard": "솥뚜껑",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "남비",
+   "standard": "냄비",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "대아",
+   "standard": "대야",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "지팽이",
+   "standard": "지팡이",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "사물"
+  },
+  {
+   "dialect": "테레비",
+   "standard": "텔레비전",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "핸폰",
+   "standard": "휴대전화",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "사물"
+  },
+  {
+   "dialect": "시게",
+   "standard": "시계",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "열쐬",
+   "standard": "열쇠",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "사물"
+  },
+  {
+   "dialect": "씨레기",
+   "standard": "쓰레기",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "씨레기통",
+   "standard": "쓰레기통",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "내미",
+   "standard": "냄새",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "문지",
+   "standard": "먼지",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "벌거지",
+   "standard": "벌레",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "머구",
+   "standard": "모기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "고내이",
+   "standard": "고양이",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "씨끄럽",
+   "standard": "시끄럽",
+   "pos": "형용사어간",
+   "source": "curated:민원도메인",
+   "domain": "마을행정",
+   "stem": true
+  },
+  {
+   "dialect": "낭구",
+   "standard": "나무",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "낭기",
+   "standard": "나무",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "농사"
+  },
+  {
+   "dialect": "골짝",
+   "standard": "골짜기",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "도로"
+  },
+  {
+   "dialect": "고두름",
+   "standard": "고드름",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "등떠리",
+   "standard": "등",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "볼때기",
+   "standard": "볼",
+   "pos": "명사",
+   "source": "curated:일반어휘",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "옇",
+   "standard": "넣",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "델꼬",
+   "standard": "데리고",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "오이라",
+   "standard": "오너라",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "가그라",
+   "standard": "가거라",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "몬하",
+   "standard": "못하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "안카",
+   "standard": "안 하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "우짜",
+   "standard": "어쩌",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "우짤",
+   "standard": "어쩔",
+   "pos": "관형형",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우야꼬",
+   "standard": "어떡하나",
+   "pos": "감탄사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우짜꼬",
+   "standard": "어떡하나",
+   "pos": "감탄사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "이카",
+   "standard": "이렇게 하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "그카",
+   "standard": "그렇게 하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "저카",
+   "standard": "저렇게 하",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "일반",
+   "stem": true
+  },
+  {
+   "dialect": "요래",
+   "standard": "이렇게",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "댔다",
+   "standard": "됐다",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "빠져가",
+   "standard": "빠져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "고이",
+   "standard": "고여",
+   "pos": "동사",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "새가",
+   "standard": "새서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "안죽",
+   "standard": "아직",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "벌씨로",
+   "standard": "벌써",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "하매",
+   "standard": "벌써",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "여즉",
+   "standard": "여태",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "시간"
+  },
+  {
+   "dialect": "기양",
+   "standard": "그냥",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "기냥",
+   "standard": "그냥",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "그양",
+   "standard": "그냥",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "암만",
+   "standard": "아무리",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "아무캐도",
+   "standard": "아무래도",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "마카",
+   "standard": "모두",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "마캉",
+   "standard": "모두",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "모도",
+   "standard": "모두",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "혼차",
+   "standard": "혼자",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "하이고",
+   "standard": "아이고",
+   "pos": "감탄사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "참말",
+   "standard": "정말",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "맥히가",
+   "standard": "막혀서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "터지가",
+   "standard": "터져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "무너지가",
+   "standard": "무너져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "갈라꼬",
+   "standard": "가려고",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "할라꼬",
+   "standard": "하려고",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "볼라꼬",
+   "standard": "보려고",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우얍니꺼",
+   "standard": "어떡합니까",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "우야면",
+   "standard": "어떡하면",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "전화 좀 해 주이소",
+   "standard": "전화 좀 해 주세요",
+   "pos": "문장",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "좀 봐 주이소",
+   "standard": "좀 봐 주세요",
+   "pos": "문장",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "맥히가꼬",
+   "standard": "막혀서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "멕히가꼬",
+   "standard": "막혀서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "빠지가꼬",
+   "standard": "빠져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "넘치가꼬",
+   "standard": "넘쳐서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "터지가꼬",
+   "standard": "터져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "물·상하수"
+  },
+  {
+   "dialect": "패이가꼬",
+   "standard": "패어서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "도로"
+  },
+  {
+   "dialect": "패이",
+   "standard": "패",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "도로",
+   "stem": true
+  },
+  {
+   "dialect": "깨지가꼬",
+   "standard": "깨져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "떨어지가꼬",
+   "standard": "떨어져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "주거"
+  },
+  {
+   "dialect": "아파가꼬",
+   "standard": "아파서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "힘들어가꼬",
+   "standard": "힘들어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "없어가꼬",
+   "standard": "없어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "캅니더",
+   "standard": "합니다",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "캅니꺼",
+   "standard": "합니까",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "카는",
+   "standard": "하는",
+   "pos": "관형형",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "카지",
+   "standard": "하지",
+   "pos": "동사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "구장",
+   "standard": "이장",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "지서",
+   "standard": "파출소",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "우채국",
+   "standard": "우체국",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "맽기",
+   "standard": "맡기",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류",
+   "stem": true
+  },
+  {
+   "dialect": "증멩서",
+   "standard": "증명서",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "띠다",
+   "standard": "떼다",
+   "pos": "동사",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "하로",
+   "standard": "하러",
+   "pos": "동사",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "적어가",
+   "standard": "적어서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "신청·서류"
+  },
+  {
+   "dialect": "빚지가",
+   "standard": "빚져서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "금전"
+  },
+  {
+   "dialect": "모지래",
+   "standard": "모자라",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "금전",
+   "stem": true
+  },
+  {
+   "dialect": "채리",
+   "standard": "차리",
+   "pos": "동사어간",
+   "source": "curated:일반어휘",
+   "domain": "금전",
+   "stem": true
+  },
+  {
+   "dialect": "택씨",
+   "standard": "택시",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "기차질",
+   "standard": "기찻길",
+   "pos": "명사",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "내리가",
+   "standard": "내려서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "타고 가가",
+   "standard": "타고 가서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "교통"
+  },
+  {
+   "dialect": "내려와가",
+   "standard": "내려와서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "올라와가",
+   "standard": "올라와서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "돌아와가",
+   "standard": "돌아와서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "씨끄럽어가",
+   "standard": "시끄러워서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "심들어가",
+   "standard": "힘들어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "아푸가",
+   "standard": "아파서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "보건의료"
+  },
+  {
+   "dialect": "추워가",
+   "standard": "추워서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "더워가",
+   "standard": "더워서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "밟아뿟다",
+   "standard": "밟아 버렸다",
+   "pos": "동사",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  }
+ ],
+ "rules": [
+  {
+   "pattern": "습니다(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니더",
+   "desc": "합쇼체 평서 -습니다 → -습니더",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 90,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "습니더(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니다",
+   "desc": "-습니더 → -습니다",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 90,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "습니까(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니꺼",
+   "desc": "합쇼체 의문 -습니까 → -습니꺼",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 90,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "습니꺼(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니까",
+   "desc": "-습니꺼 → -습니까",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 90,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "습니껴(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니까",
+   "desc": "경북 북부 -습니껴 → -습니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 91,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "습니껴(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니껴",
+   "desc": "경북 북부(안동권) 하이소체. 강도 strong 에서만",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 92,
+   "roundtrip": true,
+   "strength": "strong"
+  },
+  {
+   "pattern": "심더(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "습니다",
+   "desc": "-심더 → -습니다 (했심더/갔심더)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 89,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])니다(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "니더",
+   "desc": "-ㅂ니다 → -ㅂ니더 (합니다→합니더)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 85,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])니더(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "니다",
+   "desc": "-ㅂ니더 → -ㅂ니다",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 85,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])니까(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "니꺼",
+   "desc": "-ㅂ니까 → -ㅂ니꺼 (합니까→합니꺼)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 85,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])니꺼(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "니까",
+   "desc": "-ㅂ니꺼 → -ㅂ니까",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 85,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])니껴(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "니까",
+   "desc": "경북 북부 -ㅂ니껴 → -ㅂ니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 86,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "아입니(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "아닙니",
+   "desc": "아입니더/아입니까 → 아닙니다/아닙니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 88,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "읍시다(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "입시더",
+   "desc": "청유 -읍시다 → -입시더",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 80,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "입시더(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "읍시다",
+   "desc": "-입시더 → -읍시다",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 80,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])시다(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "시더",
+   "desc": "청유 -ㅂ시다 → -ㅂ시더 (합시다→합시더)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 79,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[갑갭걉걥겁겝겹곕곱괍괩굅굡굽궙궵귑귭급긥깁깝깹꺕꺱껍껩꼅꼡꼽꽙꽵꾑꾭꿉꿥뀁뀝뀹끕끱낍납냅냡냽넙넵녑녭놉놥뇁뇝뇹눕눱뉍뉩늅늡늽닙답댑댭덉덥뎁뎝뎹돕돱됍됩둅둡둽뒙뒵듑듭딉딥땁땝땹떕떱뗍뗩똅똡똽뙙뙵뚑뚭뛉뛥뜁뜝뜹띕띱랍랩럅럡럽렙렵롑롭뢉뢥룁룝룹뤕뤱륍륩릅릡립맙맵먑먭멉멥몁몝몹뫕뫱묍묩뭅뭡뭽뮙뮵믑믭밉밥뱁뱝뱹법벱볍볩봅봡봽뵙뵵붑붭뷉뷥븁븝븹빕빱뺍뺩뻅뻡뻽뼙뼵뽑뽭뾉뾥뿁뿝뿹쀕쀱쁍쁩삅삡삽샙샵섑섭셉셥솁솝솹쇕쇱숍숩쉅쉡쉽슙습싑십쌉쌥썁썝썹쎕쎱쏍쏩쐅쐡쐽쑙쑵쒑쒭쓉쓥씁씝씹압앱얍얩업엡엽옙옵왑왭욉욥웁웝웹윕윱읍읩입잡잽쟙쟵접젭졉졥좁좝좹죕죱줍줩쥅쥡쥽즙즵집짭쨉쨥쩁쩝쩹쪕쪱쫍쫩쬅쬡쬽쭙쭵쮑쮭쯉쯥찁찝찹챕챱첍첩쳅쳡쳽촙촵쵑쵭춉춥췁췝췹츕츱칍칩캅캡캽컙컵켑켭콉콥쾁쾝쾹쿕쿱퀍퀩큅큡큽킙킵탑탭턉턥텁텝텹톕톱퇍퇩툅툡툽퉙퉵튑튭틉틥팁팝팹퍕퍱펍펩폅폡폽퐙퐵푑푭풉풥퓁퓝퓹픕픱핍합햅햡햽헙헵협혭홉홥횁횝횹훕훱휍휩흅흡흽힙])시더(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "시다",
+   "desc": "-ㅂ시더 → -ㅂ시다",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 79,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "세요(?=[\\s.,!…\\\"'’”\\)\\]]|$)",
+   "replace": "이소",
+   "desc": "명령 -세요 → -이소 (하세요→하이소)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 78,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "이소(?=[\\s.,!…\\\"'’”\\)\\]]|$)",
+   "replace": "세요",
+   "desc": "-이소 → -세요",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 78,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "십시오(?=[\\s.,!…\\\"'’”\\)\\]]|$)",
+   "replace": "이소",
+   "desc": "명령 -십시오 → -이소 (하십시오→하이소)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 79,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "시이소(?=[\\s.,!…\\\"'’”\\)\\]]|$)",
+   "replace": "세요",
+   "desc": "-시이소 → -세요",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 80,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "이에요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "입니더",
+   "desc": "-이에요 → -입니더 (안동이에요→안동입니더)",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 73,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "예요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "라예",
+   "desc": "-예요 → -라예 (어디예요→어디라예)",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 72,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "이라예(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "이에요",
+   "desc": "-이라예 → -이에요 (큰일이라예→큰일이에요)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 73,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "(?<!그)라예(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "예요",
+   "desc": "-라예 → -예요 (어디라예→어디예요)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 72,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "(?<![가-힣])그라예(?![가-힣])",
+   "replace": "그래요",
+   "desc": "그라예 → 그래요",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 77,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "군요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "네예",
+   "desc": "감탄 -군요 → -네예",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 76,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "네예(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "네요",
+   "desc": "-네예 → -네요",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 76,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "죠(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "지예",
+   "desc": "-죠 → -지예",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 75,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "지예(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "지요",
+   "desc": "-지예 → -지요",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 75,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "인가요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "인교",
+   "desc": "-인가요 → -인교",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 74,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "인교(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "인가요",
+   "desc": "-인교 → -인가요",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 74,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "나요(?=\\s*[?？])",
+   "replace": "능교",
+   "desc": "-나요? → -능교? (강도 높음, strong 에서만)",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 71,
+   "roundtrip": true,
+   "strength": "strong"
+  },
+  {
+   "pattern": "능교(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "나요",
+   "desc": "-능교 → -나요",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 71,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "는교(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "나요",
+   "desc": "-는교 → -나요",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 71,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![필중주수동개조소용요])요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "예",
+   "desc": "해요체 종결 -요 → -예 (있어요→있어예, 할게요→할게예)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_dialect",
+   "priority": 70,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])(?<![무서])예(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
+   "replace": "요",
+   "desc": "종결 -예 → -요",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 70,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그런데(?![가-힣])",
+   "replace": "그란데",
+   "desc": "그런데 → 그란데",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "(?<![가-힣])그란데(?![가-힣])",
+   "replace": "그런데",
+   "desc": "그란데 → 그런데",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그러면(?![가-힣])",
+   "replace": "그라믄",
+   "desc": "그러면 → 그라믄",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "(?<![가-힣])그라믄(?![가-힣])",
+   "replace": "그러면",
+   "desc": "그라믄 → 그러면",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그리고(?![가-힣])",
+   "replace": "그라고",
+   "desc": "그리고 → 그라고",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "polite"
+  },
+  {
+   "pattern": "(?<![가-힣])그라고(?![가-힣])",
+   "replace": "그리고",
+   "desc": "그라고 → 그리고",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 68,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그래가(?:꼬)?(?![가-힣])",
+   "replace": "그래서",
+   "desc": "그래가/그래가꼬 → 그래서",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 69,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그카(?:이|이까네)(?![가-힣])",
+   "replace": "그러니까",
+   "desc": "그카이/그카이까네 → 그러니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 69,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])그라이(?:까네)?(?![가-힣])",
+   "replace": "그러니까",
+   "desc": "그라이/그라이까네 → 그러니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 69,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])가꼬(?![가-힣])",
+   "replace": "가지고",
+   "desc": "-가꼬 → -가지고 (고이가꼬→고이가지고)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 64,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<!가)(?<=[져혀쳐켜])가(?![가-힣])",
+   "replace": "서",
+   "desc": "-져가/-혀가 → -져서/-혀서 (물이 빠져가→빠져서). '가져가'는 건드리지 않는다",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 63,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])이까네(?![가-힣])",
+   "replace": "니까",
+   "desc": "-이까네 → -니까",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 63,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])라꼬(?![가-힣])",
+   "replace": "려고",
+   "desc": "-라꼬 → -려고 (갈라꼬→가려고)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 63,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])(?:맨키로|맹키로|맨치로|매로)(?![가-힣])",
+   "replace": "처럼",
+   "desc": "-맨키로/-매로 → -처럼",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 62,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[다라])\\s+카(?=[데더는이노나고])",
+   "replace": "고 하",
+   "desc": "인용 '카다' → '-고 하다' (온다 카데→온다고 하데)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 61,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[다라])\\s+캤(?=[다는])",
+   "replace": "고 했",
+   "desc": "인용 '캤다' → '-고 했다'",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 61,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])뿟(?=[다습네])",
+   "replace": "버렸",
+   "desc": "-아뿟다 → -아 버렸다",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 60,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[하가오보주되사살있없몰알받나내드묵새기리지치시우추무두구러서어여려며데매배파푸뿌니비피히키미])노(?![가-힣])",
+   "replace": "니",
+   "desc": "의문사 의문 -노 → -니 (머하노→뭐 하니)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 59,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])노(?=\\s*[?？])",
+   "replace": "니",
+   "desc": "의문사 의문 -노? → -니?",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 58,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[하가오보주되사살있없몰알받내드묵새기리지치시우추무두구러서어여려며데매배])나(?=\\s*[?？])",
+   "replace": "니",
+   "desc": "판정 의문 -나? → -니? (집에 가나?→가니?)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 58,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])(어디|뭐|누구|언제|얼마)고(?=\\s*[?？])",
+   "replace": "\\1야",
+   "desc": "체언 의문 -고 → -야 (어디고?→어디야?)",
+   "source": "wikipedia:동남_방언#문법",
+   "dir": "to_standard",
+   "priority": 57,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])몬(?![가-힣])",
+   "replace": "못",
+   "desc": "몬 → 못 (몬 산다→못 산다)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 57,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])하모(?![가-힣])",
+   "replace": "그럼",
+   "desc": "하모 → 그럼 (동의 감탄사)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 56,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])힜(?=[다습네고지])",
+   "replace": "혔",
+   "desc": "-힜- → -혔- (맥힜다→막혔다)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 55,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])짔(?=[다습네고지])",
+   "replace": "졌",
+   "desc": "-짔- → -졌- (터짔다→터졌다)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 55,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])맀(?=[다습네고지])",
+   "replace": "렸",
+   "desc": "-맀- → -렸- (내리맀다→내려렸다)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 55,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<![가-힣])와(?=\\s+(?:그|안|몬|못|이래|저래|이카|그카|이라|그라))",
+   "replace": "왜",
+   "desc": "'와' → '왜' (뒤에 오는 말로 의문사인지 판별. '집에 와서'는 건드리지 않는다)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 54,
+   "roundtrip": true,
+   "strength": "light"
+  }
+ ]
+}

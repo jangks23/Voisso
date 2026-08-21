@@ -1,0 +1,6 @@
+# Voisso MCP 서버 의존성
+#
+# 라우팅 엔진(voisso/routing)과 툴 계층(mcp_server/tools.py)은 표준 라이브러리만
+# 쓴다. 아래 패키지는 공식 MCP SDK 로 서버를 띄울 때만 필요하고, 없으면
+# mcp_server/_fallback.py 의 내장 stdio 구현으로 자동 전환된다.
+mcp>=1.0

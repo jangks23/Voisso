@@ -1,0 +1,14 @@
+# Voisso 실행에 필요한 전부다.
+#
+#   python3 -m venv .venv && source .venv/bin/activate
+#   pip install -r requirements.txt
+#
+# 음성(STT/TTS)은 전용 SDK 없이 표준 라이브러리 urllib 로 REST 호출만 한다.
+# 로컬 모델 가중치를 내려받지 않으므로 디스크·메모리 부담이 없다.
+
+fastapi>=0.110
+uvicorn[standard]>=0.27
+
+# 대화·요약용 Claude API. 키가 없으면 규칙 기반 폴백으로 동작하지만,
+# 패키지 자체는 import 되어야 하므로 필수 의존성으로 둔다.
+anthropic>=0.40

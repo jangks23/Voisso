@@ -1,0 +1,148 @@
+<!doctype html>
+<html lang="ko" data-theme="light" data-size="m">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voisso — 경상북도 민원 통화</title>
+<meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
+<script>
+/* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
+(function () {
+  try {
+    var pref = localStorage.getItem('voisso.theme') || 'auto';
+    var dark = pref === 'dark' || (pref === 'auto' &&
+      window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.size = localStorage.getItem('voisso.size') || 'm';
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="styles.css">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
+</head>
+<body>
+
+<div class="phone" id="phone">
+
+  <!-- ── 상단 바 ─────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">보</span>
+      <span class="brand-text">Voisso<em>보이소</em></span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btnTextSize" type="button" title="글자 크기" aria-label="글자 크기 바꾸기">가<span class="sup">+</span></button>
+      <button class="icon-btn" id="btnTheme" type="button" title="화면 밝기" aria-label="밝은 화면 / 어두운 화면 바꾸기">◐</button>
+    </div>
+  </header>
+
+  <main class="screens">
+
+    <!-- ── 1. 대기 화면 ──────────────────────────────────── -->
+    <section class="screen is-active" id="screenIdle" aria-label="통화 시작">
+      <div class="idle-inner">
+        <p class="idle-kicker">경상북도청 민원 상담</p>
+        <h1 class="idle-title">경상북도 민원실</h1>
+        <p class="idle-sub">사투리로 편하게 말씀하시면<br>AI가 알아듣고 담당 부서로 넘겨드립니더.</p>
+
+        <button class="call-btn" id="btnCall" type="button">
+          <span class="call-ring" aria-hidden="true"></span>
+          <span class="call-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="46" height="46" fill="currentColor" aria-hidden="true">
+              <path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.7.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11.3 21 3 12.7 3 2.9c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.7.1.4 0 .8-.2 1l-2.3 2.2Z"/>
+            </svg>
+          </span>
+          <span class="call-label">전화 걸기</span>
+        </button>
+
+        <ul class="idle-points">
+          <li><b>사투리</b> 그대로 말해도 됩니더</li>
+          <li>대화만 하면 <b>민원 접수</b>까지 끝납니더</li>
+          <li>담당 부서와 <b>연결 근거</b>를 같이 보여줍니더</li>
+        </ul>
+      </div>
+      <p class="mode-chip" id="modeChip" title="서버 연결 상태"></p>
+    </section>
+
+    <!-- ── 2. 통화 화면 ──────────────────────────────────── -->
+    <section class="screen" id="screenCall" aria-label="통화 중">
+      <div class="callee">
+        <div class="callee-avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
+        </div>
+        <div class="callee-meta">
+          <strong>경상북도 민원실</strong>
+          <span id="callStatus">연결 중…</span>
+        </div>
+        <div class="callee-timer" id="callTimer">00:00</div>
+      </div>
+
+      <div class="std-switch">
+        <label class="switch">
+          <input type="checkbox" id="chkStandardAll">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="switch-label">표준어 변환 함께 보기</span>
+        </label>
+      </div>
+
+      <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
+
+      <div class="slots" id="slots">
+        <div class="slots-head">
+          <span class="slots-title">AI가 모으는 민원 정보</span>
+          <span class="slots-count" id="slotsCount">0 / 4</span>
+        </div>
+        <div class="slots-grid">
+          <div class="slot" data-slot="what"><span class="slot-key">무슨 일</span><span class="slot-val">듣는 중…</span></div>
+          <div class="slot" data-slot="where"><span class="slot-key">어디서</span><span class="slot-val">듣는 중…</span></div>
+          <div class="slot" data-slot="when"><span class="slot-key">언제부터</span><span class="slot-val">듣는 중…</span></div>
+          <div class="slot" data-slot="contact"><span class="slot-key">연락처</span><span class="slot-val">듣는 중…</span></div>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="suggestions" id="suggestions"></div>
+        <div class="composer-row">
+          <button class="mic-btn" id="btnMic" type="button" aria-label="음성으로 말하기">
+            <span class="mic-level" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V22h2v-3.1A7 7 0 0 0 19 12h-2Z"/></svg>
+          </button>
+          <input class="text-in" id="textIn" type="text" inputmode="text" autocomplete="off"
+                 placeholder="여기에 말씀을 적어도 됩니더" aria-label="할 말 입력">
+          <button class="send-btn" id="btnSend" type="button" aria-label="보내기">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z"/></svg>
+          </button>
+        </div>
+        <p class="composer-hint" id="composerHint">마이크를 눌러 말하거나, 글로 적어도 됩니더.</p>
+        <button class="end-btn" id="btnEnd" type="button">통화 끝내고 민원 접수</button>
+      </div>
+    </section>
+
+    <!-- ── 3. 결과(민원카드) 화면 ─────────────────────────── -->
+    <section class="screen" id="screenResult" aria-label="민원 접수 결과">
+      <div class="result-inner">
+        <div class="delivery" id="delivery">
+          <span class="delivery-spin" aria-hidden="true"></span>
+          <span class="delivery-text">담당 부서로 보내는 중…</span>
+        </div>
+
+        <article class="card" id="card" aria-label="민원카드"></article>
+
+        <div class="result-actions">
+          <button class="ghost-btn" id="btnAgain" type="button">처음으로</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<audio id="replyAudio" hidden></audio>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js"></script>
+<script src="mock-api.js"></script>
+<script src="api.js"></script>
+<script src="app.js"></script>
+</body>
+</html>
