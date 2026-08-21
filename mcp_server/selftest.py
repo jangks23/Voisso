@@ -1,17 +1,24 @@
 """pytest 없이 도는 자체 점검.
 
-    python3 -m mcp_server.selftest            # 요약
-    python3 -m mcp_server.selftest -v         # 라우팅 상위 후보까지 출력
-    python3 -m mcp_server.selftest --no-sdk   # 내장 stdio 구현으로 왕복 검증
+    python3 -m mcp_server.selftest             # 요약
+    python3 -m mcp_server.selftest -v          # 라우팅 상위 후보까지 출력
+    python3 -m mcp_server.selftest --no-sdk    # 내장 stdio 구현으로 왕복 검증
+    python3 -m mcp_server.selftest --real-data # 수집된 실데이터로 검증
+
+기본값은 **합성 샘플**(mcp_server/fixtures/sample_departments.json)이다.
+도청 조직도 파생 데이터는 저장소에 커밋하지 않으므로, 새로 clone 한 사람도
+아무것도 수집하지 않고 이 셀프테스트를 통과시킬 수 있어야 한다. 샘플의
+부서명·담당업무는 전부 가상이며 어떤 공공데이터에서도 파생되지 않았다.
 
 점검 항목
-    1) 데이터 로딩 (P3 실데이터 / 픽스처 자동 선택)
+    1) 데이터 로딩 (합성 샘플 기본, --real-data 로 실데이터)
     2) 라우팅 5개 대표 질의 — evidence 가 비지 않는지, 상위 후보가 납득 가능한지
     3) evidence·duty 에 전화번호가 새지 않는지 (계약서 3절)
     4) get_department / list_departments
     5) 방언 위임 (voisso.dialect 없으면 스텁으로 살아있는지)
     6) 민원카드 저장/재조회 + evidence 누락 시 거부
-    7) MCP stdio 왕복 (initialize / tools/list / tools/call)
+    7) 데이터가 없을 때의 안내 (빈 결과·스택트레이스 대신 실행할 명령 제시)
+    8) MCP stdio 왕복 (initialize / tools/list / tools/call)
 """
 
 from __future__ import annotations
@@ -22,23 +29,37 @@ import shutil
 import subprocess
 import sys
 import tempfile
+from pathlib import Path
 from typing import Any
 
 from voisso import routing
+from voisso.routing.dataaccess import SCRAPER_CMD, MissingDataError, sample_path
 from voisso.routing.privacy import contains_phone
 
-from . import dialect_bridge
+from . import SERVER_NAME, dialect_bridge
 from .complaints import ComplaintError, get_complaint, submit_complaint
 from .tools import TOOL_NAMES, call_tool
 
 # 검증 질의 -> 상위 후보에 반드시 들어와야 하는 조직 키워드
-CASES: list[tuple[str, tuple[str, ...]]] = [
+# 합성 샘플(가상 부서)로 돌 때 기대하는 부서 키워드
+SAMPLE_CASES: list[tuple[str, tuple[str, ...]]] = [
+    ("집 앞 하수구가 막혀서 물이 안 빠진다", ("가상수도과",)),
+    ("농로가 무너졌다", ("가상농정과",)),
+    ("버스 노선을 늘려달라", ("가상교통과",)),
+    ("일자리 지원 사업 문의", ("가상일자리과",)),
+    ("재난지원금 신청 방법", ("가상재난과",)),
+]
+
+# 수집된 실데이터(--real-data)로 돌 때 기대하는 부서 키워드
+REAL_CASES: list[tuple[str, tuple[str, ...]]] = [
     ("집 앞 하수구가 막혀서 물이 안 빠진다", ("맑은물", "하수", "수자원")),
     ("농로가 무너졌다", ("농업", "농축산", "자연재난")),
     ("버스 노선을 늘려달라", ("교통",)),
     ("일자리 지원 사업 문의", ("일자리", "경제정책노동", "여성가족")),
     ("재난지원금 신청 방법", ("재난", "복지")),
 ]
+
+CASES = SAMPLE_CASES
 
 _PASS, _FAIL = "PASS", "FAIL"
 
@@ -63,16 +84,41 @@ def _section(title: str) -> None:
     print(f"\n── {title} " + "─" * max(0, 60 - len(title)))
 
 
+REPO_ROOT = str(Path(__file__).resolve().parents[1])
+
+
+def _reset_data_cache() -> None:
+    """환경변수를 바꾼 뒤 이전 데이터가 캐시에서 되살아나지 않게 한다."""
+    from voisso.routing import dataaccess, engine
+
+    dataaccess._cache.update(key=None, data=None, source=None)
+    engine._index_cache.update(source=None, index=None)
+
+
+def _child_env() -> dict:
+    """자식 프로세스가 저장소를 import 할 수 있도록 PYTHONPATH 를 넣는다."""
+    env = dict(os.environ)
+    existing = env.get("PYTHONPATH")
+    env["PYTHONPATH"] = REPO_ROOT + (os.pathsep + existing if existing else "")
+    return env
+
+
 # ------------------------------------------------------------------ 1. 데이터
 
 def check_data(rep: Report) -> None:
     _section("1. 데이터")
+    status = routing.data_status()
+    if not rep.check("데이터 사용 가능", status["available"], status.get("next_step", "")):
+        print("\n" + status["message"] + "\n")
+        return
     payload = routing.load_departments()
     depts = payload.get("departments", [])
-    source = routing.data_source()
-    rep.check("부서 데이터 로딩", bool(depts), f"{len(depts)}개 부서 / source={source}")
-    if routing.is_fixture():
-        print("  주의: 실데이터가 아직 없어 mcp_server/fixtures 픽스처로 동작 중입니다.")
+    rep.check(
+        "부서 데이터 로딩",
+        bool(depts),
+        f"{len(depts)}개 부서 / source={status['source']}"
+        + ("  [합성 샘플]" if status["is_sample"] else "  [실데이터]"),
+    )
     staff = sum(len(d.get("staff") or []) for d in depts)
     duty_text = sum(1 for d in depts for s in (d.get("staff") or []) if (s.get("duty") or "").strip())
     rep.check("담당업무 원문 존재", duty_text > 0, f"직원 {staff}명 중 담당업무 기재 {duty_text}건")
@@ -217,14 +263,88 @@ def check_complaints(rep: Report) -> None:
         shutil.rmtree(tmpdir, ignore_errors=True)
 
 
-# ------------------------------------------------------------------ 7. stdio
+# --------------------------------------------------------- 7. 데이터 부재 안내
+
+def check_missing_data(rep: Report) -> None:
+    """데이터가 하나도 없는 상태를 재현해 안내가 제대로 나오는지 본다."""
+    _section("7. 데이터 부재 안내")
+    empty = tempfile.mkdtemp(prefix="voisso-nodata-")
+    saved = {k: os.environ.get(k) for k in ("VOISSO_DATA_FILE", "VOISSO_DATA_DIR")}
+    try:
+        os.environ["VOISSO_DATA_DIR"] = empty
+        os.environ["VOISSO_DATA_FILE"] = str(Path(empty) / "없는파일.json")
+        _reset_data_cache()
+
+        rep.check("data_available() == False", routing.data_available() is False)
+
+        status = routing.data_status()
+        rep.check("data_status() 가 예외 없이 상태 반환", status["available"] is False)
+        message = status.get("message", "")
+        rep.check(
+            "안내에 크롤러 명령 포함",
+            SCRAPER_CMD in message,
+            SCRAPER_CMD,
+        )
+        rep.check("안내에 탐색 경로 포함", "탐색한 경로" in message)
+        rep.check("안내에 합성 샘플 대안 포함", "sample_departments.json" in message)
+
+        # 빈 결과가 아니라 예외로 알린다
+        try:
+            routing.find_department("하수구가 막혔다")
+            rep.check("find_department 가 조용히 빈 결과를 주지 않음", False, "예외 없이 반환됨")
+        except MissingDataError as exc:
+            rep.check(
+                "find_department 가 MissingDataError",
+                SCRAPER_CMD in str(exc),
+                str(exc).splitlines()[0],
+            )
+
+        # MCP 툴은 스택트레이스 대신 구조화된 안내를 준다
+        out = call_tool("find_department", {"query": "하수구가 막혔다"})
+        rep.check(
+            "MCP 툴이 구조화된 안내 반환",
+            out.get("error") == "data_unavailable" and out.get("next_step") == SCRAPER_CMD,
+            f"error={out.get('error')} next_step={out.get('next_step')}",
+        )
+        rep.check("list_departments 도 동일하게 안내",
+                  call_tool("list_departments", {}).get("error") == "data_unavailable")
+
+        # MCP 프로토콜 상으로도 오류로 표시돼야 에이전트가 알아챈다
+        from ._fallback import handle as _handle
+
+        rpc_out = _handle({
+            "jsonrpc": "2.0", "id": 1, "method": "tools/call",
+            "params": {"name": "find_department", "arguments": {"query": "하수구"}},
+        })
+        rep.check("tools/call 응답이 isError=true", rpc_out["result"]["isError"] is True)
+
+        # 데이터 없이도 서버는 뜨고, --check 가 안내 후 1로 종료한다
+        proc = subprocess.run(
+            [sys.executable, "-m", "mcp_server", "--check"],
+            capture_output=True, text=True, env=_child_env(), timeout=60,
+        )
+        rep.check(
+            "python3 -m mcp_server --check 안내",
+            proc.returncode == 1 and SCRAPER_CMD in proc.stdout,
+            (proc.stdout.strip().splitlines() or ["(출력 없음)"])[0],
+        )
+        rep.check("--check 가 스택트레이스를 뱉지 않음", "Traceback" not in (proc.stdout + proc.stderr))
+    finally:
+        for key, value in saved.items():
+            if value is None:
+                os.environ.pop(key, None)
+            else:
+                os.environ[key] = value
+        _reset_data_cache()
+        shutil.rmtree(empty, ignore_errors=True)
+
+
+# ------------------------------------------------------------------ 8. stdio
 
 def check_stdio(rep: Report, no_sdk: bool) -> None:
-    _section("7. MCP stdio 왕복" + (" (내장 구현)" if no_sdk else ""))
+    _section("8. MCP stdio 왕복" + (" (내장 구현)" if no_sdk else ""))
     argv = [sys.executable, "-m", "mcp_server"] + (["--no-sdk"] if no_sdk else [])
-    env = dict(os.environ)
-    root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    env["PYTHONPATH"] = root + (os.pathsep + env["PYTHONPATH"] if env.get("PYTHONPATH") else "")
+    env = _child_env()
 
     proc = subprocess.Popen(
         argv, stdin=subprocess.PIPE, stdout=subprocess.PIPE, stderr=subprocess.PIPE,
@@ -259,7 +379,7 @@ def check_stdio(rep: Report, no_sdk: bool) -> None:
 
         called = rpc(3, "tools/call", {
             "name": "find_department",
-            "arguments": {"query": "버스 노선을 늘려달라", "top_k": 1},
+            "arguments": {"query": CASES[2][0], "top_k": 1},
         })
         payload = called["result"].get("structuredContent") or json.loads(
             called["result"]["content"][0]["text"]
@@ -285,9 +405,11 @@ def check_stdio(rep: Report, no_sdk: bool) -> None:
 # ------------------------------------------------------------------ main
 
 def main(argv: list[str] | None = None) -> int:
+    global CASES
     argv = list(sys.argv[1:] if argv is None else argv)
     verbose = "-v" in argv or "--verbose" in argv
     no_sdk = "--no-sdk" in argv
+    real_data = "--real-data" in argv
 
     print("Voisso MCP 서버 자체 점검")
     print(f"  python  : {sys.version.split()[0]}")
@@ -299,6 +421,24 @@ def main(argv: list[str] | None = None) -> int:
         print("  mcp SDK : 미설치 (내장 stdio 구현으로 동작)")
         no_sdk = True
 
+    if real_data:
+        # 수집된 실데이터로 검증한다. VOISSO_DATA_FILE 을 비워 기본 탐색을 태운다.
+        os.environ.pop("VOISSO_DATA_FILE", None)
+        CASES = REAL_CASES
+        print("  데이터  : 실데이터 (--real-data)")
+        if not routing.data_available():
+            print("\n" + routing.data_status()["message"])
+            return 1
+    else:
+        # 기본값: 합성 샘플. 저장소를 새로 clone 한 사람도 수집 없이 통과해야 한다.
+        os.environ["VOISSO_DATA_FILE"] = str(sample_path())
+        CASES = SAMPLE_CASES
+        print(f"  데이터  : 합성 샘플 ({sample_path().name}) — 실데이터 검증은 --real-data")
+        if not sample_path().is_file():
+            print(f"\n합성 샘플이 없습니다: {sample_path()}")
+            return 1
+    _reset_data_cache()
+
     rep = Report(verbose=verbose)
     check_data(rep)
     check_routing(rep)
@@ -306,6 +446,7 @@ def main(argv: list[str] | None = None) -> int:
     check_lookup(rep)
     check_dialect(rep)
     check_complaints(rep)
+    check_missing_data(rep)
     check_stdio(rep, no_sdk)
 
     total = len(rep.rows)

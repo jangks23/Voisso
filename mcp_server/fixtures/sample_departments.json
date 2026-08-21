@@ -1,0 +1,219 @@
+{
+  "meta": {
+    "source_url": "https://example.invalid/sample-org-chart",
+    "org": "테스트도청 (가상 조직)",
+    "fetched_at": "2026-01-01T00:00:00Z",
+    "department_count": 9,
+    "staff_count": 15,
+    "phone_masked": true,
+    "license": "이 파일은 Voiso 프로젝트가 직접 작성한 창작 샘플이다. 어떤 공공데이터에서도 파생되지 않았다.",
+    "sample": true,
+    "sample_note": "라우팅 엔진과 셀프테스트 전용 합성 데이터. 부서명·담당업무·전화토큰 모두 가상이며 실존 기관·부서·담당자와 무관하다. 실제 민원 라우팅에 쓰지 마라."
+  },
+  "departments": [
+    {
+      "id": "sample-0001",
+      "name": "가상수도과",
+      "parent": "테스트국",
+      "full_name": "테스트국 가상수도과",
+      "dept_code": "S0001",
+      "dept_code1": "S0001A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0001",
+      "duties": [
+        "테스트용 상하수도 유지관리",
+        "테스트용 배수시설 정비 계획 수립"
+      ],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상수도과 업무 전반 총괄",
+          "phone_token": "PHONE_S001"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 하수도 관로 준설 및 하수구 막힘 민원 처리, 테스트용 빗물받이·우수관로 정비, 테스트용 상습 침수구역 배수 개선",
+          "phone_token": "PHONE_S002"
+        }
+      ]
+    },
+    {
+      "id": "sample-0002",
+      "name": "가상농정과",
+      "parent": "테스트국",
+      "full_name": "테스트국 가상농정과",
+      "dept_code": "S0002",
+      "dept_code1": "S0002A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0002",
+      "duties": [
+        "테스트용 농업생산기반 정비",
+        "테스트용 영농 지원 사업 운영"
+      ],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상농정과 업무 전반 총괄",
+          "phone_token": "PHONE_S003"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 농로 포장 및 농로 유실 복구, 테스트용 농업기반시설 재해 피해 조사, 테스트용 용수로·배수로 개보수",
+          "phone_token": "PHONE_S004"
+        }
+      ]
+    },
+    {
+      "id": "sample-0003",
+      "name": "가상교통과",
+      "parent": "테스트국",
+      "full_name": "테스트국 가상교통과",
+      "dept_code": "S0003",
+      "dept_code1": "S0003A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0003",
+      "duties": [
+        "테스트용 대중교통 운영 지원",
+        "테스트용 여객 운수사업 관리"
+      ],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상교통과 업무 전반 총괄",
+          "phone_token": "PHONE_S005"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 시내버스 노선 신설 및 증회 검토, 테스트용 버스 정류소 설치, 테스트용 벽지노선 운행 손실 보조",
+          "phone_token": "PHONE_S006"
+        }
+      ]
+    },
+    {
+      "id": "sample-0004",
+      "name": "가상일자리과",
+      "parent": "예시국",
+      "full_name": "예시국 가상일자리과",
+      "dept_code": "S0004",
+      "dept_code1": "S0004A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0004",
+      "duties": [
+        "테스트용 고용정책 총괄",
+        "테스트용 취업 지원 사업 기획"
+      ],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상일자리과 업무 전반 총괄",
+          "phone_token": "PHONE_S007"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 일자리 지원 사업 공고 및 참여자 모집, 테스트용 청년 취업 상담·직업훈련 연계, 테스트용 고용장려금 지급",
+          "phone_token": "PHONE_S008"
+        }
+      ]
+    },
+    {
+      "id": "sample-0005",
+      "name": "가상재난과",
+      "parent": "예시국",
+      "full_name": "예시국 가상재난과",
+      "dept_code": "S0005",
+      "dept_code1": "S0005A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0005",
+      "duties": [
+        "테스트용 자연재난 대응 및 복구계획 수립",
+        "테스트용 이재민 구호 지원"
+      ],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상재난과 업무 전반 총괄",
+          "phone_token": "PHONE_S009"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 재난지원금 신청 접수 및 지급, 테스트용 자연재난 피해 조사 및 피해 사실 확인, 테스트용 재해복구비 교부",
+          "phone_token": "PHONE_S010"
+        }
+      ]
+    },
+    {
+      "id": "sample-0006",
+      "name": "가상복지과",
+      "parent": "예시국",
+      "full_name": "예시국 가상복지과",
+      "dept_code": "S0006",
+      "dept_code1": "S0006A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0006",
+      "duties": [
+        "테스트용 저소득층 생계 지원"
+      ],
+      "staff": [
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 긴급 생계 지원금 신청 접수, 테스트용 기초생활 수급자 상담, 테스트용 어르신 생활 지원",
+          "phone_token": "PHONE_S011"
+        }
+      ]
+    },
+    {
+      "id": "sample-0007",
+      "name": "가상하천과",
+      "parent": "테스트국",
+      "full_name": "테스트국 가상하천과",
+      "dept_code": "S0007",
+      "dept_code1": "S0007A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0007",
+      "duties": [
+        "테스트용 하천 정비 및 치수 사업"
+      ],
+      "staff": [
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 하천 점용 허가, 테스트용 소하천 정비 공사 관리, 테스트용 지하수 관리",
+          "phone_token": "PHONE_S012"
+        }
+      ]
+    },
+    {
+      "id": "sample-0008",
+      "name": "가상문화과",
+      "parent": "예시국",
+      "full_name": "예시국 가상문화과",
+      "dept_code": "S0008",
+      "dept_code1": "S0008A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0008",
+      "duties": [
+        "테스트용 문화행사 기획"
+      ],
+      "staff": [
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 문화축제 홍보, 테스트용 축제 셔틀버스 운영, 테스트용 공연장 대관",
+          "phone_token": "PHONE_S013"
+        }
+      ]
+    },
+    {
+      "id": "sample-0009",
+      "name": "가상총무과",
+      "parent": "테스트국",
+      "full_name": "테스트국 가상총무과",
+      "dept_code": "S0009",
+      "dept_code1": "S0009A",
+      "source_url": "https://example.invalid/sample-org-chart?dept=S0009",
+      "duties": [],
+      "staff": [
+        {
+          "position": "가상과장",
+          "duty": "가상총무과 업무 전반 총괄 [테스트☎ (가상) 000-0000]",
+          "phone_token": "PHONE_S014"
+        },
+        {
+          "position": "가상주무관",
+          "duty": "테스트용 예산·회계 관리, 테스트용 일자리 창출 실적 보고, 테스트용 물품 관리 [테스트☎ (가상) 000-0000]",
+          "phone_token": "PHONE_S015"
+        }
+      ]
+    }
+  ]
+}

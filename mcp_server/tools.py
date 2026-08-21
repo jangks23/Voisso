@@ -169,7 +169,7 @@ def _tool_list_departments(args: dict[str, Any]) -> dict[str, Any]:
         "count": len(items),
         "departments": items,
         "data_source": routing.data_source(),
-        "is_fixture": routing.is_fixture(),
+        "is_sample": routing.is_sample(),
     }
 
 
@@ -203,8 +203,21 @@ HANDLERS: dict[str, Callable[[dict[str, Any]], dict[str, Any]]] = {
 
 
 def call_tool(name: str, args: dict[str, Any] | None) -> dict[str, Any]:
-    """툴 이름 + 인자 -> 결과 dict. 알 수 없는 툴이면 ValueError."""
+    """툴 이름 + 인자 -> 결과 dict. 알 수 없는 툴이면 ValueError.
+
+    부서 데이터가 없으면 스택트레이스 대신 "무엇을 해야 하는지"가 담긴
+    구조화된 오류를 돌려준다. 이 응답을 받은 에이전트가 사용자에게
+    크롤러 실행을 그대로 안내할 수 있어야 한다.
+    """
     handler = HANDLERS.get(name)
     if handler is None:
         raise ValueError(f"알 수 없는 툴입니다: {name}")
-    return handler(args or {})
+    try:
+        return handler(args or {})
+    except routing.MissingDataError as exc:
+        return {
+            "error": "data_unavailable",
+            "message": str(exc),
+            "next_step": routing.SCRAPER_CMD,
+            "tool": name,
+        }

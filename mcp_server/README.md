@@ -22,10 +22,38 @@
 
 ## 빠른 시작
 
+### 0. 데이터 수집 (최초 1회, 필수)
+
+**부서 데이터는 저장소에 들어 있지 않다.** 경상북도청 조직도 파생 데이터는
+재배포 라이선스 리스크 때문에 커밋하지 않는다. 클론 직후 한 번 수집해야 한다.
+
 ```bash
-# 저장소 루트에서
-python3 -m mcp_server.selftest       # 자체 점검 (35개 항목)
-python3 -m mcp_server                # MCP 서버 실행 (stdio)
+python3 scripts/scrape_gb_departments.py     # → data/gb_departments.json
+```
+
+수집 전에 서버를 띄우면 조용히 빈 결과를 주는 대신 무엇을 해야 하는지 알려준다.
+
+```
+$ python3 -m mcp_server --check
+경상북도청 부서 데이터가 없습니다. 먼저 크롤러를 실행하세요:
+
+    python3 scripts/scrape_gb_departments.py
+
+탐색한 경로:
+    - data/gb_departments.json
+...
+```
+
+MCP 툴을 호출해도 마찬가지로 `{"error": "data_unavailable", "next_step": "..."}`
+가 `isError: true` 로 돌아오므로, 붙어 있는 AI 에이전트가 사용자에게 그대로
+안내할 수 있다.
+
+### 1. 실행
+
+```bash
+python3 -m mcp_server.selftest      # 자체 점검 47개 항목 (데이터 없이도 통과)
+python3 -m mcp_server --check       # 데이터 상태만 확인
+python3 -m mcp_server               # MCP 서버 실행 (stdio)
 ```
 
 **의존성은 선택이다.** `pip install mcp` 로 공식 SDK를 넣으면 SDK로 뜨고,
@@ -37,7 +65,18 @@ pip install -r mcp_server/requirements.txt   # 선택 — 공식 SDK 사용 시
 python3 -m mcp_server --no-sdk               # SDK가 있어도 내장 구현으로 강제
 ```
 
----
+### 2. 데이터 없이 기능만 보기 — 합성 샘플
+
+수집 없이 라우팅 동작만 확인하려면 합성 샘플을 물릴 수 있다.
+
+```bash
+VOISSO_DATA_FILE=mcp_server/fixtures/sample_departments.json python3 -m mcp_server
+```
+
+`mcp_server/fixtures/sample_departments.json` 은 이 프로젝트가 직접 작성한
+**가상 조직**(테스트국 가상수도과, 예시국 가상재난과 …)이다. 어떤 공공데이터에서도
+파생되지 않았으므로 저장소에 커밋된다. 부서명·담당업무가 전부 가상이라
+**실제 민원 라우팅에는 쓸 수 없고**, 서버는 기동 시 stderr 로 그 사실을 알린다.
 
 ## Claude Desktop 연결
 
@@ -136,7 +175,7 @@ JVM·사전 설치가 필요해 "README만으로 실행"을 깨뜨리므로 쓰�
 | `lexicon.py` | 민원 구어체 ↔ 행정 용어 사전 (`하수구` → `하수도·배수·우수·준설`) |
 | `engine.py` | TF-IDF 코사인 + BM25 하이브리드, 부서 단위 집계 |
 | `privacy.py` | 사무분장 원문에 섞인 전화번호 제거 |
-| `dataaccess.py` | 데이터 소스 해석 (`voisso.data` → `data/` → 픽스처) |
+| `dataaccess.py` | 데이터 소스 해석 + 데이터 부재 시 안내 (`MissingDataError`) |
 
 **동작 방식**
 
@@ -155,7 +194,8 @@ JVM·사전 설치가 필요해 "README만으로 실행"을 깨뜨리므로 쓰�
 
 ### 검증된 라우팅 결과
 
-`python3 -m mcp_server.selftest -v` 로 재현할 수 있다.
+수집된 실데이터로 확인한 결과다. `python3 -m mcp_server.selftest -v --real-data` 로 재현할 수 있다.
+(데이터 없이 도는 기본 셀프테스트는 합성 샘플의 가상 부서로 같은 5개 질의를 검증한다.)
 
 | 질의 | 1순위 | 점수 | 판정 |
 |---|---|---|---|
@@ -187,11 +227,13 @@ JVM·사전 설치가 필요해 "README만으로 실행"을 깨뜨리므로 쓰�
 `dataaccess.py` 가 다음 순서로 찾는다. 앞의 것이 생기면 재시작 없이 승격된다.
 
 1. `voisso.data.load_departments()` — P3 공용 모듈
-2. `$VOISSO_DATA_DIR/gb_departments.json` (기본 `<repo>/data`)
-3. `mcp_server/fixtures/gb_departments.json` — 개발용 소규모 픽스처
+2. `$VOISSO_DATA_FILE` — 데이터 파일 직접 지정 (합성 샘플을 물릴 때)
+3. `$VOISSO_DATA_DIR/gb_departments.json` (기본 `<repo>/data`)
 
-3번 픽스처는 `meta.fixture: true` 로 표시되며, `list_departments` 응답과
-셀프테스트가 픽스처로 동작 중임을 알려준다.
+어디에도 없으면 `MissingDataError` 를 던진다. **빈 결과를 조용히 돌려주지 않는다.**
+"담당 부서를 못 찾음"과 "데이터가 아예 없음"은 전혀 다른 상황이고, 처음 실행하는
+담당자는 그 차이를 즉시 알아야 하기 때문이다. 예외 없이 상태만 보려면
+`routing.data_available()` / `routing.data_status()` 를 쓴다.
 
 ## 방언 모듈 연동
 

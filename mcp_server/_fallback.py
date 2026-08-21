@@ -88,7 +88,8 @@ def handle(message: dict[str, Any]) -> dict[str, Any] | None:
         args = params.get("arguments") or {}
         try:
             payload = call_tool(name, args)
-            is_error = False
+            # 구조화된 오류(데이터 없음 등)도 isError 로 표시한다.
+            is_error = bool(payload.get("error"))
         except Exception as exc:
             payload = {"error": str(exc), "tool": name}
             is_error = True

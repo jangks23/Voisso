@@ -10,6 +10,10 @@ Match = {"department_id","full_name","position","duty","phone_token","score","ev
 
 evidence 는 **매칭 근거가 된 사무분장/담당업무 원문**이다. 절대 비지 않는다.
 (원문에 섞여 있는 전화번호만 privacy.scrub 으로 제거한다.)
+
+부서 데이터가 없으면 빈 결과 대신 :class:`MissingDataError` 를 던진다.
+메시지에 크롤러 실행 방법이 들어 있다. 예외를 던지지 않고 상태만 보려면
+:func:`data_available` / :func:`data_status` 를 쓴다.
 """
 
 from __future__ import annotations
@@ -19,10 +23,15 @@ from typing import Any, TypedDict
 from . import engine
 from .dataaccess import (
     FALLBACK_PHONE,
+    SCRAPER_CMD,
+    MissingDataError,
+    data_available,
     data_source,
-    is_fixture,
+    data_status,
+    is_sample,
     load_departments,
     load_departments_with_source,
+    missing_data_message,
     resolve_phone,
 )
 from .lexicon import lexicon_size
@@ -35,10 +44,15 @@ __all__ = [
     "route",
     "resolve_phone",
     "load_departments",
+    "data_available",
     "data_source",
-    "is_fixture",
+    "data_status",
+    "is_sample",
     "lexicon_size",
+    "MissingDataError",
+    "missing_data_message",
     "FALLBACK_PHONE",
+    "SCRAPER_CMD",
 ]
 
 
@@ -133,7 +147,7 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
             "fallback_phone": FALLBACK_PHONE,
             "matches": [],
             "data_source": data_source(),
-            "is_fixture": is_fixture(),
+            "is_sample": is_sample(),
         }
 
     top = matches[0]["score"]
@@ -153,7 +167,7 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
         "fallback_phone": FALLBACK_PHONE,
         "matches": matches,
         "data_source": data_source(),
-        "is_fixture": is_fixture(),
+        "is_sample": is_sample(),
     }
 
 

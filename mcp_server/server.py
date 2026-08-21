@@ -17,6 +17,8 @@ import json
 import sys
 from typing import Any
 
+from voisso import routing
+
 from . import SERVER_NAME, __version__
 from .tools import TOOLS, call_tool
 
@@ -60,7 +62,9 @@ def _run_with_sdk() -> bool:
     def _result(name: str, arguments: dict[str, Any] | None) -> Any:
         try:
             payload = call_tool(name, arguments)
-            is_error = False
+            # call_tool 이 예외를 삼키고 구조화된 오류를 돌려주는 경우
+            # (데이터 없음 등)에도 클라이언트에는 오류로 보여야 한다.
+            is_error = bool(payload.get("error"))
         except Exception as exc:
             payload = {"error": str(exc), "tool": name}
             is_error = True
@@ -121,13 +125,57 @@ def _run_with_sdk() -> bool:
 
 # ------------------------------------------------------------------ 진입점
 
+def _announce_data_state() -> None:
+    """기동 시 데이터 상태를 stderr 에 알린다.
+
+    stdout 은 JSON-RPC 전용이라 아무것도 쓰면 안 된다. 데이터가 없어도
+    서버는 정상 기동한다 — 클라이언트가 붙어서 안내 메시지를 받을 수
+    있어야 하기 때문이다. 조용히 죽거나 빈 결과를 주지 않는다.
+    """
+    status = routing.data_status()
+    if not status["available"]:
+        print("=" * 68, file=sys.stderr)
+        print("[voisso-gb] 부서 데이터 없이 기동합니다 — 검색 툴이 동작하지 않습니다.", file=sys.stderr)
+        print("=" * 68, file=sys.stderr)
+        print(status["message"], file=sys.stderr)
+        print("=" * 68, file=sys.stderr)
+        return
+    if status["is_sample"]:
+        print(
+            f"[voisso-gb] 합성 샘플 데이터로 기동 ({status['department_count']}개 가상 부서). "
+            f"실데이터 수집: {routing.SCRAPER_CMD}",
+            file=sys.stderr,
+        )
+        return
+    print(
+        f"[voisso-gb] 데이터 {status['department_count']}개 부서 로드 "
+        f"(source={status['source']})",
+        file=sys.stderr,
+    )
+
+
 def main(argv: list[str] | None = None) -> int:
     argv = list(sys.argv[1:] if argv is None else argv)
 
     if "--help" in argv or "-h" in argv:
         print(__doc__)
-        print("옵션:  --no-sdk   MCP SDK 를 무시하고 내장 stdio 구현으로 실행")
+        print("옵션:")
+        print("  --no-sdk   MCP SDK 를 무시하고 내장 stdio 구현으로 실행")
+        print("  --check    데이터 상태만 출력하고 종료 (서버를 띄우지 않음)")
         return 0
+
+    if "--check" in argv:
+        status = routing.data_status()
+        if not status["available"]:
+            print(status["message"])
+            return 1
+        label = "합성 샘플" if status["is_sample"] else "실데이터"
+        print(f"데이터 OK — {label} / {status['department_count']}개 부서 / source={status['source']}")
+        if status.get("message"):
+            print(status["message"])
+        return 0
+
+    _announce_data_state()
 
     if "--no-sdk" not in argv and _run_with_sdk():
         return 0
