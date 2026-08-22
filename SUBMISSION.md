@@ -30,7 +30,7 @@ ARS makes the elderly learn the system's menu. Voisso makes the system learn the
 
 ## Description (5000자 제한)
 
-### 영문안 — 4,999자
+### 영문안 — 4,997자
 
 ```markdown
 ## The Problem
@@ -38,98 +38,95 @@ ARS makes the elderly learn the system's menu. Voisso makes the system learn the
 Press 1 for civil affairs, press 2 for taxation, press 3 to hear these options again.
 Mildly annoying if you're under 50. A wall if you're an 80-year-old farmer in Uiseong.
 
-Gyeongsangbuk-do has one of Korea's oldest populations. The people who most need to
-reach their government — a blocked culvert, a washed-out farm road — are least able to
-navigate a nine-branch IVR tree. They give up, or drive to the county office. The tech
-isn't too hard; it just refuses to speak their language.
+Gyeongsangbuk-do has one of Korea's oldest populations. Those who most need their
+government — a blocked culvert, a washed-out farm road — are least able to navigate a
+nine-branch IVR tree. They give up, or drive to the county office. The tech isn't hard;
+it just won't speak their language.
 
 ## What We Built
 
 **Voisso (보이소)** — from *deureo-boiso*, "give it a listen," plus *voice* — answers in
-Gyeongbuk dialect, holds a real conversation, and delivers a structured, routed
-complaint to the right department. The caller doesn't learn a menu. They just talk.
+Gyeongbuk dialect, holds a real conversation, and delivers a structured, routed complaint
+to the right department. No menu to learn. They just talk.
 
-> **Voisso:** 어떤 일로 전화 주셨는교?
 > **Caller:** 집 앞에 물이 안 빠지고 자꾸 고이가꼬…
 > **Voisso:** 물이 고인다 카시는 거네예. 어느 동네신지 여쭤봐도 될까예?
-> **Caller:** 안동 옥동인데.
-> **Voisso:** 예, 안동 옥동 배수 문제로 접수해 드릴게예.
 
 ## The Infrastructure We Had to Build First
 
 "Route the complaint to the right person" sounds like an LLM classification task. It
 isn't. It's a data problem, and the data didn't exist in usable form.
 
-Gyeongsangbuk-do publishes its full duty assignment — which team handles what, the
-officer responsible, their line — as HTML for human eyes. No API. Nothing an agent can
-query. We scraped and normalized it: **96 departments, 1,866 duty entries.**
+Gyeongsangbuk-do publishes its full duty assignment — who handles what, the officer
+responsible, their line — as HTML for human eyes. No API. Nothing an agent can query. We
+scraped and normalized it (**96 departments, 1,866 duty entries**), then built an **MCP
+server** exposing it to any agent:
 
-So we built an **MCP server** exposing it as tools any agent can call:
-
-| Tool | What it does |
-|---|---|
-| `find_department(text)` | Complaint → department, officer, duty text justifying it |
-| `get_department` / `list_departments` | The full 96-department duty structure |
-| `normalize_dialect` / `to_dialect` | Dialect ↔ standard Korean |
-| `submit_complaint(summary)` | File a routed complaint |
+`find_department` returns the department, officer, and duty text justifying the match;
+`get_department`/`list_departments` expose the structure; `normalize_dialect`/
+`to_dialect` convert dialect ↔ standard Korean; `submit_complaint` files the result.
 
 Ask Claude Desktop, in dialect, "하수구가 막혔는데 어데 전화하믄 되노?" — you get 기후환경국
 맑은물정책과 and the duty line making it their job: *"하수도 재난재해대책 수립 및 시행."*
-Not hallucinated: it reads the province's own record. First answer in 0.4s, then
-milliseconds. **The server is useful without our service.** That's deliberate.
+Not hallucinated: it reads the province's own record.
+**The server is useful without our service.** That's deliberate.
 
 ## We Ship the Scraper, Not the Dataset
 
-The province's data is published under KOGL Type 3 — attribution, **no derivatives**.
-Rather than redistribute a processed copy, we ship the scraper and let each user
-generate it from the rights holder's own site. One command, ~35 seconds.
-
-This is not a compromise. **A bundled snapshot starts rotting the day it ships**, and
+The province's data is KOGL Type 3 — attribution, **no derivatives** — so rather than
+redistribute a processed copy, we ship the scraper and let users generate it from the
+rights holder's own site. **A bundled snapshot starts rotting the day it ships**, and
 agencies reorganize constantly — routing to a department that no longer exists is worse
-than not routing at all. The scraper always produces today's org chart. What we
-open-source is not data; it's the method for making it and the interface for using it.
+than not routing at all. We open-source not data but the method for making it.
 
 ## The Dialect Layer — Stated Honestly
 
-**We did not train a dialect TTS model.** That claim appears nowhere in our repository.
-Fine-tuning an acoustic model in 48 hours isn't possible, and we didn't.
+**We did not train a dialect TTS model.** That claim appears nowhere in our repository —
+fine-tuning an acoustic model in 48 hours isn't possible, and we didn't. What we built is
+a **deterministic lexicon**: 367 vocabulary entries and 70 ending rules, **every one
+source-tagged**. **Zero come from the AI Hub dialect corpus** — we reviewed it, found its
+terms prohibit redistribution, and excluded it rather than ship a repo we couldn't
+license cleanly.
 
-What we built is a **deterministic lexicon**: 367 vocabulary entries and 70 ending
-rules, **every one source-tagged**. **Zero entries come from the AI Hub dialect
-corpus** — we reviewed it, found its terms prohibit redistribution, and excluded it
-rather than ship a repository we couldn't license cleanly.
+Inbound, `normalize_dialect` repairs what standard-Korean STT mistranscribes; outbound,
+the LLM answers in standard Korean and `to_dialect` rewrites it: "확인해 드리겠습니다"
+→ "확인해 드릴게예." Accent depends entirely on the TTS voice selected: **the Typecast API
+exposes no accent metadata, so we cannot verify how Gyeongbuk a voice sounds** — reported
+as unverified rather than claimed.
 
-- **Inbound** — Whisper transcribes, then `normalize_dialect` repairs the dialect
-  vocabulary and endings standard-Korean STT mistranscribes.
-- **Outbound** — the LLM answers in standard Korean, then `to_dialect` rewrites it:
-  "확인해 드리겠습니다" → "확인해 드릴게예."
-
-Accent and prosody depend entirely on the TTS voice selected. **The Typecast API exposes
-no accent metadata, so we cannot verify how Gyeongbuk a voice sounds.** We report that
-as unverified rather than claim it.
-
-**Stack:** Python · FastAPI · MCP SDK · Claude · Whisper API (STT) · Typecast ssfm-v30
-(TTS). No local weights, no GPU, no checkpoint downloads — it runs on a laptop.
+**Stack:** Python · FastAPI · MCP SDK · `gpt-4o-transcribe` (STT) · Typecast `ssfm-v30`
+(TTS). The conversation engine swaps provider in one env var — OpenAI, Anthropic, or a
+rule engine needing no key. No local weights, no GPU; it runs on a laptop.
 
 ## For the Civil Servant
 
 Intake is half the job; the other half is an official trusting what lands on the desk.
-Every assignment shows **why** — the exact duty line that made it this department's
-responsibility, transcript one click away, reassignment always available.
+Every assignment shows **why** — the duty line that made it theirs — with transcript
+and reassign button beside it.
 
-When the system isn't sure, it says so. Below a measured confidence threshold, or when
-the caller's words appear nowhere in the duty text, it returns ranked candidates instead
-of a verdict — or just the province's main line, 1522-0120. An AI that routes without
-justification is a liability in a public office; one that cites its source is a tool.
+When unsure, it says so. Below a measured confidence threshold, or when the caller's
+words appear nowhere in the duty text, it returns ranked candidates instead of a verdict
+— or just the province's main line.
+
+It also knows what isn't its job. Streetlights and waste pickup are **city/county**
+functions, absent from provincial duty text; our concept dictionary tags jurisdiction, so
+"the streetlight is flickering" returns **zero departments** and a referral.
+
+An AI that routes without justification is a liability in a public office; one that cites
+its source is a tool.
 
 ## Limits
 
-The demo runs over a browser microphone, not the PSTN; telephony is an integration task,
-not a research one. Our STT figure — 94–97% on dialect transcription — was measured by
-round-tripping Typecast-synthesized speech, **not real elderly speakers**; treat it as
-an upper bound.
+The demo runs over a browser microphone, not the PSTN; telephony is integration work,
+not research. Our STT figure — 94–97% on dialect transcription — was measured by
+round-tripping synthesized speech, **not real elderly speakers**; it is an upper bound.
 
-MIT licensed, on GitHub, runnable from the README alone.
+We ported to Andong City to test this: **91 departments, 1,677 entries, ~75 minutes.**
+URL swapping alone yields zero — each agency needs a ~150-line adapter — but the shared
+collection layer is reused, and that adapter covered two more cities unchanged.
+
+MIT licensed, on GitHub, runnable from the README alone; CI runs on every push, no
+secrets.
 
 We'd rather ship a system that says "I'm not sure which desk this belongs to" than one
 that confidently sends a flooded street to the tourism division.
@@ -201,8 +198,8 @@ Claude Desktop에 사투리로 "하수구가 막혔는데 어데 전화하믄 �
 **AI Hub 방언 코퍼스에서 가져온 항목은 0건이다** — 검토했고, 이용정책이 제3자 재배포를
 금지한다는 걸 확인했고, 라이선스가 깨끗하지 않은 저장소를 내놓느니 통째로 제외했다.
 
-- **인바운드** — Whisper가 받아쓰고, `normalize_dialect`가 표준어 STT가 놓치는 방언 어휘와
-  어미를 교정한다.
+- **인바운드** — `gpt-4o-transcribe` 가 받아쓰고, `normalize_dialect`가 표준어 STT가 놓치는
+  방언 어휘와 어미를 교정한다.
 - **아웃바운드** — LLM이 표준어로 답하면 `to_dialect`가 다시 쓴다:
   "확인해 드리겠습니다" → "확인해 드릴게예."
 
@@ -210,8 +207,9 @@ Claude Desktop에 사투리로 "하수구가 막혔는데 어데 전화하믄 �
 제공하지 않으므로, 특정 보이스가 얼마나 경북스러운지 우리는 검증할 수 없다.**
 주장하지 않고 미검증으로 남긴다.
 
-**스택:** Python · FastAPI · MCP SDK · Claude · Whisper API(STT) · Typecast ssfm-v30(TTS).
-로컬 가중치도, GPU도, 체크포인트 다운로드도 없다 — 노트북에서 그대로 돈다.
+**스택:** Python · FastAPI · MCP SDK · `gpt-4o-transcribe`(STT) · Typecast `ssfm-v30`(TTS).
+대화 엔진은 환경변수 하나로 제공자를 바꾼다 — OpenAI, Anthropic, 또는 키가 아예 필요 없는
+규칙 엔진. 로컬 가중치도 GPU도 없다. 노트북에서 그대로 돈다.
 
 ## 담당 공무원 입장에서
 
@@ -221,7 +219,14 @@ Claude Desktop에 사투리로 "하수구가 막혔는데 어데 전화하믄 �
 
 확신이 없으면 없다고 말한다. 측정된 임계값 아래이거나, 민원인이 쓴 단어가 사무분장 원문에
 아예 없으면, 단정 대신 후보를 순위로 제시한다 — 그것도 아니면 도청 대표번호 1522-0120만
-안내한다. 근거 없이 배정하는 AI는 공공기관에서 부담이고, 출처를 대는 AI는 도구다.
+안내한다.
+
+**소관이 아닌 것도 안다.** 가로등·보안등 유지관리와 생활폐기물 수거는 **시·군 소관**이라
+도청 사무분장에 아예 없다. 개념 사전에 관할을 표시해 두어서, "가로등이 깜빡깜빡한다"는
+**부서 0건**과 시·군 안내를 돌려준다. 그럴듯한 도청 부서를 억지로 붙이면 민원인은
+헛걸음을 한다.
+
+근거 없이 배정하는 AI는 공공기관에서 부담이고, 출처를 대는 AI는 도구다.
 
 ## 한계
 
@@ -229,7 +234,12 @@ Claude Desktop에 사투리로 "하수구가 막혔는데 어데 전화하믄 �
 아니라 통합 과제다. STT 정확도 94~97%는 **타입캐스트 합성음 왕복 측정**이며,
 **실제 어르신 음성이 아니다.** 상한선으로 보아야 한다.
 
-MIT 라이선스, GitHub 공개, README만으로 실행 가능.
+**이식을 실제로 해 봤다.** 안동시로 옮겨 **91개 부서 / 담당업무 1,677건**을 약 75분에
+수집했다. 다만 "URL만 바꾸면 된다"는 사실이 아니다 — 기관마다 150줄짜리 파서 어댑터가
+필요하다. 대신 공용 수집 계층은 그대로 재사용되고, 안동 어댑터는 문경·구미에 URL 교체만으로
+통했다. 안동시는 **공공누리 제1유형**이라 도청(제3유형)보다 조건이 자유롭다.
+
+MIT 라이선스, GitHub 공개, README만으로 실행 가능. CI는 시크릿 없이 매 푸시마다 돈다.
 
 침수된 도로를 확신에 차서 관광과로 보내는 시스템보다,
 "이건 어느 과 소관인지 잘 모르겠습니다" 라고 말하는 시스템을 내겠다.
@@ -247,9 +257,92 @@ MIT 라이선스, GitHub 공개, README만으로 실행 가능.
 - [x] **데이터셋을 저장소에 포함하지 않음** — 스크레이퍼만 공개 (공공누리 제3유형 대응)
 - [x] 방언 사전 전 항목 출처 표기 · AI Hub 유래 0건
 - [x] MCP 서버 시연 대본 (`mcp_server/DEMO.md`)
-- [ ] 데모 영상 (통화 + 대시보드 왕복) — `docs/DEMO_SCRIPT.md` 대본대로 촬영
+- [x] CI (`.github/workflows/ci.yml`) — 시크릿 없이 Python 3.10/3.11/3.12 통과
+- [x] 원터치 실행 (`./scripts/demo.sh`) · 통합 테스트 (`./scripts/test.sh`)
+- [x] 타 지자체 이식 실증 (`docs/PORTABILITY.md`) — 안동시 91개 부서
+- [ ] 🚧 **담당자 핸드오프 (양방향 통역)** — 계약 `docs/CONTRACT.md` 5-B절 고정, P6/P7/P8 구현 중.
+      **완성 전까지 위 Description 본문에 넣지 않는다.** 완성되면 아래 「핸드오프 문구」 절의
+      문단을 그대로 붙여넣는다
+- [ ] 데모 영상 (통화 + 대시보드 왕복 + 담당자 핸드오프) — `docs/DEMO_SCRIPT.md` 대본대로 촬영
 - [ ] 스크린샷 4종 → `docs/images/`
 - [ ] 경북도청/주최측에 데이터 가공·공개 가능 여부 문의
+
+---
+
+## 🚧 핸드오프 문구 (완성되면 본문에 넣는다)
+
+> **지금은 넣지 마라.** `docs/CONTRACT.md` 5-B절의 API 가 실제로 동작하고
+> `docs/DEMO_SCRIPT.md` 5단계 촬영이 끝난 뒤에 아래를 본문으로 옮긴다.
+> 판정 기준은 하나다 — **영상에 찍혔는가.** 찍히지 않았으면 넣지 않는다.
+
+### 국문안에 추가할 문단 (여유 1,745자 중 약 400자 사용)
+
+`## 담당 공무원 입장에서` 절의 마지막 문장 **앞**에 넣는다.
+
+```markdown
+**그리고 접수가 끝이 아니다.** 담당자가 민원카드에서 '통화 잇기'를 누르면 어르신과 직접
+연결된다. 이때 **담당자는 표준어로 입력하고 어르신은 사투리로 듣는다.** 반대도 마찬가지다 —
+"낼 오신다 캅니꺼?" 는 담당자 화면에 "내일 오신다 합니까?" 로 뜬다. 방언 레이어가 AI 응답을
+만드는 부품에서 **사람과 사람 사이의 통역기**로 확장된다. 담당자가 경상도 사람이 아니어도
+어르신과 대화할 수 있다.
+
+핸드오프가 열리면 **AI 는 발화를 멈춘다.** 이 경계가 이 시스템의 핵심 설계다.
+"AI 가 민원을 처리한다"는 공공기관이 받아들이지 않는다. "AI 가 접수를 돕고 담당자가
+처리한다"는 받아들인다. **전권을 주는 게 아니라 접수까지만 맡기고 사람이 책임진다.**
+```
+
+### 영문안에 추가할 문단 (**514자 — 넣기 전에 같은 분량을 먼저 잘라야 한다**)
+
+영문 Description 은 4,997/5,000자로 꽉 찼다. 아래 문단은 **514자**다. 절 크기를 재 보면
+이렇고(합계 4,991자 + 절 사이 공백), 잘라낼 곳은 큰 절에서 찾는 게 맞다.
+
+| 절 | 분량 | 잘라도 되는가 |
+|---|---|---|
+| `The Dialect Layer` | 1,121자 | ✅ 가장 크다. 아래 3번으로 46자, 문단 압축으로 200자 더 |
+| `The Infrastructure…` | 1,011자 | ⚠️ 인프라 트랙의 핵심 주장이다. 건드리지 마라 |
+| `For the Civil Servant` | 805자 | ⚠️ 핸드오프 문단이 **여기에 들어간다**. 늘어날 곳이다 |
+| `Limits` | 767자 | ✅ 2번으로 51자. 정직성 서사라 더는 줄이지 마라 |
+| `The Problem` | 482자 | ✅ 두 번째 문단을 한 문장으로 (약 200자 확보) |
+| `We Ship the Scraper…` | 466자 | ✅ 1번으로 53자 |
+
+**잘라낼 것 — 우선순위 순. 1~4를 다 하면 약 550자가 나온다(514자 필요).**
+
+1. `We Ship the Scraper, Not the Dataset` 마지막 문장
+   *"We open-source not data but the method for making it."* — **53자.** 닫는 문단과 중복
+2. `Limits` 의 *"and that adapter covered two more cities unchanged."* — **51자.**
+   `docs/PORTABILITY.md` 에 있고 심사에 결정적이지 않다
+3. `The Dialect Layer` 의 *"— reported as unverified rather than claimed."* — **46자.**
+   바로 앞 문장이 이미 같은 말을 한다
+4. `The Problem` 두 번째 문단을 한 문장으로 압축 — **약 200자.**
+   *"Gyeongsangbuk-do has one of Korea's oldest populations, and those who most need
+   their government are least able to navigate a nine-branch IVR tree."* 정도면 된다
+5. 그래도 모자라면 `The Dialect Layer` 의 AI Hub 제외 경위를 한 문장으로 줄인다 (약 150자)
+
+**5,000자를 넘긴 채 제출하면 잘려 나간다. 넣은 뒤 반드시 다시 세라.**
+
+넣을 문단 — `## For the Civil Servant` 절의 마지막 문장 **앞**:
+
+```markdown
+Intake isn't the end. The officer clicks "take the call" and speaks to the caller —
+**typing standard Korean while the caller hears dialect,** and reading standard Korean
+back. The dialect layer stops being a component the AI uses and becomes an interpreter
+between two people; the officer need not be from Gyeongsang.
+
+When the handoff opens, **the AI stops speaking.** That boundary is the design. "AI
+handles the complaint" is not something a public office adopts. "AI takes the intake, a
+person handles it" is.
+```
+
+**넣은 뒤 반드시 다시 세라.**
+
+```bash
+python3 - <<'EOF'
+import re, pathlib
+s = pathlib.Path("SUBMISSION.md").read_text(encoding="utf-8")
+for i, b in enumerate(re.findall(r"```markdown\n(.*?)\n```", s, re.S), 1):
+    print(f"블록 {i}: {len(b)}자 / 5000")
+EOF
+```
 
 ---
 
@@ -262,6 +355,10 @@ MIT 라이선스, GitHub 공개, README만으로 실행 가능.
 | 방언 어휘 | 367 | `voisso/dialect/lexicon.json` → `entries` |
 | 어미 규칙 | 70 | 동일 → `rules` |
 | AI Hub 유래 항목 | **0** | 전 항목 `source` 태그 확인 (`curated:*`, `wikipedia:*`) |
-| MCP 첫 응답 | 0.4초 | `mcp_server/DEMO.md` 측정 |
-| 스크레이퍼 소요 | 약 35초 | 신규 클론에서 실측 |
-| STT 정확도 | 94~97% | **타입캐스트 합성음 왕복 측정. 실제 어르신 음성 아님.** |
+| MCP 첫 응답 | 0.4초 (이후 밀리초) | `mcp_server/DEMO.md` 측정 |
+| 스크레이퍼 소요 | 약 35초 | 데이터 없는 신규 클론에서 실측 (2회 재현) |
+| 안동시 이식 | 91개 부서 / 1,677건 / 약 75분 | `docs/PORTABILITY.md` 실측 |
+| STT 모델 | `gpt-4o-transcribe` | `voisso/voice/stt.py` `DEFAULT_MODEL` |
+| TTS | Typecast `ssfm-v30` / Yongsik / tempo 0.85 / -14 LUFS | `voisso/voice/tts.py` |
+| 담당자 핸드오프 | 🚧 **미구현** | 계약만 고정(`docs/CONTRACT.md` 5-B). **동작 확인 전까지 어떤 수치도 적지 마라** |
+| STT 정확도 | 94~97% | **타입캐스트 합성음 왕복 측정. 실제 어르신 음성 아님.** ⚠️ 측정 산출물이 저장소에 없다 — 커밋 권장 |

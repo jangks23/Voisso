@@ -9,7 +9,8 @@
 
   const el = {
     phone: $('phone'),
-    btnTheme: $('btnTheme'), btnSize: $('btnTextSize'),
+    btnTheme: $('btnTheme'), btnSize: $('btnTextSize'), btnMode: $('btnMode'),
+    demoBar: $('demoBar'), elderStatus: $('elderStatus'), micLabel: $('micLabel'),
     screens: { idle: $('screenIdle'), call: $('screenCall'), result: $('screenResult') },
     btnCall: $('btnCall'), modeChip: $('modeChip'),
     callee: document.querySelector('.callee'), callStatus: $('callStatus'), callTimer: $('callTimer'),
@@ -20,17 +21,27 @@
     btnMic: $('btnMic'), micLevel: document.querySelector('.mic-level'),
     hint: $('composerHint'), btnEnd: $('btnEnd'),
     delivery: $('delivery'), card: $('card'), btnAgain: $('btnAgain'),
+    handoffWait: $('handoffWait'),
     audio: $('replyAudio'), toast: $('toast'),
   };
 
   const state = {
     sessionId: null, startedAt: 0, timer: null,
     slots: {}, turns: [], busy: false, done: false, ended: false,
-    showStdAll: false, recording: false, recognizing: false, inputPath: 'text',
+    showStdAll: false, recording: false, recognizing: false, inputPath: 'text', lastMs: 0,
+    serverStt: null,          // /api/health 가 알려주는 서버 STT 가용 여부 (null = 아직 모름)
+    handoff: { id: null, status: 'none', open: false, rendered: 0, timer: 0, officer: null },
+    callerBubbles: [],        // 통화 중 만든 내 말풍선들 (종료 후 서버 전사로 채운다)
+    sttForced: null,          // 사용자가 화면에서 직접 고른 경로
   };
 
   /* ── 유틸 ──────────────────────────────────────────────── */
+  // 경북도청 원문에는 한글 폰트에 글리프가 없는 사용자 정의 영역(PUA) 문자가 섞여 있다
+  // (예: 맑은물정책과 사무분장의 U+F09E — 한컴/워드 기호 폰트에서 넘어온 글머리표).
+  // 그대로 두면 담당자 화면에 네모가 뜬다. 근본 수정은 데이터 쪽이고, 여기서는 방어만 한다.
+  const PUA = /[\uE000-\uF8FF\uFFFD]/g;
   const esc = (s) => String(s == null ? '' : s)
+    .replace(PUA, '').replace(/[ \t]{2,}/g, ' ')
     .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 
   // 서버가 세션을 잃었을 때(재기동·만료) 날 HTTP 문자열을 보여주지 않는다.
@@ -38,22 +49,105 @@
     return !!e && (e.status === 404 || /세션/.test(e.detail || '') || /HTTP 404/.test(e.message || ''));
   }
 
+  /* 연결 실패 안내 — 진단 정보를 숨기지 않는다.
+     어르신에게 보여줄 화면과 시연자가 볼 화면은 다르다. 오류 상황에서는 주소를 그대로 보여준다.
+     (옛 config.js 가 캐시돼 API 주소가 페이지 주소와 어긋나는 사고가 실제로 있었다) */
+  function connectionHelpHTML() {
+    const api = API.baseLabel();
+    const page = location.origin || '(파일에서 직접 열림)';
+    let html = '<b>' + esc(api) + '</b> 에 연결하지 못했습니더.<br>' +
+               '지금 페이지는 <b>' + esc(page) + '</b> 에서 열렸습니더.';
+    if (api !== page) {
+      html += '<br>주소가 다르면 브라우저 캐시를 비워 보이소 (⌘⇧R / Ctrl+Shift+R).';
+    }
+    return html;
+  }
+
+  // fetch 자체가 실패한 경우(서버 다운·네트워크 끊김). HTTP 상태가 아예 없다.
+  function isNetworkDown(e) {
+    return !!e && e.status === undefined &&
+      /Failed to fetch|NetworkError|Load failed|network|ERR_/i.test(String(e.message || e));
+  }
+
+  // 큰 버튼의 동작은 이 변수 하나로 갈아끼운다(리스너를 겹쳐 달면 두 개가 같이 돈다).
+  let btnEndAction = null;
+
+  function resetEndButton() {
+    btnEndAction = null;
+    el.btnEnd.textContent = isDemo() ? '통화 끝내고 민원 접수' : '통화 끝내기';
+    el.btnEnd.classList.remove('ready');
+  }
+
+  // 막다른 화면을 만들지 않는다.
+  function offerRestart(label) {
+    el.btnEnd.textContent = label || '다시 전화 걸기';
+    el.btnEnd.classList.remove('ready');
+    btnEndAction = () => { resetEndButton(); startCall(); };
+  }
+
   function handleSessionLost(where) {
+    stopReconnect();
     clearInterval(state.timer);
     state.sessionId = null;
     state.ended = true;
     el.callee.classList.remove('is-live');
-    el.callStatus.textContent = '통화 끊김';
+    say('통화가 끊어졌습니더');
     el.hint.classList.add('alert');
     el.hint.textContent = '통화가 끊어졌습니더. 아래 버튼으로 다시 걸어 주이소.';
-    el.btnEnd.textContent = '다시 전화 걸기';
-    el.btnEnd.classList.remove('ready');
-    el.btnEnd.onclick = () => {
-      el.btnEnd.textContent = '통화 끝내고 민원 접수';
-      el.btnEnd.onclick = null;
-      startCall();
-    };
+    offerRestart('다시 전화 걸기');
     toast('통화가 끊어졌습니더. 다시 걸어 주이소.' + (where ? ' (' + where + ')' : ''), 5000);
+  }
+
+  /* ── 통화 중 서버가 죽었을 때 ─────────────────────────────
+     조용히 멈추면 시연자가 당황한다. 상태를 말해 주고, 스스로 다시 붙어 본다. */
+  let reconnectTimer = 0, reconnecting = false;
+
+  function stopReconnect() {
+    if (reconnectTimer) { clearTimeout(reconnectTimer); reconnectTimer = 0; }
+    reconnecting = false;
+  }
+
+  function handleNetworkDown() {
+    if (reconnecting) return;
+    el.callee.classList.remove('is-live');
+    say('연결이 끊어졌습니더');
+    el.hint.classList.add('alert');
+    el.hint.textContent = API.baseLabel() + ' 에 연결하지 못했니더. 다시 연결해 보는 중입니더…';
+    toast('서버와 연결이 끊어졌습니더. 다시 연결해 보는 중입니더.', 4000);
+    startReconnect();
+  }
+
+  function startReconnect() {
+    if (reconnecting) return;
+    reconnecting = true;
+    let tries = 0;
+    const MAX = 10;                      // 3초 간격 · 약 30초 동안 붙어 본다
+    const tick = async () => {
+      if (!reconnecting) return;
+      tries++;
+      let ok = false;
+      try { ok = (await API.probe()).ok; } catch (e) { ok = false; }
+      if (!reconnecting) return;
+      if (ok) {
+        stopReconnect();
+        el.callee.classList.add('is-live');
+        el.callStatus.textContent = '통화 중';
+        el.hint.classList.remove('alert');
+        el.hint.textContent = '연결이 돌아왔니더. 이어서 말씀해 주이소.';
+        toast('연결이 돌아왔습니더.', 3000);
+        return;
+      }
+      if (tries >= MAX) {
+        stopReconnect();
+        say('연결이 안 됩니더');
+        el.hint.textContent = API.baseLabel() + ' 이 응답하지 않습니더. 아래 버튼으로 다시 걸어 주이소.';
+        offerRestart('다시 전화 걸기');
+        return;
+      }
+      el.hint.textContent = API.baseLabel() + ' 에 다시 연결해 보는 중입니더… (' + tries + '/' + MAX + ')';
+      reconnectTimer = setTimeout(tick, 3000);
+    };
+    reconnectTimer = setTimeout(tick, 1200);
   }
 
   function toast(msg, ms) {
@@ -100,6 +194,41 @@
     toast({ m: '글자 크기: 보통', l: '글자 크기: 크게', xl: '글자 크기: 아주 크게' }[next], 1600);
   });
 
+  /* ── 어르신 모드 / 시연 모드 ─────────────────────────────
+     기본은 어르신 모드다. 화면에는 지금 할 일 하나만 남긴다.
+     진단 정보는 시연 모드에서 전부 보인다(기능을 지우지 않는다). */
+  const isDemo = () => document.documentElement.dataset.mode === 'demo';
+
+  function setMode(mode) {
+    document.documentElement.dataset.mode = mode;
+    try { localStorage.setItem('voisso.mode', mode); } catch (e) {}
+    el.btnMode.textContent = mode === 'demo' ? '어르신' : '시연';
+    el.btnMode.title = mode === 'demo' ? '어르신 화면으로 돌아가기' : '시연 모드 — 내부 동작 보기';
+    el.demoBar.hidden = mode !== 'demo';
+    if (!btnEndAction) el.btnEnd.textContent = mode === 'demo' ? '통화 끝내고 민원 접수' : '통화 끝내기';
+    renderDemoBar();
+  }
+
+  // 상태는 색이나 아이콘이 아니라 '글자'로 알린다.
+  function say(text, kind) {
+    el.elderStatus.textContent = text;
+    el.elderStatus.classList.toggle('listening', kind === 'listening');
+    el.callStatus.textContent = text;
+  }
+
+  function renderDemoBar() {
+    if (!isDemo()) return;
+    const filled = ['what', 'where', 'when', 'contact'].filter((k) => state.slots[k]).length;
+    const bits = [
+      (API.isMock() ? '목 API' : '서버') + ' <b>' + esc(API.baseLabel()) + '</b>',
+      '입력 <b>' + esc((PATHS[state.inputPath] || {}).chip || state.inputPath) + '</b>',
+      '슬롯 <b>' + filled + '/4</b>',
+      state.lastMs ? '응답 <b>' + (state.lastMs / 1000).toFixed(1) + '초</b>' : '',
+      state.handoff.open ? '<b>담당자 연결됨</b>' : '',
+    ].filter(Boolean);
+    el.demoBar.innerHTML = bits.join(' · ');
+  }
+
   /* ── 화면 전환 ─────────────────────────────────────────── */
   function setScreen(name) {
     Object.keys(el.screens).forEach((k) => el.screens[k].classList.toggle('is-active', k === name));
@@ -132,24 +261,42 @@
   // 발화 출처에 따라 위/아래 라벨이 달라진다.
   //  - 타이핑한 말   : [사투리 원문] / [표준어 변환]
   //  - 음성으로 한 말 : [STT 원본]   / [방언 정규화 후]  ← 방언 레이어가 왜 필요한지 보여주는 자리
-  function bubbleLabels(role, source) {
+  function bubbleLabels(role, source, opts) {
+    if (!isDemo()) {
+      // 어르신 모드: 누가 말하는지만. 진단용 라벨은 시연 모드에서 보인다.
+      if (role === 'officer') {
+        const o = (opts && opts.officer) || {};
+        return { who: '담당자' + (o.department ? ' · ' + o.department : ''),
+                 std: '표준어 원문', on: '표준어 원문 보기', off: '접기' };
+      }
+      return role === 'caller'
+        ? { who: '나', std: '표준어 변환', on: '표준어 보기', off: '접기' }
+        : { who: '민원실', std: '표준어 변환', on: '표준어 보기', off: '접기' };
+    }
+    if (role === 'officer') {
+      // 사람 담당자. AI 와 헷갈리면 안 되므로 이름표를 분명히 단다.
+      const o = (opts && opts.officer) || {};
+      const who = '담당자' + (o.name ? ' ' + o.name : '') + (o.department ? ' · ' + o.department : '');
+      return { who: who, std: '담당자가 쓴 표준어 원문',
+               on: '표준어 원문 보기', off: '사투리로만 보기' };
+    }
     if (role !== 'caller') {
-      return { who: 'Voisso 상담원', std: '표준어 변환', on: '표준어 보기', off: '사투리 원문만 보기' };
+      return { who: 'Voisso 상담원 (AI)', std: '표준어 변환', on: '표준어 보기', off: '사투리 원문만 보기' };
     }
     if (source === 'voice' || source === 'voice-server') {
-      return { who: source === 'voice' ? '나 · STT 원본 (브라우저 음성인식)' : '나 · STT 원본 (서버 음성인식)',
-               std: '방언 정규화 후', on: '방언 정규화 결과 보기', off: 'STT 원본만 보기' };
+      return { who: source === 'voice' ? '나 · 받아쓴 것 (브라우저 음성인식)' : '나 · 받아쓴 것 (Whisper 음성인식)',
+               std: '방언 정규화 후', on: '전사 결과 보기', off: '접기' };
     }
     return { who: '나 (발신자)', std: '표준어 변환', on: '표준어 보기', off: '사투리 원문만 보기' };
   }
 
   function addBubble(role, dialect, standard, opts) {
     const o = opts || {};
-    const L = bubbleLabels(role, o.source);
+    const L = bubbleLabels(role, o.source, o);
     const isVoice = o.source === 'voice' || o.source === 'voice-server';
 
     const b = document.createElement('div');
-    b.className = 'bubble ' + (role === 'caller' ? 'caller' : 'agent');
+    b.className = 'bubble ' + (role === 'caller' ? 'caller' : role === 'officer' ? 'officer' : 'agent');
     if (o.pending) b.classList.add('pending');
     if (o.listening) { b.classList.add('listening'); b.setAttribute('aria-hidden', 'true'); }
     if (state.showStdAll) b.classList.add('show-std');
@@ -170,7 +317,12 @@
 
     const toggle = b.querySelector('.bubble-toggle');
     const syncToggle = () => { toggle.textContent = b.classList.contains('show-std') ? L.off : L.on; };
-    toggle.addEventListener('click', () => { b.classList.toggle('show-std'); syncToggle(); });
+    const flip = () => { b.classList.toggle('show-std'); syncToggle(); };
+    toggle.addEventListener('click', (e) => { e.stopPropagation(); flip(); });
+    b.addEventListener('click', (e) => {          // 말풍선 어디를 눌러도 펼쳐진다
+      if (e.target.closest('button') || window.getSelection().toString()) return;
+      flip();
+    });
     syncToggle();
 
     el.transcript.appendChild(b);
@@ -222,6 +374,17 @@
     api.set(dialect, standard);
     if (o.listening) api.live(dialect);
     return api;
+  }
+
+  /* 화자가 아닌 시스템 알림. 어르신에게는 이 한 줄이 '반영됐다'는 신호가 된다. */
+  function addNotice(text) {
+    const n = document.createElement('div');
+    n.className = 'notice-line';
+    n.setAttribute('role', 'status');
+    n.textContent = text;
+    el.transcript.appendChild(n);
+    scrollDown();
+    return n;
   }
 
   function addTyping() {
@@ -291,6 +454,14 @@
 
   function renderSlots(next) {
     let filled = 0;
+    // 어르신이 정정했는데 반영됐는지 모르면 불안하다. 값이 '바뀐' 경우를 잡아낸다.
+    const revised = [];
+    Object.keys(SLOT_LABEL).forEach((key) => {
+      const before = state.slots[key];
+      const after = next[key];
+      if (before && after && before !== after) revised.push({ key: key, from: before, to: after });
+    });
+
     Object.keys(SLOT_LABEL).forEach((key) => {
       const node = el.slots.querySelector('.slot[data-slot="' + key + '"]');
       const val = next[key];
@@ -301,16 +472,34 @@
           valNode.textContent = val;
           node.title = val;
           node.classList.add('filled', 'just-filled');
+          // 칸보다 긴 값이면 '눌러서 전문 보기'를 띄운다(고령자 대상이라 hover 로만 열지 않는다)
+          node.classList.toggle('is-long', String(val).length > 12);
           setTimeout(() => node.classList.remove('just-filled'), 520);
         }
       } else {
         valNode.textContent = '듣는 중…';
-        node.classList.remove('filled');
+        node.classList.remove('filled', 'is-long');
+        node.setAttribute('aria-expanded', 'false');
       }
     });
     el.slotsCount.textContent = filled + ' / 4';
+
+    revised.forEach((r) => {
+      const node = el.slots.querySelector('.slot[data-slot="' + r.key + '"]');
+      if (node) {
+        node.classList.add('revised');
+        node.dataset.prev = r.from;                  // 시연 모드에서 이전 값을 보여준다
+        setTimeout(() => node.classList.remove('just-revised'), 900);
+        node.classList.add('just-revised');
+      }
+      // 어르신 모드: 이력 대신 말로 알린다. 시연 모드: 슬롯에 이전 값이 취소선으로 남는다.
+      if (!isDemo()) addNotice(SLOT_LABEL[r.key] + '을(를) "' + r.to + '"(으)로 고쳤습니더.');
+    });
+    if (revised.length) state.slotRevisions = (state.slotRevisions || []).concat(revised);
+
     state.slots = next;
     renderSuggestions();
+    renderDemoBar();
   }
 
   /* ── 예시 답변(데모 속도용) ────────────────────────────── */
@@ -345,14 +534,20 @@
 
   async function startCall() {
     unlockAudio();                      // 반드시 사용자 클릭 핸들러 안에서 호출해야 한다
+    stopReconnect();
+    resetHandoff();
+    resetEndButton();
+    el.callee.classList.remove('is-handoff');
+    el.callee.querySelector('.callee-meta strong').textContent = '경상북도 민원실';
     setScreen('call');
     el.transcript.innerHTML = '';
     el.callee.classList.remove('is-live');
-    el.callStatus.textContent = '연결 중…';
+    say('연결하고 있습니더');
     el.btnEnd.classList.remove('ready');
     el.hint.classList.remove('alert');
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
+    state.callerBubbles = []; state.slotRevisions = [];
     renderSlots({});
     setBusy(true);
 
@@ -363,7 +558,7 @@
       state.sessionId = r.session_id;
       state.startedAt = Date.now();
       el.callee.classList.add('is-live');
-      el.callStatus.textContent = '통화 중';
+      say('말씀해 주이소');
       clearInterval(state.timer);
       const paintTimer = (v) => {
         el.callTimer.innerHTML = '<span class="sr-only">통화 시간 </span>' + esc(v);
@@ -374,10 +569,20 @@
       paintTimer('00:00');
     } catch (e) {
       setBusy(false);
-      el.callStatus.textContent = '연결 실패';
-      toast('서버 연결 실패: ' + (e.message || e), 6000);
+      const addr = API.baseLabel();
+      say('연결이 안 됩니더');
+      toast(addr + ' 에 연결하지 못했습니더.', 6000);
       el.hint.classList.add('alert');
-      el.hint.textContent = '서버에 연결하지 못했습니더. 주소 뒤에 ?mock=1 을 붙이면 데모를 볼 수 있습니더.';
+      el.hint.innerHTML = connectionHelpHTML() +
+        '<br>아래 버튼을 누르면 서버 없이 데모로 볼 수 있습니더.';
+      // 막다른 화면을 만들지 않는다 — 한 번 눌러 목 모드로 넘어간다.
+      el.btnEnd.textContent = '데모 모드로 보기';
+      el.btnEnd.classList.remove('ready');
+      btnEndAction = () => {
+        const u = new URL(location.href);
+        u.searchParams.set('mock', '1');
+        location.href = u.toString();
+      };
       return;
     }
 
@@ -409,10 +614,14 @@
         ? addBubble('caller', '(음성 전송 중…)', '(음성 전송 중…)', { pending: true, source: 'voice-server' })
         : addBubble('caller', payload.text, payload.text, { source: o.source });
     }
+    if (callerBubble) state.callerBubbles.push(callerBubble);   // 종료 후 서버 전사로 채운다
     const typing = addTyping();
 
+    const t0 = Date.now();
+    say('잠시만예');
     try {
       const r = await API.turn(state.sessionId, payload) || {};
+      state.lastMs = Date.now() - t0;
 
       // 발신자 발화: 서버가 STT/정규화 결과를 주면 그것으로 교체한다.
       const callerRaw = r.caller_text || r.stt_text || r.user_text ||
@@ -445,7 +654,9 @@
       }
 
       renderSlots(normalizeSlots(r.slots));
+      renderDemoBar();
       playAudio(r.audio_b64, r.audio_mime);
+      if (!state.handoff.open) say('말씀해 주이소');
 
       if (r.done) {
         state.done = true;
@@ -458,6 +669,7 @@
       if (callerBubble) callerBubble.set(payload.text || '(전송 실패)', payload.text || '(전송 실패)');
       setBusy(false);
       if (isSessionLost(e)) { handleSessionLost('전송 중'); return; }
+      if (isNetworkDown(e)) { handleNetworkDown(); return; }
       toast('전송 실패: ' + (e.message || e), 5000);
     }
   }
@@ -466,17 +678,20 @@
     const t = el.textIn.value.trim();
     if (!t) { el.textIn.focus(); return; }
     el.textIn.value = '';
+    // 핸드오프가 열리면 AI 를 부르지 않는다. 담당자에게 바로 간다.
+    if (state.handoff.open) { sendHandoff(t); return; }
     sendTurn({ text: t });
   }
 
   async function endCall() {
     if (!state.sessionId || state.ended) return;
+    stopReconnect();
     if (state.recording) stopRecording(true);
     if (state.recognizing) { window.VoissoSpeech.abort(); resetMicUI(); }
     if (liveBubble) { liveBubble.remove(); liveBubble = null; }
     state.ended = true;
     clearInterval(state.timer);
-    el.callStatus.textContent = '통화 종료';
+    say('접수하고 있습니더');
     el.callee.classList.remove('is-live');
     setBusy(true);
 
@@ -487,14 +702,17 @@
 
     try {
       const complaint = await API.end(state.sessionId);
+      backfillTranscript(complaint);
       renderCard(complaint);
       setTimeout(() => {
         el.delivery.classList.add('done');
         el.delivery.querySelector('.delivery-text').textContent =
           '담당자에게 전달됨 — ' + ((complaint.assigned && complaint.assigned.full_name) || '담당 부서');
       }, 1300);
+      // 화면을 닫지 않는다. 담당자가 이어받을 때까지 기다린다(계약 5-B).
+      watchHandoff(complaint.id);
     } catch (e) {
-      const lost = isSessionLost(e);
+      const lost = isSessionLost(e) || isNetworkDown(e);
       el.delivery.querySelector('.delivery-text').textContent = lost
         ? '통화가 중간에 끊어져 접수하지 못했습니더. 다시 걸어 주이소.'
         : '접수 실패: ' + (e.message || e);
@@ -506,6 +724,170 @@
       state.sessionId = null;
       setBusy(false);
     }
+  }
+
+  /* ── 계약 5-B. 담당자 핸드오프 ─────────────────────────────
+     AI 가 접수하고 사람이 이어받는다. 핸드오프가 열리면 AI 는 발화를 멈추고,
+     어르신 입력은 /api/handoff/{id}/message 로 간다.
+     담당자는 표준어로 쓰고 어르신은 사투리로 듣는다 — 방언 레이어가 통역기로 쓰인다. */
+
+  function stopHandoffPoll() {
+    if (state.handoff.timer) { clearTimeout(state.handoff.timer); state.handoff.timer = 0; }
+  }
+
+  function resetHandoff() {
+    stopHandoffPoll();
+    state.handoff = { id: null, status: 'none', open: false, rendered: 0, timer: 0, officer: null };
+    el.handoffWait.hidden = true;
+    el.handoffWait.classList.remove('done');
+  }
+
+  // 민원카드를 보여준 뒤에도 화면을 닫지 않고 담당자 연결을 기다린다.
+  function watchHandoff(complaintId) {
+    if (!complaintId) return;
+    state.handoff.id = complaintId;
+    el.handoffWait.hidden = false;
+    el.handoffWait.classList.remove('done');
+
+    const tick = async () => {
+      if (!state.handoff.id) return;
+      let h = null;
+      try { h = await API.handoffGet(state.handoff.id); } catch (e) { /* 서버가 잠깐 죽어도 계속 기다린다 */ }
+      if (!state.handoff.id) return;
+      if (h && h.status === 'open' && !state.handoff.open) {
+        enterHandoff(h);
+      } else if (h && state.handoff.open) {
+        renderHandoff(h);
+        if (h.status === 'closed') { exitHandoff(h); return; }
+      }
+      state.handoff.timer = setTimeout(tick, CFG.HANDOFF_POLL_MS || 3000);
+    };
+    stopHandoffPoll();
+    state.handoff.timer = setTimeout(tick, 1200);
+  }
+
+  function enterHandoff(h) {
+    state.handoff.open = true;
+    state.handoff.status = 'open';
+    state.handoff.officer = h.officer || null;
+    state.handoff.rendered = 0;
+
+    const o = h.officer || {};
+    const title = (o.department || '담당 부서') + ' · 담당자' + (o.name ? ' ' + o.name : '');
+
+    setScreen('call');
+    el.callee.classList.add('is-handoff');
+    el.callee.classList.remove('is-live');
+    el.callee.querySelector('.callee-meta strong').textContent = title;
+    say('담당자와 통화 중입니더');
+    el.handoffWait.hidden = true;
+
+    // 대화 흐름이 바뀌는 지점을 화면에 남긴다.
+    const div = document.createElement('div');
+    div.className = 'thread-divider';
+    div.innerHTML = '<span>' + esc(h.notice || '지금부터 담당자가 직접 응대합니더') + '</span>';
+    el.transcript.appendChild(div);
+
+    // 핸드오프 메시지 API 는 text 만 받는다. 서버 STT(오디오) 경로는 여기서 쓸 수 없다.
+    if (state.inputPath === 'server') {
+      state.sttForced = (window.VoissoSpeech && window.VoissoSpeech.supported()) ? 'web' : 'text';
+      applyInputPath();
+    }
+
+    resetEndButton();
+    el.btnEnd.textContent = '통화 끝내기';
+    btnEndAction = () => closeHandoff();
+
+    el.hint.classList.remove('alert');
+    el.hint.textContent = '담당자에게 바로 말씀하시면 됩니더.';
+    setBusy(false);
+    toast('담당자가 연결됐습니더.', 4000);
+    renderHandoff(h);
+  }
+
+  function renderHandoff(h) {
+    const msgs = Array.isArray(h.messages) ? h.messages : [];
+    for (let i = state.handoff.rendered; i < msgs.length; i++) {
+      const m = msgs[i] || {};
+      if (m.role === 'officer') {
+        // 담당자는 표준어로 썼고, 어르신에게는 사투리로 들려준다.
+        addBubble('officer', m.dialect || m.text || '', m.standard || m.text || '',
+                  { officer: state.handoff.officer || h.officer || {} });
+      } else {
+        addBubble('caller', m.dialect || m.text || '', m.standard || m.text || '',
+                  { source: 'handoff' });
+      }
+    }
+    state.handoff.rendered = msgs.length;
+    if (h.officer && h.officer.department) state.handoff.officer = h.officer;
+  }
+
+  async function sendHandoff(text) {
+    if (!state.handoff.open || !text) return;
+    setBusy(true);
+    try {
+      await API.handoffSay(state.handoff.id, text);
+      const h = await API.handoffGet(state.handoff.id);   // 내 말이 포함된 최신 목록으로 갱신
+      renderHandoff(h);
+      if (h.status === 'closed') { exitHandoff(h); return; }
+    } catch (e) {
+      toast('담당자에게 전하지 못했습니더. 다시 해 보이소.', 4500);
+    }
+    setBusy(false);
+  }
+
+  async function closeHandoff() {
+    stopHandoffPoll();
+    try { await API.handoffClose(state.handoff.id); } catch (e) { /* 실패해도 화면은 정리한다 */ }
+    exitHandoff({ status: 'closed' });
+  }
+
+  function exitHandoff(h) {
+    stopHandoffPoll();
+    state.handoff.open = false;
+    state.handoff.status = 'closed';
+    say('통화가 끝났습니더');
+    el.callee.classList.remove('is-handoff');
+    const div = document.createElement('div');
+    div.className = 'thread-divider';
+    div.innerHTML = '<span>담당자와의 통화가 끝났습니더. 고생하셨습니더.</span>';
+    el.transcript.appendChild(div);
+    scrollDown();
+    el.hint.textContent = '아래 버튼을 누르면 처음으로 돌아갑니더.';
+    resetEndButton();
+    el.btnEnd.textContent = '처음으로';
+    btnEndAction = () => { resetHandoff(); goIdle(); };
+    setBusy(true);
+    el.textIn.disabled = true;
+    el.btnSend.disabled = true;
+    el.btnMic.disabled = true;
+  }
+
+  function goIdle() {
+    stopReconnect();
+    resetHandoff();
+    resetEndButton();
+    el.callee.classList.remove('is-handoff');
+    el.callee.querySelector('.callee-meta strong').textContent = '경상북도 민원실';
+    setScreen('idle');
+    el.callTimer.innerHTML = '<span class="sr-only">통화 시간 </span>00:00';
+    el.transcript.innerHTML = '';
+    renderSlots({});
+  }
+
+  /* 통화 중에는 서버가 발신자 발화를 응답에 실어 주지 않는다(계약 5절에 그 필드가 없다).
+     대신 민원카드의 transcript 에는 dialect/standard 가 둘 다 들어온다.
+     통화가 끝나면 그 값으로 말풍선을 채워, **서버가 실제로 쓴 정규화 결과**를 보여준다. */
+  function backfillTranscript(complaint) {
+    const tr = (complaint && Array.isArray(complaint.transcript)) ? complaint.transcript : [];
+    const callerTurns = tr.filter((t) => t && t.role === 'caller');
+    state.callerBubbles.forEach((b, i) => {
+      const t = callerTurns[i];
+      if (!t || !b || !b.set) return;
+      const dia = t.dialect || t.standard || '';
+      const std = t.standard || t.dialect || '';
+      if (dia || std) b.set(dia, std);
+    });
   }
 
   /* ── 민원카드 ──────────────────────────────────────────── */
@@ -545,8 +927,42 @@
           '<div><div class="field-key">발신자</div><div class="field-val">' + esc(caller.name_masked || '익명') + '</div></div>' +
           '<div><div class="field-key">연락처</div><div class="field-val">' + esc(caller.phone_masked || '미확인') + '</div></div>' +
         '</div>' +
+        notesBlock(c) +
         slotSummary(c) +
+        transcriptLog(c) +
       '</div>';
+  }
+
+  /* 통화 전사 결과 — 어르신에게는 방해되지만 시연자·담당자에게는 필수다.
+     기본은 접어두고 누르면 펼친다. 사투리 원문과 표준어를 나란히 보여준다. */
+  function transcriptLog(c) {
+    const tr = (c && Array.isArray(c.transcript)) ? c.transcript : [];
+    if (!tr.length) return '';
+    const rows = tr.map((t) => {
+      const who = t.role === 'caller' ? '어르신' : 'Voisso (AI)';
+      const dia = t.dialect || t.standard || '';
+      const std = t.standard || '';
+      const same = dia.trim() === std.trim();
+      return '<div class="tl-row ' + (t.role === 'caller' ? 'caller' : 'agent') + '">' +
+        '<div class="tl-who">' + esc(who) + '</div>' +
+        '<div class="tl-dialect">' + esc(dia) + '</div>' +
+        (same || !std ? '' :
+          '<div class="tl-standard"><b>표준어</b> ' + markChanged(dia, std) + '</div>') +
+        '</div>';
+    }).join('');
+    return '<details class="tl-wrap"><summary class="field-key" style="cursor:pointer">' +
+           '통화 전사 결과 ' + tr.length + '줄 — 눌러서 보기</summary>' +
+           '<div class="transcript-log" style="margin-top:8px">' + rows + '</div></details>';
+  }
+
+  /* 슬롯에 안 들어가는 추가 발화. 서버가 민원카드 notes 로 준다. */
+  function notesBlock(c) {
+    const notes = (c && Array.isArray(c.notes)) ? c.notes.filter((n) => n && n.text) : [];
+    if (!notes.length) return '';
+    return '<div class="notes-block"><div class="field-key">추가로 말씀하신 내용</div>' +
+      '<div class="alts">' +
+      notes.map((n) => '<div class="alt"><span>' + esc(n.text) + '</span></div>').join('') +
+      '</div></div>';
   }
 
   function slotSummary(c) {
@@ -604,35 +1020,59 @@
   const QS = new URLSearchParams(location.search);
 
   const PATHS = {
+    server: { chip: '🎙 Whisper 음성인식', cls: 'on',
+              long: '서버 음성인식 (Whisper 계열 · 사투리 원문을 그대로 받아쓴다)' },
     web:    { chip: '🎙 브라우저 음성인식', cls: 'on',
-              long: '브라우저 내장 음성인식 (Web Speech · 키 불필요)' },
-    server: { chip: '🎙 서버 음성인식', cls: 'on',
-              long: '서버 STT (녹음 → audio_b64)' },
+              long: '브라우저 내장 음성인식 (Web Speech · 실시간 중간결과, 표준어 기준)' },
     text:   { chip: '⌨️ 텍스트 입력', cls: 'off',
-              long: '텍스트 입력 (이 브라우저는 음성 입력을 지원하지 않습니다)' },
+              long: '텍스트 입력 (음성 입력을 쓸 수 없는 환경)' },
   };
 
   function mediaRecorderSupported() {
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   }
 
+  // 서버가 STT 를 켰는지 — 하드코딩하지 않고 /api/health 응답을 본다.
+  function serverSttAvailable() {
+    if (CFG.SERVER_STT === true) return true;
+    if (CFG.SERVER_STT === false) return false;
+    return state.serverStt === true;              // 'auto'
+  }
+
+  // 지금 고를 수 있는 경로들 (칩을 눌러 순환한다)
+  function availablePaths() {
+    const out = [];
+    if (serverSttAvailable() && mediaRecorderSupported()) out.push('server');
+    if (window.VoissoSpeech && window.VoissoSpeech.supported()) out.push('web');
+    out.push('text');
+    return out;
+  }
+
   function resolveInputPath() {
+    if (state.sttForced) return state.sttForced;          // 화면에서 직접 고른 값이 최우선
     const forced = String(QS.get('stt') || CFG.STT_MODE || 'auto').toLowerCase();
     const web = window.VoissoSpeech && window.VoissoSpeech.supported();
     if (forced === 'text') return 'text';
     if (forced === 'web') return web ? 'web' : 'text';
     if (forced === 'server') return mediaRecorderSupported() ? 'server' : 'text';
-    if (web) return 'web';                                          // 기본 경로
-    if (CFG.SERVER_STT && mediaRecorderSupported()) return 'server'; // 서버 STT 가 켜져 있을 때만
-    return 'text';                                                  // 항상 가능한 최후 경로
+    // auto — 서버 STT 가 살아 있으면 그것이 기본이다.
+    // 근거: 서버 STT 는 사투리 어미를 그대로 받아쓴다(실측). 브라우저 음성인식은 표준어로
+    // 바꿔 적는 경향이 있어, 입력 단계에서 사투리가 지워지면 방언 레이어가 할 일이 없어진다.
+    if (serverSttAvailable() && mediaRecorderSupported()) return 'server';
+    if (web) return 'web';
+    return 'text';
   }
 
   function applyInputPath() {
     state.inputPath = resolveInputPath();
     const P = PATHS[state.inputPath];
+    const others = availablePaths().filter((k) => k !== state.inputPath);
     el.pathChip.textContent = P.chip;
     el.pathChip.className = 'path-chip ' + P.cls;
-    el.pathChip.title = '음성 입력 경로: ' + P.long;
+    el.pathChip.title = '음성 입력 경로: ' + P.long +
+      (others.length ? '\n눌러서 바꾸기 → ' + others.map((k) => PATHS[k].chip).join(' / ') : '');
+    el.pathChip.setAttribute('aria-label', '음성 입력 경로: ' + P.long + '. 눌러서 바꿉니다.');
+    renderDemoBar();
     el.btnMic.title = state.inputPath === 'text'
       ? '이 브라우저는 음성 입력을 지원하지 않습니다. 아래 칸에 입력해 주세요.'
       : '눌러서 말하기';
@@ -647,6 +1087,7 @@
     state.recording = false;
     el.btnMic.classList.remove('recording', 'speech');
     el.btnMic.setAttribute('aria-label', '음성으로 말하기');
+    if (el.micLabel) el.micLabel.textContent = '말하기';
   }
 
   /* 후보 재점수화 — 표준어 기준 1순위 대신, 방언 사전에 가장 잘 맞는 후보를 고른다.
@@ -687,6 +1128,8 @@
         state.recognizing = true;
         el.btnMic.classList.add('recording', 'speech');
         el.btnMic.setAttribute('aria-label', '말 끝내고 보내기');
+        if (el.micLabel) el.micLabel.textContent = '다 말했어예';
+        say('듣고 있습니더', 'listening');
         el.hint.classList.remove('alert');
         el.hint.textContent = '듣고 있습니더… 다 말씀하시면 마이크를 한 번 더 누르이소.';
         // 말하는 중에 실시간으로 채워지는 말풍선
@@ -701,6 +1144,11 @@
         if (b) {
           b.set(picked.text, picked.text);        // 우선 고른 후보 그대로 고정
           if (picked.changed) b.setTop1(picked.top1);
+        }
+        if (state.handoff.open) {                 // 담당자와 통화 중이면 AI 를 거치지 않는다
+          if (b) b.remove();                      // 서버 목록으로 다시 그린다
+          sendHandoff(picked.text);
+          return;
         }
         sendTurn({ text: picked.text, alternatives: alts },
                  { callerBubble: b, source: 'voice', top1: picked.changed ? picked.top1 : null });
@@ -752,7 +1200,9 @@
     el.btnMic.classList.add('recording');
     el.btnMic.setAttribute('aria-label', '녹음 멈추고 보내기');
     el.hint.classList.remove('alert');
-    el.hint.textContent = '듣고 있습니더… 다 말씀하시면 마이크를 한 번 더 누르이소.';
+    el.hint.textContent = '듣고 있습니더… 다 말씀하시면 한 번 더 누르이소.';
+    if (el.micLabel) el.micLabel.textContent = '다 말했어예';
+    say('듣고 있습니더', 'listening');
     meter(micStream);
   }
 
@@ -827,16 +1277,41 @@
   el.btnSend.addEventListener('click', sendText);
   el.textIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); sendText(); } });
   el.btnMic.addEventListener('click', onMicClick);
-  el.btnEnd.addEventListener('click', endCall);
-  el.btnAgain.addEventListener('click', () => {
-    setScreen('idle');
-    el.callTimer.textContent = '00:00';
-    el.transcript.innerHTML = '';
-    renderSlots({});
+
+  // 칩을 눌러 음성 입력 경로를 즉석에서 바꾼다.
+  // 데모에서 "브라우저 인식 vs 우리 서버 인식" 차이를 그 자리에서 보여줄 수 있다.
+  el.slots.addEventListener('click', (e) => {
+    const slot = e.target.closest('.slot');
+    if (!slot) return;
+    slot.setAttribute('aria-expanded', slot.getAttribute('aria-expanded') === 'true' ? 'false' : 'true');
   });
 
+  el.pathChip.addEventListener('click', () => {
+    if (state.recognizing) stopSpeech();
+    if (state.recording) stopRecording(true);
+    const opts = availablePaths();
+    const i = opts.indexOf(state.inputPath);
+    state.sttForced = opts[(i + 1) % opts.length];
+    const P = applyInputPath();
+    el.hint.classList.remove('alert');
+    el.hint.textContent = P.long;
+    toast('음성 입력: ' + P.chip.replace(/^\S+\s/, ''), 2600);
+  });
+  el.btnEnd.addEventListener('click', () => (btnEndAction ? btnEndAction() : endCall()));
+  el.btnAgain.addEventListener('click', goIdle);
+
   /* ── 초기화 ───────────────────────────────────────────── */
+  setMode(document.documentElement.dataset.mode || 'elder');
+  el.btnMode.addEventListener('click', () => setMode(isDemo() ? 'elder' : 'demo'));
+
   const PATH = applyInputPath();
+
+  // 개발자도구만 열면 즉시 상태를 알 수 있어야 한다.
+  console.log('[Voisso] API base = ' + API.baseLabel() +
+              ' · mode = ' + (API.isMock() ? 'mock' : 'server') +
+              ' · STT = ' + state.inputPath +
+              ' · assets v' + (window.VOISSO_ASSET_VERSION || '?') +
+              ' · page = ' + (location.origin || location.href));
 
   (async function initModeChip() {
     const voice = ' · 음성 입력: <b>' + esc(PATH.long) + '</b>';
@@ -846,9 +1321,17 @@
     }
     el.modeChip.textContent = '서버 확인 중…';
     const p = await API.probe();
+    // 서버가 STT 를 켰는지 확인하고 경로를 다시 고른다(하드코딩 금지).
+    state.serverStt = !!(p.stt && p.stt !== 'none');
+    const after = applyInputPath();
+    if (p.ok) {
+      console.log('[Voisso] 서버 능력 — STT=' + (p.stt || 'none') +
+                  ' · TTS=' + (p.tts || 'none') + ' · engine=' + (p.engine || '?') +
+                  ' → 입력 경로 ' + state.inputPath);
+    }
+    const voice2 = ' · 음성 입력: <b>' + esc(after.long) + '</b>';
     el.modeChip.innerHTML = (p.ok
-      ? '<b>서버 연결됨</b> · ' + esc(p.base)
-      : '<b>서버 응답 없음</b> · ' + esc(p.base) + ' — 주소 뒤에 <b>?mock=1</b> 을 붙이면 데모로 진행됩니더')
-      + voice;
+      ? '<b>서버 연결됨</b> · ' + esc(p.base) + voice2
+      : connectionHelpHTML() + '<br>주소 뒤에 <b>?mock=1</b> 을 붙이면 서버 없이 데모로 진행됩니더.' + voice);
   })();
 })();

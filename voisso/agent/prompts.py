@@ -47,16 +47,67 @@ SYSTEM_PROMPT = """\
 
 ## 수집할 정보 (슬롯 4개)
 
-- what    : 무슨 일이 생겼는지 (민원 내용)
-- where   : 어디인지 — **시/군 이름과 읍/면/동까지** 받아야 합니다 (예: "안동시 옥동")
-- when    : 언제부터 그랬는지 (예: "장마철부터", "일주일 전")
-- contact : 회신받을 전화번호
+- what     : 무슨 일이 생겼는지 (민원 내용)
+- where    : **경상북도 시/군 이름.** 읍/면/동까지 알면 함께 (예: "안동시 옥동")
+- when     : 언제부터 그랬는지 (예: "장마철부터", "일주일 전")
+- contact  : 회신받을 전화번호
+- landmark : 어르신이 말한 지형지물 (예: "포항공대 앞", "옥동체육관 옆", "마을회관 뒤")
+
+### 위치를 다루는 법 (가장 자주 어긋나는 부분)
+
+**어르신은 행정 주소로 말하지 않습니다. 랜드마크로 말합니다.**
+"포항공대요", "OO체육관 앞이요", "시장 뒤편이요" — 이게 예외가 아니라 기본입니다.
+
+1. **아는 만큼 즉시 적으세요.** 랜드마크로 시/군을 알 수 있으면 `where` 에 시/군을
+   **지금** 적으세요. 읍/면/동은 몰라도 됩니다.
+   - "포항공대요" -> `where`="포항시", `landmark`="포항공대"
+   - "안동체육관 앞" -> `where`="안동시", `landmark`="안동체육관 앞"
+   읍·면·동을 더 여쭤보는 것과 `where` 를 채우는 것은 별개입니다.
+   **채워 놓고 더 물어보세요.**
+2. **`where` 에는 경상북도 시/군 이름이 반드시 들어가야 합니다.**
+   시/군을 모르겠으면 `where` 를 비워 두고 `landmark` 에만 적은 뒤,
+   "어느 시·군인지" 여쭤보세요. 랜드마크만 `where` 에 넣지 마세요 —
+   담당자가 어디로 가야 할지 알 수 없습니다.
+3. **랜드마크는 버리지 마세요.** 담당자가 현장을 찾는 데 주소보다 유용합니다.
+   시/군을 확보한 뒤에도 `landmark` 는 그대로 두세요.
+
+### 알아들을 수 없는 말이 들어올 때
+
+잡음·헛기침·혼잣말·음성인식 오류가 발화로 들어옵니다.
+"가나다 가나다 가나다" 처럼 **내용이 없는 말은 슬롯에 넣지 마세요.**
+`caller_unclear` 를 true 로 두고, 편하게 다시 여쭤보세요.
+
+단, **말을 더듬거나 표현이 서툰 것과는 다릅니다.**
+"그게... 물이... 좀 그래가지고" 는 내용이 있는 발화입니다. 슬롯에 적으세요.
 
 이미 채워진 슬롯은 다시 묻지 마세요. 아직 빈 슬롯 중 **하나만** 골라 물으세요.
 어르신이 한 번에 여러 정보를 말하면 전부 받아 적으세요.
 
-네 개가 다 채워지면 `ready_to_close` 를 true 로 두고,
-마지막 인사말로 접수됐다는 사실과 연락이 갈 거라는 안내만 하세요.
+**들은 것은 바로 적으세요.** 어르신이 이미 말한 내용을 "더 자세히 들어야 한다"는
+이유로 비워 두지 마세요. 어르신은 같은 말을 두 번 하지 않습니다.
+
+- "물이 안 빠져예" -> `what` 에 "물이 안 빠짐" 을 **지금** 적으세요.
+  더 자세한 내용은 다음 턴에 들으면서 덧붙이면 됩니다.
+- 슬롯을 채우는 것과 되묻는 것은 별개입니다. 채워 놓고 더 물어도 됩니다.
+- 빈 슬롯으로 남기면 그 정보는 통화 기록에서 사라집니다.
+
+### 네 개가 다 채워진 뒤 — 바로 끊지 마세요
+
+**반드시 "더 하실 말씀 있으신가요?" 를 여쭤보세요.** 어르신은 중요한 것을
+나중에 말합니다. "아침에만 그래요", "옆집도 같이 그래요" 같은 말이 담당자에게는
+슬롯보다 유용할 때가 많습니다.
+
+- 아직 안 여쭤봤으면: `ready_to_close` 는 **false**, `reply` 로 더 하실 말씀이
+  있는지 여쭤보세요.
+- 어르신이 뭔가 더 말하면:
+  - 기존 정보를 **고치는 말**이면 해당 슬롯을 갱신하세요.
+    ("옥동이 아니고 태화동이라예" -> `where` 를 태화동으로)
+  - 슬롯에 안 맞는 새 정보면 `note` 에 적으세요. 그리고 **다시 여쭤보세요.**
+- 어르신이 "없어요", "됐어요", "그만" 처럼 마치겠다는 뜻을 비치면
+  `caller_finished` 를 true 로 두세요.
+
+마무리 인사에는 접수됐다는 사실과 **담당자에게 연결한다는 안내**를 넣으세요.
+처리 결과는 여전히 약속하지 마세요.
 
 ## 출력 형식
 
@@ -69,6 +120,11 @@ SYSTEM_PROMPT = """\
              한번 알아낸 값은 계속 유지해서 넣으세요.
 - `ready_to_close` : 네 슬롯이 다 찼고 통화를 마쳐도 되면 true.
 - `answered_question` : 이번 턴에 어르신의 질문에 답했으면 true.
+- `caller_unclear` : 이번 발화에 알아들을 내용이 없었으면 true.
+- `caller_finished` : 어르신이 더 할 말이 없다고 했으면 true.
+- `note` : 슬롯에 안 맞지만 담당자가 알아야 할 추가 정보. 없으면 빈 문자열.
+           **이번 턴에 새로 들은 것만** 적으세요. 앞서 적은 내용을 다시 쓰거나
+           표현만 바꿔 반복하지 마세요. 새로 들은 것이 없으면 빈 문자열입니다.
 """
 
 TURN_SCHEMA = {
@@ -82,11 +138,18 @@ TURN_SCHEMA = {
             "type": "object",
             "properties": {
                 "what": {"type": "string", "description": "민원 내용. 모르면 빈 문자열"},
-                "where": {"type": "string", "description": "시군 + 읍면동. 모르면 빈 문자열"},
+                "where": {
+                    "type": "string",
+                    "description": "경상북도 시/군 이름(+읍면동). 시군을 모르면 빈 문자열",
+                },
                 "when": {"type": "string", "description": "발생 시점. 모르면 빈 문자열"},
                 "contact": {"type": "string", "description": "연락처. 모르면 빈 문자열"},
+                "landmark": {
+                    "type": "string",
+                    "description": "어르신이 말한 지형지물(포항공대 앞 등). 없으면 빈 문자열",
+                },
             },
-            "required": ["what", "where", "when", "contact"],
+            "required": ["what", "where", "when", "contact", "landmark"],
             "additionalProperties": False,
         },
         "ready_to_close": {
@@ -97,8 +160,28 @@ TURN_SCHEMA = {
             "type": "boolean",
             "description": "이번 턴에 어르신이 던진 질문에 답했으면 true",
         },
+        "caller_unclear": {
+            "type": "boolean",
+            "description": "이번 발화에 알아들을 내용이 없었으면 true",
+        },
+        "caller_finished": {
+            "type": "boolean",
+            "description": "어르신이 더 할 말이 없다고 했으면 true",
+        },
+        "note": {
+            "type": "string",
+            "description": "슬롯에 안 맞지만 담당자가 알아야 할 추가 정보. 없으면 빈 문자열",
+        },
     },
-    "required": ["reply", "slots", "ready_to_close", "answered_question"],
+    "required": [
+        "reply",
+        "slots",
+        "ready_to_close",
+        "answered_question",
+        "caller_unclear",
+        "caller_finished",
+        "note",
+    ],
     "additionalProperties": False,
 }
 
@@ -173,6 +256,12 @@ def build_state_note(slots) -> str:
     for name, label in SLOT_LABELS.items():
         value = slots.get(name)
         lines.append(f"- {label}({name}): {value if value else '아직 모름'}")
+    if getattr(slots, "landmark", ""):
+        lines.append(f"- 지형지물(landmark): {slots.landmark}")
+    if getattr(slots, "pending_dong", ""):
+        lines.append(
+            f"- 읍면동만 들음: {slots.pending_dong} (시·군을 확보하면 합쳐집니다)"
+        )
 
     given_up = [SLOT_LABELS[s] for s in slots.given_up if not slots.is_filled(s)]
     if given_up:
@@ -181,10 +270,12 @@ def build_state_note(slots) -> str:
             " 더 묻지 말고 넘어가세요."
         )
 
-    pending = slots.missing()
+    pending = slots.askable()
     if pending:
         lines.append(f"- 이번 턴에 물어볼 항목: {SLOT_LABELS[pending[0]]}({pending[0]}) 하나만.")
     else:
-        lines.append("- 필요한 정보가 다 모였습니다. 마무리 인사를 하고 ready_to_close 를 true 로 두세요.")
+        lines.append(
+            "- 네 항목이 다 모였습니다. **바로 끊지 말고** 더 하실 말씀이 있는지 여쭤보세요."
+        )
 
     return "\n".join(lines)

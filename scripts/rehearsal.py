@@ -35,6 +35,8 @@ if str(ROOT) not in sys.path:
 
 REHEARSAL_DOC = ROOT / "docs" / "REHEARSAL.md"
 DATA_JSON = ROOT / "data" / "gb_departments.json"
+#: 합성한 어르신 발화를 재사용한다. 리허설을 돌 때마다 다시 합성하면 돈이 샌다.
+AUDIO_CACHE_DIR = ROOT / "data" / "rehearsal-cache"
 
 #: docs/DEMO_SCRIPT.md 와 server/selftest.py 가 쓰는 것과 같은 시나리오.
 #: 리허설이 실제 데모와 다른 문장을 쓰면 리허설의 의미가 없다.
@@ -48,8 +50,32 @@ RAW_PHONE = "010-1234-5678"
 MASKED_PHONE = "010-****-5678"
 REQUIRED_SLOTS = ("what", "where", "when", "contact")
 
+#: 슬롯이 다 차도 통화가 바로 안 끝난다. "더 얘기하실 사항 있으실까요?" 에 답해야
+#: done=True 가 된다(voisso/agent/session.py MAX_WRAPUP_ROUNDS). 이 문장을 빼면
+#: 리허설이 마무리 단계에서 멈춘다.
+WRAPUP_REPLY = "됐어예"
+MAX_WRAPUP_TURNS = 5
+
+#: 담당자 핸드오프(계약서 5-B). 담당자는 표준어로, 어르신은 사투리로 입력한다.
+OFFICER_NAME = "홍길동"
+OFFICER_STANDARD = "안녕하세요, 맑은물정책과 담당자입니다. 현장 확인을 나가겠습니다."
+CALLER_DIALECT = "언제쯤 오시능교? 비 오모 또 잠길낀데예"
+
 #: 대시보드(web/dashboard/app.js)의 폴링 주기. 이 안에 안 뜨면 "실시간"이 아니다.
 DASHBOARD_POLL_SEC = 4.0
+
+#: 이 저장소의 포트 규칙. 에이전트마다 전용 포트를 쓴다.
+#: 8000 은 데모용 공용 포트, 8111 은 사용자 미리보기 전용이라 테스트가 건드리면 안 된다.
+#: 리허설은 순수 테스트 도구이므로 둘 다 거부한다.
+P3_PORT = 8020
+FORBIDDEN_PORTS = {
+    8000: "데모용 공용 포트 — 다른 사람이 보고 있을 수 있다",
+    8111: "사용자 미리보기 전용 — 절대 바인딩하지 않는다",
+}
+
+#: 한 턴이 이보다 오래 걸리면 발표장에서 "멈춘 것"으로 보인다.
+#: docs/FALLBACK_REPORT.md 이슈 A(무응답 네트워크에서 턴당 최대 135초) 기준.
+SLOW_TURN_MS = 20_000
 
 STEP_NAMES = [
     "사전 조건 점검",
@@ -57,6 +83,7 @@ STEP_NAMES = [
     "통화 시나리오 완주",
     "민원카드 검증",
     "대시보드 반영 확인",
+    "담당자 핸드오프",
     "MCP 서버 셀프테스트",
     "서버 정리",
 ]
@@ -117,6 +144,111 @@ def load_dotenv() -> None:
         key, sep, value = line.partition("=")
         if sep and key.strip() and key.strip() not in os.environ:
             os.environ[key.strip()] = value.strip().strip('"').strip("'")
+
+
+# --------------------------------------------------------------------------
+# 음성 경로 (--audio)
+# --------------------------------------------------------------------------
+
+def synthesize_cached(text: str, cache_only: bool = False) -> tuple[str, str, bool]:
+    """어르신 발화를 합성한다. 같은 문장은 디스크 캐시에서 꺼내 쓴다.
+
+    리허설은 반복 실행이 목적이라 매번 합성하면 API 비용이 그대로 반복된다.
+    캐시 키에 보이스 ID 를 넣어, 보이스를 바꾸면 자연히 다시 합성되게 한다.
+
+    반환: (audio_b64, mime, 캐시에서 꺼냈는지)
+    """
+    import hashlib
+
+    voice = os.getenv("TYPECAST_VOICE_ID") or "default"
+    # 캐시 키에 현재 provider 를 넣으면 안 된다. TTS 를 끄는 순간 전부 미스가 나고,
+    # 정작 한도가 넘어 캐시가 가장 필요할 때 쓸 수 없게 된다. 음성은 보이스와
+    # 문장으로 결정되므로 그 둘만 키로 쓴다.
+    key = hashlib.sha256(f"{voice}|{text}".encode("utf-8")).hexdigest()[:16]
+    cache_path = AUDIO_CACHE_DIR / f"{key}.json"
+
+    found = cache_path if cache_path.is_file() else None
+    if found is None and AUDIO_CACHE_DIR.is_dir():
+        # 예전 키 스킴으로 저장된 파일도 찾아 쓴다 (내용으로 대조).
+        for candidate in sorted(AUDIO_CACHE_DIR.glob("*.json")):
+            try:
+                data = json.loads(candidate.read_text(encoding="utf-8"))
+            except (OSError, json.JSONDecodeError):
+                continue
+            if data.get("text") == text and data.get("voice") == voice:
+                found = candidate
+                break
+
+    if found is not None:
+        cached = json.loads(found.read_text(encoding="utf-8"))
+        return cached["audio_b64"], cached.get("mime", "audio/wav"), True
+
+    if cache_only:
+        # TTS 가 꺼져 있거나 한도가 넘은 상황. 없는 건 없는 대로 두고 텍스트로 진행한다.
+        return "", "", False
+
+    from voisso.voice import synthesize
+
+    result = synthesize(text)
+    if result.error or not result.audio_b64:
+        raise StepFailure(
+            f"어르신 발화 합성 실패 (provider={result.provider}): "
+            f"{result.error or 'audio_b64 가 비었다'}\n"
+            "TYPECAST_API_KEY 와 VOISSO_TTS_PROVIDER 를 확인해라. "
+            "음성 없이 돌리려면 --audio 를 빼면 된다."
+        )
+
+    AUDIO_CACHE_DIR.mkdir(parents=True, exist_ok=True)
+    cache_path.write_text(
+        json.dumps(
+            {"text": text, "provider": result.provider, "voice": voice,
+             "mime": result.mime or "audio/wav", "audio_b64": result.audio_b64},
+            ensure_ascii=False,
+        ),
+        encoding="utf-8",
+    )
+    return result.audio_b64, result.mime or "audio/wav", False
+
+
+def prepare_audio_clips(cache_only: bool = False) -> dict[str, dict]:
+    """시나리오 4문장을 미리 합성해 둔다 (대부분 캐시 적중).
+
+    ``cache_only`` 면 새로 합성하지 않는다. Typecast 한도가 넘었거나 TTS 를 꺼둔
+    상황에서도 **이미 캐시된 음성으로 STT 경로는 그대로 검증**할 수 있다.
+    캐시에 없는 문장은 빈 값으로 두고, 그 턴만 텍스트로 진행한다.
+    """
+    clips = {}
+    for utterance in SCENARIO:
+        audio_b64, mime, cached = synthesize_cached(utterance, cache_only=cache_only)
+        clips[utterance] = {
+            "audio_b64": audio_b64, "mime": mime,
+            "cached": cached, "available": bool(audio_b64),
+        }
+    return clips
+
+
+def measure_ttfa_stream(base: str, text: str) -> float | None:
+    """스트리밍 TTS 의 첫 오디오 바이트까지 걸린 시간(ms).
+
+    P6 이 스트리밍으로 개선 중인 지표다. 개선 효과가 기록에 숫자로 남아야 한다.
+    응답 전체를 기다리지 않고 **첫 청크가 도착한 순간**을 잰다.
+    """
+    payload = json.dumps({"text": text}).encode("utf-8")
+    req = urllib.request.Request(
+        base + "/api/tts/stream", data=payload,
+        headers={"Content-Type": "application/json", "Accept": "audio/wav"},
+    )
+    started = time.monotonic()
+    try:
+        with urllib.request.urlopen(req, timeout=60) as res:
+            while True:
+                chunk = res.read(1024)
+                if not chunk:
+                    return None          # 오디오가 한 바이트도 안 왔다 (TTS 꺼짐)
+                if chunk.strip(b"\x00"):
+                    return round((time.monotonic() - started) * 1000, 1)
+    except Exception:
+        return None
 
 
 # --------------------------------------------------------------------------
@@ -191,34 +323,104 @@ def step_start_server(host: str, port: int, audio: bool, log_path: Path):
     raise StepFailure(f"서버가 40초 안에 헬스체크를 통과하지 못했다\n{tail}")
 
 
-def step_run_call(base: str) -> dict:
-    """start -> turn 4회 -> end. 계약서 5절 API 를 그대로 쓴다."""
+def step_run_call(
+    base: str,
+    audio_clips: dict[str, dict] | None = None,
+    utterances: list[str] | None = None,
+    strict_stt: bool = False,
+    wrap_up: bool = False,
+) -> dict:
+    """start -> turn N회 -> end. 계약서 5절 API 를 그대로 쓴다.
+
+    ``audio_clips`` 가 오면 텍스트 대신 **합성한 음성**을 보낸다. 서버가 STT 로
+    받아쓰고 그 결과로 대화가 이어지는지까지 확인하는 경로다.
+    """
+    script = utterances if utterances is not None else SCENARIO
     started = request_json(base + "/api/call/start", {})
     session_id = started.get("session_id")
     if not session_id:
         raise StepFailure(f"start 응답에 session_id 가 없다: {started}")
 
     turns = []
-    for index, utterance in enumerate(SCENARIO, start=1):
-        reply = request_json(
-            base + "/api/call/turn", {"session_id": session_id, "text": utterance}
-        )
+    metrics: dict[str, list] = {"turn_ms": [], "stt_ms": [], "llm_ms": [], "tts_ms": []}
+    audio_replies = 0
+    audio_turns = 0
+    stt_errors: list[str] = []
+
+    for index, utterance in enumerate(script, start=1):
+        clip = (audio_clips or {}).get(utterance) or {}
+        if clip.get("audio_b64"):
+            body = {"session_id": session_id, "audio_b64": clip["audio_b64"]}
+            audio_turns += 1
+        else:
+            body = {"session_id": session_id, "text": utterance}
+
+        tick = time.monotonic()
+        reply = request_json(base + "/api/call/turn", body, timeout=180)
+        metrics["turn_ms"].append(round((time.monotonic() - tick) * 1000, 1))
+
         for field in ("reply_text", "reply_dialect", "slots"):
             if field not in reply:
                 raise StepFailure(f"{index}번째 turn 응답에 {field} 가 없다: {sorted(reply)}")
         if not (reply["reply_text"] or "").strip():
             raise StepFailure(f"{index}번째 turn 의 reply_text 가 비었다")
+
+        timings = (reply.get("meta") or {}).get("timings") or {}
+        for name in ("stt_ms", "llm_ms", "tts_ms"):
+            if timings.get(name):
+                metrics[name].append(timings[name])
+        if (reply.get("audio_b64") or "").strip():
+            audio_replies += 1
+
+        # STT 오류는 두 가지 상황에서 나온다.
+        #   - 정상 음성 리허설(--audio): 실패다. 음성 경로가 깨진 것이다.
+        #   - 장애 주입(잘못된 키 등): 기대된 결과다. 폴백이 도는지가 관심사다.
+        meta = reply.get("meta") or {}
+        if meta.get("stt_error"):
+            stt_errors.append(str(meta["stt_error"]))
+            if strict_stt:
+                raise StepFailure(f"{index}번째 turn 에서 STT 실패: {meta['stt_error']}")
         turns.append(reply)
 
-    ended = request_json(base + "/api/call/end", {"session_id": session_id})
+    # 슬롯이 다 차도 바로 안 끝난다. "더 얘기하실 사항 있으실까요?" 에 답해야
+    # done=True 가 된다. 여기서 멈추면 리허설이 실제 통화 흐름과 어긋난다.
+    wrapup_turns = 0
+    if wrap_up:
+        while not turns[-1].get("done") and wrapup_turns < MAX_WRAPUP_TURNS:
+            wrapup_turns += 1
+            tick = time.monotonic()
+            reply = request_json(
+                base + "/api/call/turn",
+                {"session_id": session_id, "text": WRAPUP_REPLY},
+                timeout=180,
+            )
+            metrics["turn_ms"].append(round((time.monotonic() - tick) * 1000, 1))
+            turns.append(reply)
+        if not turns[-1].get("done"):
+            raise StepFailure(
+                f"마무리 단계를 {wrapup_turns}턴 만에 통과하지 못했다 (done=False). "
+                f"마지막 응답: {turns[-1].get('reply_text', '')[:60]!r}"
+            )
+
+    ended = request_json(base + "/api/call/end", {"session_id": session_id}, timeout=180)
     card = ended.get("complaint")
     if not isinstance(card, dict):
         raise StepFailure(f"end 응답에 complaint 가 없다: {sorted(ended)}")
 
-    return {"session_id": session_id, "turns": turns, "card": card}
+    return {
+        "session_id": session_id,
+        "turns": turns,
+        "card": card,
+        "metrics": metrics,
+        "audio_replies": audio_replies,
+        "audio_turns": audio_turns,
+        "wrapup_turns": wrapup_turns,
+        "stt_errors": stt_errors,
+        "end_meta": ended.get("meta") or {},
+    }
 
 
-def step_verify_card(call: dict) -> dict:
+def step_verify_card(call: dict, audio: bool = False) -> dict:
     """H1 4단계를 민원카드로 확인한다."""
     card = call["card"]
     slots = call["turns"][-1].get("slots") or {}
@@ -226,7 +428,15 @@ def step_verify_card(call: dict) -> dict:
     # ② 슬롯 4개가 대화만으로 채워졌는가
     empty = [name for name in REQUIRED_SLOTS if not str(slots.get(name) or "").strip()]
     if empty:
-        raise StepFailure(f"슬롯이 채워지지 않았다: {', '.join(empty)} (slots={slots})")
+        detail = f"슬롯이 채워지지 않았다: {', '.join(empty)}"
+        # 서버가 스스로 '다 채웠다'고 보고하면서 값이 비어 있으면 그건 별개의 버그다.
+        # 데모 ②단계 화면에 빈 칸이 그대로 뜨므로 원인을 분리해 적는다.
+        if slots.get("complete") and not slots.get("missing"):
+            detail += (
+                f" — 그런데 서버는 complete=True, missing=[] 이라고 보고했다. "
+                f"슬롯 판정과 실제 값이 어긋난다 (voisso/agent/slots.py · P6)"
+            )
+        raise StepFailure(f"{detail}\n  slots={slots}")
 
     # ③ 사무분장 원문이 근거로 붙었는가 — 계약서가 명시한 버그 조건
     assigned = card.get("assigned") or {}
@@ -252,6 +462,9 @@ def step_verify_card(call: dict) -> dict:
     normalized = [t for t in caller_turns if (t.get("dialect") or "") != (t.get("standard") or "")]
     if not normalized:
         raise StepFailure("사투리 정규화가 한 번도 일어나지 않았다 (dialect == standard)")
+
+    if audio and call.get("audio_replies", 0) == 0:
+        raise StepFailure("음성 모드인데 응답 오디오(audio_b64)가 한 번도 오지 않았다")
 
     return {
         "complaint_id": card.get("id"),
@@ -296,6 +509,119 @@ def step_verify_dashboard(base: str, complaint_id: str) -> dict:
     return {"complaints_in_list": seen}
 
 
+def step_verify_handoff(base: str, complaint_id: str, department: str, card: dict,
+                        session_id: str) -> dict:
+    """⑤ 담당자 핸드오프 — 계약서 5-B.
+
+    이 기능의 핵심은 **양방향 통역**이다. 담당자는 표준어로 쓰고 어르신 화면에는
+    사투리로 뜬다. 반대도 마찬가지다. 그래서 각 메시지가 dialect 와 standard 를
+    둘 다 담았는지를 본다. 하나라도 비면 담당자가 경상도 사람이 아닐 때
+    대화가 성립하지 않는다.
+    """
+    opened = request_json(
+        f"{base}/api/handoff/{complaint_id}/start",
+        {"officer_name": OFFICER_NAME, "department": department},
+    )
+    if opened.get("status") != "open":
+        raise StepFailure(f"핸드오프가 열리지 않았다: {opened}")
+    if not opened.get("channel_id"):
+        raise StepFailure(f"channel_id 가 없다: {opened}")
+
+    # 담당자 -> 어르신 : 표준어 입력이 사투리로 변환되어야 한다
+    officer_sent = request_json(
+        f"{base}/api/handoff/{complaint_id}/message",
+        {"role": "officer", "text": OFFICER_STANDARD},
+    )
+    officer_msg = officer_sent.get("message") or {}
+    if not str(officer_msg.get("dialect") or "").strip():
+        raise StepFailure(
+            "담당자가 표준어로 보낸 메시지에 dialect 가 비었다 — "
+            f"어르신 화면에 보여줄 사투리가 없다 (message={officer_msg})"
+        )
+    if officer_msg.get("dialect") == officer_msg.get("standard"):
+        raise StepFailure(
+            "담당자 메시지의 dialect 가 standard 와 같다 — 사투리 변환이 일어나지 않았다: "
+            f"{officer_msg.get('dialect')!r}"
+        )
+
+    # 어르신 -> 담당자 : 사투리 입력이 표준어로 정규화되어야 한다
+    caller_sent = request_json(
+        f"{base}/api/handoff/{complaint_id}/message",
+        {"role": "caller", "text": CALLER_DIALECT},
+    )
+    caller_msg = caller_sent.get("message") or {}
+    if not str(caller_msg.get("standard") or "").strip():
+        raise StepFailure(
+            "어르신이 사투리로 보낸 메시지에 standard 가 비었다 — "
+            f"담당자 화면에 보여줄 표준어가 없다 (message={caller_msg})"
+        )
+
+    # AI 가 담당자를 연기하면 안 된다 (계약서 5-B 규칙).
+    # 통화가 끝나면 서버가 세션을 버리므로(call_end -> sessions.drop) AI 는 구조적으로
+    # 말할 수 없다. 세션이 살아 있는 구현이라면 meta.engine="handoff" 안내만 나와야
+    # 한다. 둘 중 어느 쪽이든 "AI 가 새 대사를 만들지 않는다"가 지켜지면 통과다.
+    ai_state = "세션 종료됨"
+    try:
+        spoken = request_json(
+            base + "/api/call/turn",
+            {"session_id": session_id, "text": "언제쯤 처리되능교?"},
+            timeout=60,
+        )
+    except urllib.error.HTTPError as exc:
+        if exc.code != 404:
+            raise StepFailure(f"핸드오프 중 turn 호출이 {exc.code} 로 실패했다") from exc
+    else:
+        engine = (spoken.get("meta") or {}).get("engine")
+        if engine != "handoff":
+            raise StepFailure(
+                "핸드오프가 열렸는데 AI 가 계속 대화하고 있다 "
+                f"(meta.engine={engine!r}, reply={spoken.get('reply_text', '')[:60]!r}). "
+                "누가 말하는지 헷갈리면 그 자체로 신뢰 문제다 (계약서 5-B)"
+            )
+        ai_state = "안내만 반환"
+
+    channel = request_json(f"{base}/api/handoff/{complaint_id}")
+    notice = str(channel.get("notice") or "")
+    if "담당자" not in notice:
+        raise StepFailure(
+            f"채널에 '담당자가 직접 응대' 안내가 없다 (notice={notice!r}). "
+            "어르신이 지금 누구와 말하는지 알 수 없다 (계약서 5-B)"
+        )
+    if channel.get("status") != "open":
+        raise StepFailure(f"채널 상태가 open 이 아니다: {channel.get('status')!r}")
+    messages = channel.get("messages") or []
+    if len(messages) < 2:
+        raise StepFailure(f"양쪽 메시지가 다 안 보인다 (messages={len(messages)}건)")
+    for message in messages:
+        missing = [f for f in ("role", "text", "dialect", "standard") if f not in message]
+        if missing:
+            raise StepFailure(f"메시지에 {', '.join(missing)} 가 없다: {message}")
+    roles = {m.get("role") for m in messages}
+    if not {"officer", "caller"} <= roles:
+        raise StepFailure(f"양쪽 역할이 다 담기지 않았다: {roles}")
+    intruder = roles - {"officer", "caller"}
+    if intruder:
+        raise StepFailure(
+            f"담당자·어르신 외의 발화자가 채널에 끼어 있다: {intruder} — "
+            "AI 가 담당자를 연기하면 안 된다 (계약서 5-B)"
+        )
+
+    # 담당자 실명을 민원카드에 남기지 않는다 (계약서 5-B 규칙).
+    if OFFICER_NAME in json.dumps(card, ensure_ascii=False):
+        raise StepFailure("담당자 실명이 민원카드에 저장됐다 (계약서 5-B 위반)")
+
+    closed = request_json(f"{base}/api/handoff/{complaint_id}/close", {})
+    if closed.get("status") != "closed":
+        raise StepFailure(f"핸드오프가 닫히지 않았다: {closed}")
+
+    return {
+        "messages": len(messages),
+        "officer_dialect": str(officer_msg.get("dialect") or "")[:40],
+        "caller_standard": str(caller_msg.get("standard") or "")[:40],
+        "ai_state": ai_state,
+    }
+
+
 def step_mcp_selftest() -> dict:
     """MCP 서버 셀프테스트 — 별도 트랙(인프라) 산출물의 증거."""
     result = subprocess.run(
@@ -330,6 +656,11 @@ def server_diagnostics(process, log_path: Path) -> str:
 
 
 def step_stop_server(process) -> dict:
+    """이 리허설이 띄운 프로세스 핸들만 정리한다.
+
+    포트로 프로세스를 찾아 죽이지 않는다(`lsof -ti:PORT | xargs kill` 금지).
+    같은 포트를 남이 쓰고 있으면 그 사람의 화면이 끊긴다.
+    """
     if process is None or process.poll() is not None:
         return {"note": "이미 종료됨"}
     process.terminate()
@@ -342,10 +673,206 @@ def step_stop_server(process) -> dict:
 
 
 # --------------------------------------------------------------------------
+# 장애 주입 (--chaos)
+# --------------------------------------------------------------------------
+#
+# docs/FALLBACK_REPORT.md 의 실측 시나리오 중 **환경변수만으로 자동화 가능한 것**을
+# 골랐다. 남의 코드는 건드리지 않는다. 목표는 "발표장에서 무슨 일이 나도 데모가
+# 이어진다"를 숫자로 증명하는 것이므로, 판정 기준은 **통화 완주 + 민원카드 생성 +
+# evidence 비지 않음**(계약서 5절)이다.
+#
+# STT/TTS/LLM 은 전부 urllib 기본 opener 를 쓰므로 HTTPS_PROXY 로 외부 호출을
+# 통째로 가로챌 수 있다. 죽은 포트로 보내면 '연결 거부', 응답 안 하는 소켓으로
+# 보내면 '무응답 네트워크'가 그대로 재현된다.
+
+SILENT_WAV_MS = 300
+
+
+def silent_wav_b64() -> str:
+    """무음 WAV 한 조각. 잘못된 키 시나리오에서 STT 를 태우는 용도라 내용은 무관하다."""
+    import base64
+    import io
+    import wave
+
+    buffer = io.BytesIO()
+    with wave.open(buffer, "wb") as handle:
+        handle.setnchannels(1)
+        handle.setsampwidth(2)
+        handle.setframerate(16000)
+        handle.writeframes(b"\x00\x00" * int(16000 * SILENT_WAV_MS / 1000))
+    return base64.b64encode(buffer.getvalue()).decode("ascii")
+
+
+CHAOS_SCENARIOS = [
+    {
+        "id": "no-keys",
+        "label": "키 전부 없음",
+        "ref": "FALLBACK_REPORT 시나리오 1",
+        "env": {
+            "ANTHROPIC_API_KEY": "", "OPENAI_API_KEY": "", "TYPECAST_API_KEY": "",
+            "ELEVENLABS_API_KEY": "",
+            "VOISSO_TTS_PROVIDER": "none", "VOISSO_STT_PROVIDER": "none",
+        },
+        "turns": 4,
+        "expect": "규칙 기반 엔진으로 완주",
+    },
+    {
+        "id": "bad-key",
+        "label": "잘못된 키(401)",
+        "ref": "FALLBACK_REPORT 시나리오 2",
+        "env": {
+            "OPENAI_API_KEY": "sk-proj-INVALID-KEY-FOR-CHAOS-TEST",
+            "VOISSO_STT_PROVIDER": "openai", "VOISSO_TTS_PROVIDER": "none",
+            "ANTHROPIC_API_KEY": "",
+        },
+        "turns": 4,
+        "audio": "silence",
+        "expect_signal": "401",
+        "expect": "401 을 즉시 감지하고 텍스트 모드로 완주",
+    },
+    {
+        "id": "no-data",
+        "label": "부서 데이터 없음",
+        "ref": "FALLBACK_REPORT 시나리오 5",
+        "env": {"VOISSO_TTS_PROVIDER": "none", "VOISSO_STT_PROVIDER": "none"},
+        "empty_data_dir": True,
+        "turns": 4,
+        "expect": "미배정 카드 + 사유가 담긴 evidence",
+    },
+    {
+        "id": "dead-net",
+        "label": "네트워크 끊김(연결 거부)",
+        "ref": "FALLBACK_REPORT 시나리오 3a",
+        "env": {"VOISSO_STT_PROVIDER": "none", "VOISSO_TTS_PROVIDER": "none"},
+        "proxy": "refused",
+        "turns": 4,
+        "expect": "즉시 폴백해 완주",
+    },
+    {
+        "id": "blackhole",
+        "label": "무응답 네트워크",
+        "ref": "FALLBACK_REPORT 시나리오 3b (이슈 A)",
+        "env": {"VOISSO_STT_PROVIDER": "none", "VOISSO_TTS_PROVIDER": "none"},
+        "proxy": "blackhole",
+        "turns": 1,          # 턴당 최대 135초가 걸릴 수 있어 1턴만 잰다
+        "expect": "완주하되 지연이 SLOW_TURN_MS 이내여야 발표에 쓸 수 있다",
+    },
+]
+
+
+def run_chaos(scenario: dict, host: str, port: int, log_dir: Path) -> dict:
+    """장애를 주입한 채 통화가 끝까지 가는지 본다."""
+    label = f"{scenario['label']}"
+    print(f"    · {label:<22}", end="", flush=True)
+
+    blackhole_sock = None
+    temp_data_dir = None
+    process = None
+    log_path = log_dir / f"chaos-{scenario['id']}.log"
+    started = time.monotonic()
+
+    saved_env = dict(os.environ)
+    try:
+        os.environ.update(scenario.get("env", {}))
+
+        if scenario.get("empty_data_dir"):
+            import tempfile
+            temp_data_dir = tempfile.mkdtemp(prefix="voisso-nodata-")
+            os.environ["VOISSO_DATA_DIR"] = temp_data_dir
+
+        proxy_mode = scenario.get("proxy")
+        if proxy_mode == "refused":
+            os.environ["HTTPS_PROXY"] = "http://127.0.0.1:9"
+            os.environ["HTTP_PROXY"] = "http://127.0.0.1:9"
+        elif proxy_mode == "blackhole":
+            blackhole_sock = socket.socket()
+            blackhole_sock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
+            blackhole_sock.bind(("127.0.0.1", 0))
+            blackhole_sock.listen(8)          # 연결만 받고 응답하지 않는다
+            hole = f"http://127.0.0.1:{blackhole_sock.getsockname()[1]}"
+            os.environ["HTTPS_PROXY"] = hole
+            os.environ["HTTP_PROXY"] = hole
+
+        process, _ = step_start_server(host, port, audio=True, log_path=log_path)
+        base = f"http://{host}:{port}"
+
+        clips = None
+        if scenario.get("audio") == "silence":
+            payload = silent_wav_b64()
+            clips = {u: {"audio_b64": payload, "mime": "audio/wav"} for u in SCENARIO}
+
+        call = step_run_call(
+            base,
+            audio_clips=clips,
+            utterances=SCENARIO[: scenario["turns"]],
+        )
+
+        card = call["card"]
+        assigned = card.get("assigned") or {}
+        evidence = str(assigned.get("evidence") or "").strip()
+        if not evidence:
+            raise StepFailure("장애 중에 assigned.evidence 가 비었다 (계약서 5절 위반)")
+
+        # 주입한 장애가 실제로 발생했는지 확인한다. 장애가 안 걸렸는데 통과하면
+        # 폴백을 검증한 게 아니라 그냥 정상 통화를 한 번 더 돈 것이다.
+        expect_signal = scenario.get("expect_signal")
+        if expect_signal:
+            observed = " ".join(call.get("stt_errors") or [])
+            if expect_signal not in observed:
+                raise StepFailure(
+                    f"주입한 장애가 감지되지 않았다 — {expect_signal!r} 를 기대했으나 "
+                    f"관측된 오류: {observed or '없음'}"
+                )
+
+        slowest = max(call["metrics"]["turn_ms"] or [0])
+        elapsed = round(time.monotonic() - started, 1)
+        slow = slowest > SLOW_TURN_MS
+
+        print(
+            f"{'느림' if slow else '완주':<5} "
+            f"{elapsed:>6.1f}s  최대 턴 {slowest / 1000:.1f}s  → {assigned.get('full_name', '?')}"
+        )
+        return {
+            "id": scenario["id"], "label": label, "ref": scenario["ref"],
+            "ok": not slow, "elapsed": elapsed,
+            "slowest_turn_ms": slowest, "department": assigned.get("full_name"),
+            "evidence": evidence[:90],
+            "note": "" if not slow else (
+                f"턴 최대 {slowest / 1000:.1f}초 — 발표장에서 멈춘 것으로 보인다 "
+                f"(FALLBACK_REPORT 이슈 A · P6)"
+            ),
+        }
+
+    except Exception as exc:
+        elapsed = round(time.monotonic() - started, 1)
+        detail = "\n".join(filter(None, [
+            f"{type(exc).__name__}: {exc}", server_diagnostics(process, log_path)
+        ]))
+        print(f"{'실패':<5} {elapsed:>6.1f}s")
+        for line in detail.splitlines()[:6]:
+            print(f"        {line}")
+        return {"id": scenario["id"], "label": label, "ref": scenario["ref"],
+                "ok": False, "elapsed": elapsed, "slowest_turn_ms": 0,
+                "department": None, "evidence": "", "note": detail}
+    finally:
+        if process is not None:
+            step_stop_server(process)
+        if blackhole_sock is not None:
+            blackhole_sock.close()
+        if temp_data_dir:
+            import shutil
+            shutil.rmtree(temp_data_dir, ignore_errors=True)
+        os.environ.clear()
+        os.environ.update(saved_env)
+        time.sleep(0.5)
+
+
+# --------------------------------------------------------------------------
 # 1회 리허설
 # --------------------------------------------------------------------------
 
-def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path) -> dict:
+def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path,
+             audio_clips: dict[str, dict] | None = None) -> dict:
     base = f"http://{host}:{port}"
     log_path = log_dir / f"server-run{run_no}.log"
     process = None
@@ -380,18 +907,54 @@ def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path) -> d
         tick = time.monotonic()
         process, health = step_start_server(host, port, audio, log_path)
         facts["health"] = health
+        tts_on = (health.get("tts") or {}).get("provider", "none") not in ("none", "", None)
+        stt_on = (health.get("stt") or {}).get("provider", "none") not in ("none", "", None)
+        facts["tts_on"], facts["stt_on"] = tts_on, stt_on
         record(2, time.monotonic() - tick, True,
                f"STT={health.get('stt', {}).get('provider')} "
                f"TTS={health.get('tts', {}).get('provider')}")
 
         # 3
         tick = time.monotonic()
-        call = step_run_call(base)
-        record(3, time.monotonic() - tick, True, f"턴 {len(call['turns'])}회 완주")
+        call = step_run_call(
+            base,
+            audio_clips=audio_clips if audio else None,
+            strict_stt=audio and audio_clips is not None,
+            wrap_up=True,
+        )
+        metrics = call["metrics"]
+        slowest = max(metrics["turn_ms"] or [0])
+        summary = f"턴 {len(call['turns'])}회 완주"
+        if call.get("wrapup_turns"):
+            summary += f" (마무리 확인 {call['wrapup_turns']}턴 포함)"
+        summary += f" · 최대 턴 {slowest / 1000:.1f}s"
+
+        if audio:
+            summary += f" · STT 음성입력 {call['audio_turns']}턴"
+            if tts_on:
+                ttfa = measure_ttfa_stream(base, "접수해 드리겠습니더")
+                facts["ttfa_stream_ms"] = ttfa
+                summary += (
+                    f" · 응답 음성 {call['audio_replies']}/{len(call['turns'])}"
+                    + (f" · 첫 음성 {ttfa:.0f}ms" if ttfa else " · 첫 음성 측정 불가")
+                )
+            else:
+                # Typecast 한도 초과 등으로 TTS 가 꺼진 상태. 실패가 아니라 건너뜀이다.
+                facts["tts_skipped"] = True
+                summary += " · TTS 건너뜀(꺼짐)"
+        facts["metrics"] = {
+            "turn_ms_max": slowest,
+            "turn_ms_avg": round(sum(metrics["turn_ms"]) / len(metrics["turn_ms"]), 1),
+            "stt_ms_avg": round(sum(metrics["stt_ms"]) / len(metrics["stt_ms"]), 1) if metrics["stt_ms"] else None,
+            "llm_ms_avg": round(sum(metrics["llm_ms"]) / len(metrics["llm_ms"]), 1) if metrics["llm_ms"] else None,
+            "tts_ms_avg": round(sum(metrics["tts_ms"]) / len(metrics["tts_ms"]), 1) if metrics["tts_ms"] else None,
+            "audio_replies": call["audio_replies"],
+        }
+        record(3, time.monotonic() - tick, True, summary)
 
         # 4
         tick = time.monotonic()
-        verified = step_verify_card(call)
+        verified = step_verify_card(call, audio=audio and tts_on)
         facts["card"] = verified
         record(4, time.monotonic() - tick, True,
                f"슬롯 4/4 · 배정 {verified['department']} · 마스킹 OK")
@@ -402,16 +965,27 @@ def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path) -> d
         record(5, time.monotonic() - tick, True,
                f"민원 {verified['complaint_id']} 노출 (목록 {dash['complaints_in_list']}건)")
 
-        # 6
+        # 6 — 담당자 핸드오프 (계약서 5-B)
         tick = time.monotonic()
-        mcp = step_mcp_selftest()
-        record(6, time.monotonic() - tick, True, mcp["summary"])
+        handoff = step_verify_handoff(
+            base, verified["complaint_id"], verified["department"] or "",
+            call["card"], call["session_id"],
+        )
+        facts["handoff"] = handoff
+        record(6, time.monotonic() - tick, True,
+               f"양방향 통역 {handoff['messages']}건 · AI {handoff['ai_state']} · "
+               f"담당자→어르신 {handoff['officer_dialect']!r}")
 
         # 7
         tick = time.monotonic()
+        mcp = step_mcp_selftest()
+        record(7, time.monotonic() - tick, True, mcp["summary"])
+
+        # 8
+        tick = time.monotonic()
         step_stop_server(process)
         process = None
-        record(7, time.monotonic() - tick, True)
+        record(8, time.monotonic() - tick, True)
 
         return {"run": run_no, "ok": True, "elapsed": round(time.monotonic() - started_at, 1),
                 "steps": steps, "facts": facts, "failed_step": None, "error": ""}
@@ -443,13 +1017,16 @@ DOC_HEADER = """# 통합 리허설 기록
 
 > `python3 scripts/rehearsal.py --runs 3` 이 자동으로 덧붙인다. **손으로 고치지 마라.**
 >
-> GOAL.md H1 성공 기준 — *"4단계 데모가 3회 연속 끊김 없이 재현된다."*
-> 한 회차는 사전조건 → 서버기동 → 통화 완주 → 민원카드 검증 → 대시보드 반영 →
-> MCP 셀프테스트 → 정리 7단계다. 브라우저는 쓰지 않고 HTTP 로만 확인한다.
+> GOAL.md H1 성공 기준 — *"데모가 3회 연속 끊김 없이 재현된다."*
+> 데모는 5단계다(사투리 정규화 → 슬롯 채우기 → 사무분장 근거 → 대시보드 반영 →
+> **담당자 핸드오프**). 한 회차는 사전조건 → 서버기동 → 통화 완주 → 민원카드 검증 →
+> 대시보드 반영 → 담당자 핸드오프 → MCP 셀프테스트 → 정리 8단계다.
+> 브라우저는 쓰지 않고 HTTP 로만 확인한다(P7 이 Chrome 을 단독으로 쓴다).
 """
 
 
-def append_record(results: list[dict], audio: bool, host: str, port: int) -> None:
+def append_record(results: list[dict], audio: bool, host: str, port: int,
+                  chaos_results: list[dict] | None = None) -> None:
     REHEARSAL_DOC.parent.mkdir(parents=True, exist_ok=True)
     if not REHEARSAL_DOC.exists():
         REHEARSAL_DOC.write_text(DOC_HEADER, encoding="utf-8")
@@ -470,6 +1047,19 @@ def append_record(results: list[dict], audio: bool, host: str, port: int) -> Non
         f"- 파이썬: {sys.version.split()[0]}",
     ]
 
+    if audio:
+        sample_facts = results[0]["facts"]
+        stt_state = "실제 호출" if sample_facts.get("stt_on") else "꺼짐"
+        tts_state = "건너뜀 (Typecast 한도 초과로 비활성)" if sample_facts.get("tts_skipped") else "실제 호출"
+        lines.append(f"- 음성: STT {stt_state} · TTS {tts_state}")
+
+    handoff = next((r["facts"].get("handoff") for r in results if r["facts"].get("handoff")), None)
+    if handoff:
+        lines.append(
+            f"- 핸드오프: 양방향 통역 {handoff['messages']}건 · "
+            f"AI {handoff['ai_state']} (계약서 5-B)"
+        )
+
     first = results[0]["facts"].get("preconditions")
     if first:
         active = [name for name, present in first["keys"].items() if present]
@@ -479,16 +1069,41 @@ def append_record(results: list[dict], audio: bool, host: str, port: int) -> Non
         )
         lines.append(f"- API 키: {', '.join(active) if active else '없음 — 규칙 기반 폴백으로 동작'}")
 
-    lines += ["", "| 회차 | 결과 | 소요 | 배정 부서 | 실패 단계 |", "|---|---|---|---|---|"]
+    lines += [
+        "",
+        "| 회차 | 결과 | 소요 | 최대 턴 | 첫 음성(스트리밍) | 배정 부서 | 실패 단계 |",
+        "|---|---|---|---|---|---|---|",
+    ]
     for result in results:
         card = result["facts"].get("card") or {}
+        metrics = result["facts"].get("metrics") or {}
+        slowest = metrics.get("turn_ms_max")
+        ttfa = result["facts"].get("ttfa_stream_ms")
         lines.append(
             f"| {result['run']} "
             f"| {'통과' if result['ok'] else '**실패**'} "
             f"| {result['elapsed']}s "
+            f"| {f'{slowest / 1000:.1f}s' if slowest else '—'} "
+            f"| {f'{ttfa:.0f}ms' if ttfa else '—'} "
             f"| {card.get('department', '—')} "
             f"| {result['failed_step'] or '—'} |"
         )
+
+    # 구간별 소요 — P6 의 스트리밍 TTS 개선 효과가 여기 숫자로 남는다.
+    breakdown = [r["facts"].get("metrics") or {} for r in results if r["facts"].get("metrics")]
+    if breakdown:
+        def average(name: str) -> str:
+            values = [m[name] for m in breakdown if m.get(name)]
+            return f"{sum(values) / len(values):.0f}ms" if values else "—"
+
+        lines += [
+            "",
+            "**구간별 평균** — "
+            f"STT {average('stt_ms_avg')} · "
+            f"LLM {average('llm_ms_avg')} · "
+            f"TTS {average('tts_ms_avg')} · "
+            f"턴 전체 {average('turn_ms_avg')}",
+        ]
 
     failures = [r for r in results if not r["ok"]]
     if failures:
@@ -512,6 +1127,42 @@ def append_record(results: list[dict], audio: bool, host: str, port: int) -> Non
                 f"분류: {sample.get('category', '—')} · 대안 후보 {sample.get('alternatives', 0)}곳 "
                 f"· 정규화된 발화 {sample.get('normalized_turns', 0)}개",
             ]
+        hand = results[0]["facts"].get("handoff")
+        if hand:
+            lines += [
+                "",
+                "### 담당자 핸드오프 — 양방향 통역 (1회차)",
+                "",
+                f"- 담당자 입력(표준어) → 어르신 화면: `{hand['officer_dialect']}`",
+                f"- 어르신 입력(사투리) → 담당자 화면: `{hand['caller_standard']}`",
+            ]
+
+    if chaos_results:
+        survived = sum(1 for c in chaos_results if c["ok"])
+        lines += [
+            "",
+            f"### 장애 주입 — {survived}/{len(chaos_results)}개 시나리오에서 데모가 이어졌다",
+            "",
+            "`docs/FALLBACK_REPORT.md` 의 실측 시나리오를 환경변수로 재현한다. "
+            "판정 기준은 **통화 완주 + 민원카드 생성 + evidence 비지 않음**이다.",
+            "",
+            "| 장애 | 근거 | 결과 | 소요 | 최대 턴 | 배정 |",
+            "|---|---|---|---|---|---|",
+        ]
+        for chaos in chaos_results:
+            lines.append(
+                f"| {chaos['label']} | {chaos['ref']} "
+                f"| {'완주' if chaos['ok'] else '**미달**'} "
+                f"| {chaos['elapsed']}s "
+                f"| {chaos['slowest_turn_ms'] / 1000:.1f}s "
+                f"| {chaos['department'] or '—'} |"
+            )
+        notes = [c for c in chaos_results if c.get("note")]
+        if notes:
+            lines += ["", "**조치가 필요한 항목**", ""]
+            for chaos in notes:
+                first = chaos["note"].splitlines()[0]
+                lines.append(f"- **{chaos['label']}** — {first}")
 
     with REHEARSAL_DOC.open("a", encoding="utf-8") as handle:
         handle.write("\n".join(lines) + "\n")
@@ -525,14 +1176,26 @@ def main() -> int:
     )
     parser.add_argument("--runs", type=int, default=1, help="반복 횟수 (H1 기준은 3)")
     parser.add_argument("--host", default="127.0.0.1")
-    parser.add_argument("--port", type=int, default=8020,
-                        help="기본 8020 — 개발용 8000 서버와 부딪히지 않게")
+    parser.add_argument("--port", type=int, default=P3_PORT,
+                        help=f"기본 {P3_PORT} (P3 배정 포트). 8000·8111 은 쓸 수 없다")
     audio_group = parser.add_mutually_exclusive_group()
     audio_group.add_argument("--audio", action="store_true",
                              help="TTS/STT 를 켜고 돈다 (외부 API 비용 발생)")
     audio_group.add_argument("--no-audio", action="store_true",
                              help="텍스트 모드로 돈다 (기본값)")
+    parser.add_argument("--chaos", action="store_true",
+                        help="장애를 주입하고도 완주하는지 검증한다 "
+                             "(docs/FALLBACK_REPORT.md 시나리오)")
     args = parser.parse_args()
+
+    if args.port in FORBIDDEN_PORTS:
+        print(
+            f"포트 {args.port} 은 쓸 수 없다 — {FORBIDDEN_PORTS[args.port]}.\n"
+            f"리허설은 P3 배정 포트 {P3_PORT} 을 쓴다: "
+            f"python3 scripts/rehearsal.py --port {P3_PORT}",
+            file=sys.stderr,
+        )
+        return 2
 
     load_dotenv()
     audio = args.audio          # --no-audio 는 기본값과 같으므로 명시용이다
@@ -546,36 +1209,92 @@ def main() -> int:
     print(f"  접속   : http://{args.host}:{args.port}")
     print()
 
+    audio_clips = None
+    if audio:
+        # 리허설 프로세스에서 어르신 발화를 합성한다. 캐시가 있으면 API 를 안 부른다.
+        tts_off = (os.getenv("VOISSO_TTS_PROVIDER") or "none").lower() == "none"
+        try:
+            audio_clips = prepare_audio_clips(cache_only=tts_off)
+        except StepFailure as exc:
+            print(f"  준비 실패: {exc}", file=sys.stderr)
+            return 2
+
+        usable = [c for c in audio_clips.values() if c["available"]]
+        fresh = sum(1 for c in usable if not c["cached"])
+        if tts_off:
+            print(f"  발화 음성 : 캐시 {len(usable)}/{len(audio_clips)}개 사용 "
+                  f"(TTS 꺼짐 — 새로 합성하지 않는다)")
+            print("  TTS       : 건너뜀. STT 는 실제로 태운다.")
+        else:
+            print(f"  발화 음성 : {len(audio_clips)}개 준비 "
+                  f"(캐시 {len(usable) - fresh}개 재사용, 신규 합성 {fresh}개)")
+        if not usable:
+            print("  중단: 쓸 수 있는 음성이 하나도 없다. TTS 를 켜서 한 번 캐시를 만들어라.",
+                  file=sys.stderr)
+            return 2
+        print()
+
     results = []
     for run_no in range(1, runs + 1):
         print(f"  [{run_no}/{runs}회차]")
-        result = run_once(run_no, args.host, args.port, audio, log_dir)
+        result = run_once(run_no, args.host, args.port, audio, log_dir, audio_clips)
         results.append(result)
         print()
         if run_no < runs:
             time.sleep(1)          # 포트가 완전히 풀릴 시간을 준다
 
+    chaos_results = []
+    if args.chaos:
+        print("  [장애 주입 — 발표장에서 무슨 일이 나도 이어지는가]")
+        for scenario in CHAOS_SCENARIOS:
+            chaos_results.append(run_chaos(scenario, args.host, args.port, log_dir))
+        print()
+
     passed = sum(1 for r in results if r["ok"])
     width = max(len(STEP_NAMES[i]) for i in range(len(STEP_NAMES)))
 
-    print("=" * 60)
-    print(f"{'회차':<6}{'결과':<8}{'소요':<10}{'실패 단계'}")
-    print("-" * 60)
+    print("=" * 72)
+    print(f"{'회차':<6}{'결과':<8}{'소요':<10}{'최대 턴':<10}{'첫 음성':<10}{'실패 단계'}")
+    print("-" * 72)
     for result in results:
         verdict = "통과" if result["ok"] else "실패"
+        metrics = result["facts"].get("metrics") or {}
+        slowest = metrics.get("turn_ms_max")
+        ttfa = result["facts"].get("ttfa_stream_ms")
         print(f"{result['run']:<7}{verdict:<9}{str(result['elapsed']) + 's':<11}"
+              f"{(f'{slowest / 1000:.1f}s' if slowest else '—'):<11}"
+              f"{(f'{ttfa:.0f}ms' if ttfa else '—'):<11}"
               f"{result['failed_step'] or '—'}")
-    print("-" * 60)
+    print("-" * 72)
     print(f"{passed}/{len(results)}회 통과")
 
-    append_record(results, audio, args.host, args.port)
+    if chaos_results:
+        survived = sum(1 for c in chaos_results if c["ok"])
+        print()
+        print(f"{'장애 주입':<26}{'결과':<8}{'소요':<10}{'최대 턴'}")
+        print("-" * 72)
+        for chaos in chaos_results:
+            verdict = "완주" if chaos["ok"] else "미달"
+            print(f"{chaos['label']:<22}{verdict:<10}"
+                  f"{str(chaos['elapsed']) + 's':<11}"
+                  f"{chaos['slowest_turn_ms'] / 1000:.1f}s")
+        print("-" * 72)
+        print(f"{survived}/{len(chaos_results)}개 시나리오에서 데모가 이어졌다")
+
+    append_record(results, audio, args.host, args.port, chaos_results)
     print(f"\n기록: {show_path(REHEARSAL_DOC)}")
 
+    chaos_failed = [c for c in chaos_results if not c["ok"]]
     if passed != len(results):
         print("\nH1 기준 미달 — 3회 연속 통과가 필요하다.", file=sys.stderr)
         return 1
+    if chaos_failed:
+        print("\n장애 주입에서 데모가 끊겼다:", file=sys.stderr)
+        for chaos in chaos_failed:
+            print(f"  · {chaos['label']} ({chaos['ref']}) — {chaos['note'][:120]}", file=sys.stderr)
+        return 1
     if len(results) >= 3:
-        print("\nGOAL.md H1 충족: 4단계 데모가 3회 연속 재현됐다.")
+        print("\nGOAL.md H1 충족: 5단계 데모(담당자 핸드오프 포함)가 3회 연속 재현됐다.")
     return 0
 
 

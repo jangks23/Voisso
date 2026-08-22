@@ -338,3 +338,50 @@ def restricted_entries() -> list[dict[str, Any]]:
         for item in [*entries(), *rules()]
         if str(item.get("source", "")).startswith(RESTRICTED_SOURCE_PREFIXES)
     ]
+
+def cues() -> dict[str, list[str]]:
+    """통화 마무리 신호 목록. 번역쌍이 아니라 **의도 신호**다.
+
+    ``closing_negative`` 는 "더 없다"(종료), ``closing_positive`` 는 "더 있다"(계속).
+    사투리형과 표준어형을 둘 다 담고 있어서 :func:`convert` 전후 어느 쪽에 매칭해도 걸린다.
+    """
+    return load_lexicon().get("cues", {})
+
+
+def admin_plain() -> list[dict[str, str]]:
+    """행정 문체 → 쉬운 말 대응표."""
+    return load_lexicon().get("admin_plain", [])
+
+
+@lru_cache(maxsize=1)
+def _admin_pattern() -> tuple[re.Pattern[str] | None, dict[str, str]]:
+    mapping = {item["admin"]: item["plain"] for item in admin_plain() if item.get("admin")}
+    if not mapping:
+        return None, mapping
+    # 긴 표현부터 — "회신드리겠습니다"가 "회신"에 잡아먹히면 안 된다.
+    alternation = "|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True))
+    return re.compile(alternation), mapping
+
+
+def soften(text: str) -> str:
+    """공문체 낱말을 어르신이 알아듣는 말로 바꾼다. **to_dialect() 앞에 쓴다.**
+
+    담당자는 "해당 건은 검토 후 회신드리겠습니다" 로 입력하는데, 여기에 어미 변환만
+    걸면 "…회신드리겠습니더" 가 되어 표준어일 때보다 오히려 나빠진다. 공무원이 사투리를
+    흉내 내는 소리로 들리기 때문이다. 낱말 난이도를 먼저 낮춰야 한다.
+
+    되돌릴 수 없는 의역이라 왕복 검증 대상이 아니고, :func:`convert` 안에서 자동으로
+    불리지도 않는다. 부르는 쪽이 명시적으로 선택한다.
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        pattern, mapping = _admin_pattern()
+        if pattern is None:
+            return text
+        masked, saved = _mask(text)
+        masked = pattern.sub(lambda m: mapping[m.group(0)], masked)
+        return _unmask(masked, saved)
+    except Exception:  # noqa: BLE001 - 이 레이어가 통화를 끊게 두지 않는다
+        log.exception("행정용어 순화 실패 — 원문 유지")
+        return text

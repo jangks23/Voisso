@@ -18,6 +18,9 @@
   --accent-soft:#e2f2ea;
   --danger:    #a8241c;
   --warn:      #8a5a00;
+  --officer:     #7a4700;      /* 담당자 라벨 (배경 위 7.07:1) */
+  --officer-soft:#fff4e3;      /* 담당자 말풍선 배경 */
+  --officer-line:#e0b070;
   --mark:      #fde9a8;
   --mark-ink:  #4a3a06;
   --shadow:    0 18px 46px rgba(16, 32, 52, .16);
@@ -45,6 +48,9 @@
   --accent-soft:#12302a;
   --danger:    #ff8f85;
   --warn:      #e8b866;
+  --officer:     #f0c274;      /* 다크: 배경 위 9.44:1 */
+  --officer-soft:#2b2216;
+  --officer-line:#5c4726;
   --mark:      #4c4116;
   --mark-ink:  #ffe9a8;
   --shadow:    0 18px 46px rgba(0, 0, 0, .55);
@@ -234,9 +240,11 @@ button { cursor: pointer; border: 0; background: none; }
 .path-chip {
   flex: 0 0 auto;
   font-size: .72rem; font-weight: 800; letter-spacing: -.01em;
-  padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  min-height: 44px; padding: 4px 12px; border-radius: 999px; white-space: nowrap;
   border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+  cursor: pointer; transition: border-color .16s, background .16s;
 }
+.path-chip:hover { border-color: currentColor; }
 .path-chip.on  { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-soft); }
 .path-chip.off { color: var(--warn); }
 .switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
@@ -271,6 +279,55 @@ button { cursor: pointer; border: 0; background: none; }
   box-shadow: var(--shadow-sm);
 }
 @keyframes pop { from { opacity: 0; transform: translateY(8px) scale(.985); } }
+.bubble.officer {
+  align-self: flex-start;
+  background: var(--officer-soft);
+  border: 2px solid var(--officer-line);
+  border-bottom-left-radius: 6px;
+}
+.bubble.officer .bubble-who { color: var(--officer); opacity: 1; }
+.bubble.officer .bubble-who::before { content: "👤 "; }
+.bubble.agent .bubble-who::before { content: "🤖 "; }
+
+/* 대화 흐름이 바뀌는 지점 — AI 에서 사람으로 */
+.thread-divider {
+  align-self: stretch; display: flex; align-items: center; gap: 10px;
+  margin: 6px 0 2px; color: var(--officer); font-size: .82rem; font-weight: 800;
+}
+.thread-divider::before, .thread-divider::after {
+  content: ""; flex: 1 1 auto; height: 2px; background: var(--officer-line); border-radius: 2px;
+}
+.thread-divider span { flex: 0 0 auto; word-break: keep-all; text-align: center; }
+
+/* 담당자 연결 시 통화 헤더 */
+.callee.is-handoff { background: var(--officer-soft); border-bottom-color: var(--officer-line); }
+.callee.is-handoff .callee-avatar { background: var(--officer); color: var(--officer-soft); }
+.callee.is-handoff .callee-meta span { color: var(--officer); opacity: 1; }
+.callee.is-handoff .callee-timer { color: var(--officer); }
+
+/* 담당자 연결 대기 배너 */
+.handoff-wait {
+  display: flex; align-items: center; gap: 12px;
+  margin-top: 14px; padding: 14px 16px;
+  border: 2px dashed var(--officer-line); border-radius: var(--r-md);
+  background: var(--officer-soft);
+}
+.handoff-wait[hidden] { display: none; }
+.hw-spin {
+  width: 20px; height: 20px; flex: 0 0 auto; border-radius: 50%;
+  border: 3px solid var(--officer-line); border-top-color: var(--officer);
+  animation: spin .9s linear infinite;
+}
+.hw-text { display: flex; flex-direction: column; gap: 2px; line-height: 1.45; }
+.hw-text strong { font-size: 1.02rem; font-weight: 800; }
+.hw-text span { font-size: .92rem; color: var(--text); opacity: .85; }
+.handoff-wait.done { border-style: solid; }
+.handoff-wait.done .hw-spin { border: 0; background: var(--officer); position: relative; }
+.handoff-wait.done .hw-spin::after {
+  content: "✓"; position: absolute; inset: 0; display: grid; place-items: center;
+  color: var(--officer-soft); font-size: .8rem; font-weight: 900;
+}
+
 .bubble.agent { align-self: flex-start; background: var(--surface-2); border: 1px solid var(--line); border-bottom-left-radius: 6px; }
 .bubble.caller { align-self: flex-end; background: var(--brand); color: #fff; border-bottom-right-radius: 6px; }
 :root[data-theme="dark"] .bubble.caller { color: #0b1119; }
@@ -278,12 +335,12 @@ button { cursor: pointer; border: 0; background: none; }
   font-size: .74rem; font-weight: 800; letter-spacing: .04em;
   opacity: .92; margin-bottom: 4px; text-transform: uppercase;
 }
-.bubble-dialect { font-size: 1.14rem; line-height: 1.55; word-break: keep-all; }
+.bubble-dialect { font-size: 1.14rem; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
 .bubble-std {
   display: none;
   margin-top: 10px; padding-top: 10px;
   border-top: 1px dashed currentColor;
-  font-size: 1.02rem; line-height: 1.5; opacity: .92; word-break: keep-all;
+  font-size: 1.02rem; line-height: 1.5; opacity: .92; word-break: keep-all; overflow-wrap: anywhere;
 }
 .bubble.show-std .bubble-std { display: block; animation: pop .22s ease both; }
 .bubble-std .lbl {
@@ -357,16 +414,17 @@ button { cursor: pointer; border: 0; background: none; }
 .slots-head { display: flex; align-items: baseline; justify-content: space-between; margin-bottom: 9px; }
 .slots-title { font-size: .8rem; font-weight: 800; color: var(--muted); letter-spacing: .02em; }
 .slots-count { font-size: .8rem; font-weight: 800; color: var(--brand); font-variant-numeric: tabular-nums; }
-.slots-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; }
+.slots-grid { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; min-width: 0; }
 .slot {
   background: var(--surface); border: 1px solid var(--line); border-radius: var(--r-sm);
-  padding: 8px 10px; min-height: 56px;
+  padding: 8px 10px; min-height: 56px; min-width: 0;
   display: flex; flex-direction: column; justify-content: center;
+  text-align: left; font: inherit; color: inherit; cursor: pointer;
   transition: border-color .3s, background .3s, transform .3s;
 }
 .slot-key { font-size: .74rem; font-weight: 800; color: var(--muted); letter-spacing: .02em; }
 .slot-val { font-size: .95rem; font-weight: 600; color: var(--muted);
-            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+            overflow: hidden; text-overflow: ellipsis; white-space: nowrap; min-width: 0; }
 .slot.filled { border-color: var(--accent); background: var(--accent-soft); }
 .slot.filled .slot-key { color: var(--accent-ink); }
 .slot.filled .slot-val { color: var(--text); font-weight: 700; }
@@ -472,7 +530,7 @@ button { cursor: pointer; border: 0; background: none; }
 }
 .card-top { padding: 16px 18px 14px; border-bottom: 1px solid var(--line); background: var(--brand-soft); }
 .card-no { font-size: .76rem; font-weight: 800; letter-spacing: .1em; color: var(--brand); }
-.card-summary { margin: 6px 0 0; font-size: 1.22rem; font-weight: 800; line-height: 1.45; letter-spacing: -.025em; word-break: keep-all; }
+.card-summary { margin: 6px 0 0; font-size: 1.22rem; font-weight: 800; line-height: 1.45; letter-spacing: -.025em; word-break: keep-all; overflow-wrap: anywhere; }
 .card-tags { display: flex; flex-wrap: wrap; gap: 6px; margin-top: 10px; }
 .tag {
   font-size: .78rem; font-weight: 700; padding: 4px 10px; border-radius: 999px;
@@ -480,7 +538,7 @@ button { cursor: pointer; border: 0; background: none; }
 }
 .card-body { padding: 16px 18px; display: grid; gap: 15px; }
 .field-key { font-size: .76rem; font-weight: 800; color: var(--muted); letter-spacing: .04em; margin-bottom: 4px; }
-.field-val { font-size: 1.05rem; font-weight: 700; word-break: keep-all; }
+.field-val { font-size: 1.05rem; font-weight: 700; word-break: keep-all; overflow-wrap: anywhere; }
 .assigned {
   background: var(--accent-soft); border: 1px solid var(--accent);
   border-radius: var(--r-md); padding: 13px 15px;
@@ -489,15 +547,17 @@ button { cursor: pointer; border: 0; background: none; }
 .evidence {
   margin-top: 9px; padding: 9px 11px; border-radius: var(--r-sm);
   background: var(--surface); border-left: 4px solid var(--accent);
-  font-size: .92rem; color: var(--text); line-height: 1.5; word-break: keep-all;
+  font-size: .92rem; color: var(--text); line-height: 1.5; word-break: keep-all; overflow-wrap: anywhere;
 }
 .evidence b { display: block; font-size: .72rem; color: var(--muted); letter-spacing: .04em; margin-bottom: 3px; }
 .alts { display: grid; gap: 6px; }
 .alt {
   display: flex; align-items: center; gap: 8px;
-  font-size: .9rem; color: var(--muted);
+  font-size: .9rem; color: var(--muted); min-width: 0;
   padding: 8px 10px; border-radius: var(--r-sm); background: var(--surface-2);
+  word-break: keep-all; overflow-wrap: anywhere;
 }
+.alt > span { min-width: 0; overflow-wrap: anywhere; }
 .alt .score {
   margin-left: auto; font-variant-numeric: tabular-nums;
   font-weight: 800; color: var(--brand); font-size: .84rem;
@@ -527,3 +587,175 @@ button { cursor: pointer; border: 0; background: none; }
   *, *::before, *::after { animation-duration: .01ms !important; animation-iteration-count: 1 !important; transition-duration: .01ms !important; }
   .transcript { scroll-behavior: auto; }
 }
+
+
+/* 슬롯 칸이 길면 줄여 보여주고, 눌러서 전문을 편다. hover 로만 열지 않는다. */
+.slot[aria-expanded="true"] .slot-val {
+  white-space: normal; overflow: visible; text-overflow: clip;
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+.slot.is-long::after {
+  content: "눌러서 전문 보기";
+  margin-top: 4px; font-size: .68rem; font-weight: 700; color: var(--muted); opacity: .9;
+}
+.slot[aria-expanded="true"].is-long::after { content: "접기"; }
+.slot:hover { border-color: var(--brand); }
+
+/* 통화 전사 결과 (민원카드) */
+.transcript-log { display: grid; gap: 8px; }
+.tl-row {
+  padding: 9px 11px; border-radius: var(--r-sm); background: var(--surface-2);
+  border-left: 4px solid var(--line); min-width: 0;
+}
+.tl-row.caller { border-left-color: var(--brand); }
+.tl-row.agent  { border-left-color: var(--muted); }
+.tl-who { font-size: .7rem; font-weight: 800; color: var(--muted); letter-spacing: .04em; }
+.tl-dialect { font-size: .98rem; font-weight: 600; word-break: keep-all; overflow-wrap: anywhere; }
+.tl-standard {
+  margin-top: 4px; font-size: .9rem; color: var(--muted);
+  word-break: keep-all; overflow-wrap: anywhere;
+}
+.tl-standard b { color: var(--text); }
+
+/* ═══════════════════════════════════════════════════════════
+   어르신 모드 / 시연 모드
+   ───────────────────────────────────────────────────────────
+   기본은 어르신 모드다. 한 화면에 한 가지 동작만 남기고,
+   진단 정보(전사·슬롯·경로·타이머)는 전부 시연 모드로 보낸다.
+   지우는 게 아니라 숨기는 것이다 — 시연 모드에서 전부 보인다.
+   ═══════════════════════════════════════════════════════════ */
+
+/* 시연 모드 토글 — 구석의 작은 버튼 */
+.mode-btn {
+  min-width: 46px; height: 46px; padding: 0 12px; border-radius: 13px;
+  font-size: .78rem; font-weight: 800; letter-spacing: -.02em;
+  color: var(--muted); background: var(--surface-2);
+  border: 1.5px solid var(--line);
+}
+.mode-btn:hover { border-color: var(--brand); color: var(--brand); }
+:root[data-mode="demo"] .mode-btn {
+  color: var(--brand); border-color: var(--brand); background: var(--brand-soft);
+}
+
+/* 시연 모드 전용 정보 막대 */
+.demo-bar {
+  flex: 0 0 auto; margin: 0; padding: 7px 16px;
+  font-size: .74rem; font-weight: 700; color: var(--muted);
+  background: var(--surface-2); border-bottom: 1px solid var(--line);
+  white-space: nowrap; overflow-x: auto; scrollbar-width: none;
+}
+.demo-bar::-webkit-scrollbar { display: none; }
+.demo-bar b { color: var(--text); }
+.demo-bar[hidden] { display: none; }
+
+/* ── 어르신 모드: 덜어내기 ────────────────────────────── */
+:root[data-mode="elder"] { --base: 20px; }          /* 본문 최소 20px */
+
+:root[data-mode="elder"] #btnTheme,
+:root[data-mode="elder"] #btnTextSize,
+:root[data-mode="elder"] .std-switch,
+:root[data-mode="elder"] .slots,
+:root[data-mode="elder"] .callee-timer,
+:root[data-mode="elder"] .suggestions,
+:root[data-mode="elder"] .mode-chip,
+:root[data-mode="elder"] .bubble-toggle,
+:root[data-mode="elder"] .bubble-std,
+:root[data-mode="elder"] .pick-badge,
+:root[data-mode="elder"] .demo-bar { display: none !important; }
+
+/* 어르신 모드에서는 말풍선을 눌러도 펼쳐지지 않는다 */
+:root[data-mode="elder"] .bubble { cursor: default; }
+
+/* 상단바도 조용하게 */
+:root[data-mode="elder"] .brand-text em { display: none; }
+
+/* ── 어르신 모드: 키우기 ──────────────────────────────── */
+
+/* 대기 화면 — 화면을 채우는 버튼 하나 */
+:root[data-mode="elder"] .idle-kicker { display: none; }
+:root[data-mode="elder"] .idle-title { font-size: 2.1rem; }
+:root[data-mode="elder"] .idle-sub { font-size: 1.05rem; margin-top: 8px; }
+:root[data-mode="elder"] .idle-points { display: none; }
+:root[data-mode="elder"] .call-btn {
+  width: 92%; max-width: 440px; min-height: 200px;
+  border-radius: 32px; margin: 30px 0 18px;
+  gap: 8px;
+}
+:root[data-mode="elder"] .call-btn .call-ring { border-radius: 32px; inset: -8px; }
+:root[data-mode="elder"] .call-label { font-size: 1.6rem; }     /* 20px * 1.6 = 32px */
+
+/* 통화 화면 — 말풍선을 크게, 상태는 글자로 */
+:root[data-mode="elder"] .bubble { max-width: 96%; padding: 14px 17px; }
+:root[data-mode="elder"] .bubble-dialect { font-size: 1.25rem; line-height: 1.6; }  /* 25px */
+:root[data-mode="elder"] .bubble-who { font-size: .8rem; opacity: 1; }
+:root[data-mode="elder"] .callee-meta strong { font-size: 1.15rem; }
+:root[data-mode="elder"] .callee-meta span { font-size: 1.05rem; font-weight: 700; }
+
+/* 말하기 버튼 — 화면 폭의 70% 이상, 글자 병기 */
+.mic-label { display: none; font-weight: 800; letter-spacing: -.02em; }
+:root[data-mode="elder"] .composer-row { flex-wrap: wrap; gap: 10px; }
+:root[data-mode="elder"] .mic-btn {
+  order: -1; flex: 1 0 100%; width: auto; min-height: 96px; border-radius: 22px;
+  display: flex; align-items: center; justify-content: center; gap: 12px;
+  background: var(--brand); color: #fff; border: 0;
+}
+:root[data-theme="dark"][data-mode="elder"] .mic-btn { color: #0b1119; }
+:root[data-mode="elder"] .mic-btn .mic-label { display: inline; font-size: 1.3rem; }  /* 26px */
+:root[data-mode="elder"] .mic-btn svg { width: 40px; height: 40px; }
+:root[data-mode="elder"] .mic-btn.recording { background: var(--danger); }
+:root[data-mode="elder"] .mic-btn[disabled] { opacity: .45; }
+:root[data-mode="elder"] .text-in { flex: 1 1 auto; height: 64px; font-size: 1rem; }
+:root[data-mode="elder"] .send-btn { width: 64px; height: 64px; }
+:root[data-mode="elder"] .composer-hint { font-size: .92rem; margin: 10px 2px; }
+:root[data-mode="elder"] .end-btn { min-height: 72px; font-size: 1.2rem; }
+
+/* 결과 화면 — 접수 사실과 다음 안내만 */
+:root[data-mode="elder"] .card-body > *:not(.assigned),
+:root[data-mode="elder"] .card-tags,
+:root[data-mode="elder"] .alts,
+:root[data-mode="elder"] .evidence,
+:root[data-mode="elder"] .tl-wrap,
+:root[data-mode="elder"] .kv-grid { display: none; }
+:root[data-mode="elder"] .delivery { font-size: 1.1rem; padding: 16px 18px; }
+:root[data-mode="elder"] .card-summary { font-size: 1.25rem; }
+:root[data-mode="elder"] .card-no { font-size: .9rem; }
+:root[data-mode="elder"] .assigned .field-val { font-size: 1.2rem; }
+:root[data-mode="elder"] .ghost-btn { min-height: 68px; font-size: 1.15rem; }
+:root[data-mode="elder"] .hw-text strong { font-size: 1.15rem; }
+:root[data-mode="elder"] .hw-text span { font-size: 1rem; }
+
+/* 큰 상태 글자 — "듣고 있습니더" 같은 안내 */
+.elder-status {
+  display: none; flex: 0 0 auto;
+  margin: 0; padding: 12px 16px 4px;
+  font-size: 1.15rem; font-weight: 800; letter-spacing: -.02em;
+  color: var(--brand); text-align: center;
+}
+:root[data-mode="elder"] .elder-status { display: block; }
+.elder-status.listening { color: var(--danger); }
+/* 큰 상태 글자를 쓰므로 헤더의 작은 상태는 어르신 모드에서 접는다 */
+:root[data-mode="elder"] .callee-meta span { display: none; }
+
+/* 시스템 안내 한 줄 (슬롯 정정 등). 말풍선이 아니라 알림이다. */
+.notice-line {
+  align-self: center; max-width: 92%;
+  margin: 2px 0; padding: 8px 14px; border-radius: 999px;
+  background: var(--brand-soft); color: var(--brand-ink);
+  font-size: .92rem; font-weight: 700; text-align: center;
+  word-break: keep-all; overflow-wrap: anywhere;
+  animation: pop .28s ease both;
+}
+:root[data-mode="elder"] .notice-line { font-size: 1.05rem; padding: 10px 16px; }
+
+/* 시연 모드: 정정된 슬롯에 이전 값을 남긴다 */
+.slot.revised .slot-key::after {
+  content: " · 고침"; font-size: .9em; color: var(--warn);
+}
+:root[data-mode="demo"] .slot.revised::before {
+  content: attr(data-prev);
+  display: block; font-size: .72rem; color: var(--muted);
+  text-decoration: line-through; margin-bottom: 2px;
+  overflow: hidden; text-overflow: ellipsis; white-space: nowrap;
+}
+.slot.just-revised { animation: fill .6s ease; }
+.notes-block .alt { background: var(--brand-soft); }

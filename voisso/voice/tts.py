@@ -194,6 +194,9 @@ class TTSProvider:
 
     name = "base"
     supports_streaming = False
+    # 키가 '있다'와 '통한다'는 다르다. 크레딧 소진(402)·한도(429)처럼
+    # 키가 멀쩡해도 실패하는 경우를 상태에 드러내기 위해 기억한다.
+    last_error: str | None = None
 
     @property
     def available(self) -> bool:  # pragma: no cover - 인터페이스
@@ -325,9 +328,11 @@ class TypecastProvider(TTSProvider):
                 provider=self.name,
             )
         except Exception as exc:
-            # 429 한도초과 / 5xx / 타임아웃 — 통화는 계속돼야 한다.
-            log.warning("Typecast 합성 실패, 텍스트 모드로 진행: %s", exc)
-            return TTSResult(text=text, provider=self.name, error=str(exc))
+            # 402 크레딧 소진 / 429 한도초과 / 5xx / 타임아웃 — 통화는 계속돼야 한다.
+            message = _explain_tts(exc)
+            self.last_error = message
+            log.warning("Typecast 합성 실패, 텍스트 모드로 진행: %s", message)
+            return TTSResult(text=text, provider=self.name, error=message)
 
     def stream(
         self,
@@ -346,7 +351,9 @@ class TypecastProvider(TTSProvider):
                 timeout=60.0,
             )
         except Exception as exc:
-            log.warning("Typecast 스트리밍 실패: %s", exc)
+            message = _explain_tts(exc)
+            self.last_error = message
+            log.warning("Typecast 스트리밍 실패: %s", message)
 
     # -- 설치 도우미 (통화 경로에서는 쓰지 않는다) -------------------------
     def list_voices(self) -> list[dict[str, Any]]:
@@ -383,6 +390,7 @@ class TypecastProvider(TTSProvider):
             "tempo": self.tempo,
             "target_lufs": TYPECAST_TARGET_LUFS,
             "api_key_set": bool(self.api_key),
+            "last_error": self.last_error,
             # 억양은 보이스 선택의 문제다. API 는 억양 정보를 주지 않는다.
             "accent": "보이스 선택에 따름 (API 가 억양 정보를 제공하지 않음)",
         }
@@ -438,8 +446,10 @@ class ElevenLabsProvider(TTSProvider):
                 provider=self.name,
             )
         except Exception as exc:
-            log.warning("ElevenLabs 합성 실패, 텍스트 모드로 진행: %s", exc)
-            return TTSResult(text=text, provider=self.name, error=str(exc))
+            message = _explain_tts(exc)
+            self.last_error = message
+            log.warning("ElevenLabs 합성 실패, 텍스트 모드로 진행: %s", message)
+            return TTSResult(text=text, provider=self.name, error=message)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -452,6 +462,21 @@ class ElevenLabsProvider(TTSProvider):
             "api_key_set": bool(self.api_key),
             "accent": "보이스 선택에 따름",
         }
+
+
+def _explain_tts(exc: Exception) -> str:
+    """합성 실패를 담당자가 바로 고칠 수 있는 문장으로."""
+    from ._http import HTTPError
+
+    if isinstance(exc, HTTPError):
+        if exc.status == 402:
+            return "TTS 크레딧이 소진되었습니다(402). 계정 잔액을 확인하세요."
+        if exc.status == 401:
+            return "TTS API 키가 거부되었습니다(401)."
+        if exc.status == 429:
+            return "TTS 사용 한도에 걸렸습니다(429)."
+        return str(exc)
+    return str(exc)
 
 
 _provider: TTSProvider | None = None

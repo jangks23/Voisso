@@ -10,6 +10,11 @@ data/private/
 data/raw/
 # 데모 중 생성되는 민원 카드. 통화 내용(개인정보)이 들어간다.
 data/complaints/
+# 리허설이 재사용하려고 저장해 둔 합성 음성(base64 WAV). 용량이 크고
+# scripts/rehearsal.py --audio 가 언제든 다시 만든다.
+data/rehearsal-cache/
+# 서버 E2E 검증이 합성해 두는 입력 WAV. 같은 이유로 커밋하지 않는다.
+.cache/
 
 # ── Python ───────────────────────────────────────────────────────
 __pycache__/

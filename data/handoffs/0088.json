@@ -1,0 +1,25 @@
+{
+  "complaint_id": "0088",
+  "channel_id": "8e3bd3a2dff548e08128e2fcddf67279",
+  "status": "open",
+  "officer_name_masked": "홍○○",
+  "officer_department": "기후환경국 맑은물정책과",
+  "started_at": "2026-08-22T03:19:47Z",
+  "closed_at": null,
+  "messages": [
+    {
+      "role": "officer",
+      "text": "그러면 내일 아침에 현장에 나가 보겠습니다. 조금만 기다려 주세요.",
+      "dialect": "그라믄 내일 아침에 현장에 나가 보겠습니더. 조금만 기다려 주이소.",
+      "standard": "그러면 내일 아침에 현장에 나가 보겠습니다. 조금만 기다려 주세요.",
+      "at": "2026-08-22T03:19:47Z"
+    },
+    {
+      "role": "caller",
+      "text": "낼 오신다 캅니꺼?",
+      "dialect": "낼 오신다 캅니꺼?",
+      "standard": "내일 오신다 합니까?",
+      "at": "2026-08-22T03:19:47Z"
+    }
+  ]
+}

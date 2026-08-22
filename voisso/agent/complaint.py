@@ -39,15 +39,67 @@ _NAME_PATTERNS = (
 _NOT_A_NAME = frozenset("사람 주민 어르신 할매 할배 아저씨 아줌마 여기 저기 그거 이거".split())
 
 
+# 뒤에서 이만큼은 항상 남긴다. 담당자가 번호를 대조할 수 있어야 한다.
+_KEEP_TAIL = 4
+
+
+def _head_length(digits: str) -> int:
+    """앞에서 남길 자릿수. **형태를 가정하지 않고 실제 구성을 본다.**
+
+    - 02 로 시작하면 지역번호가 두 자리다.
+    - 그 밖에 0 으로 시작하면 세 자리(010, 031, 054 …).
+    - 1 로 시작하는 8자리는 대표번호(1522-0120) 형태다.
+    - 나머지(지역번호 없는 8자리 등)는 앞을 남기지 않는다.
+      판별이 안 되면 **훼손보다 과한 마스킹이 낫다.**
+    """
+    if digits.startswith("02"):
+        head = 2
+    elif digits.startswith("0"):
+        head = 3
+    elif digits.startswith("1") and len(digits) == 8:
+        head = 4
+    else:
+        head = 0
+
+    # 앞뒤로 남길 것을 합쳐 번호 전체를 덮어 버리면 가려지는 자리가 거의
+    # 없어진다(8자리에서 1자리만 가려지는 식). 그럴 때는 앞을 통째로 가린다 —
+    # **훼손보다 과한 마스킹이 낫다.**
+    if head + _KEEP_TAIL >= len(digits):
+        head = 0
+    return head
+
+
 def mask_phone(raw: str) -> str:
-    """010-1234-5678 -> 010-****-5678. 가운데 자리만 가린다."""
-    digits = re.sub(r"\D", "", raw or "")
+    """전화번호의 가운데만 가린다.
+
+    **자릿수와 구분자 위치를 그대로 보존한다.** 예전 구현은 번호가 항상
+    `지역번호-국번-가입자번호` 3분할이라고 가정하고 가운데를 별 3개로
+    바꿨는데, 그러면 "1234-5678"(8자리)이 "123-***-5678"(10자리처럼 보임)이
+    되어 **번호 자체가 훼손됐다.** 담당자가 그 번호로 다시 전화를 걸 수 없다.
+
+        010-1234-5678 -> 010-****-5678
+        054-000-4567  -> 054-***-4567
+        1234-5678     -> ****-5678
+        01012345678   -> 010****5678      (구분자가 없으면 없는 대로)
+    """
+    source = (raw or "").strip()
+    digits = re.sub(r"\D", "", source)
     if len(digits) < 7:
         return ""
-    head = digits[:2] if digits.startswith("02") else digits[:3]
-    tail = digits[-4:]
-    middle = digits[len(head) : -4]
-    return f"{head}-{'*' * max(len(middle), 3)}-{tail}"
+
+    head = _head_length(digits)
+    keep_from = len(digits) - _KEEP_TAIL
+
+    out = []
+    index = 0
+    for char in source:
+        if char.isdigit():
+            out.append(char if (index < head or index >= keep_from) else "*")
+            index += 1
+        else:
+            # 하이픈·공백·괄호는 위치를 그대로 둔다.
+            out.append(char)
+    return "".join(out)
 
 
 def mask_name(raw: str) -> str:
@@ -205,6 +257,7 @@ def build_complaint(
     summary: str,
     category: str,
     routing_query: str = "",
+    notes: list[dict[str, Any]] | None = None,
 ) -> dict[str, Any]:
     """계약서 5절 민원카드를 만든다. 키 구성은 계약서와 정확히 같다."""
     assigned, alternatives = build_assignment(routing_query, slots)
@@ -233,7 +286,19 @@ def build_complaint(
             # 원본 번호는 카드에 넣지 않는다. 마스킹된 값만 저장된다.
             "phone_masked": mask_phone(contact_raw) if contact_raw else "",
         },
+        # 슬롯에 안 맞지만 담당자에게 중요한 추가 정보.
+        # ("아침에만 그래예", "옆집도 같이 그래예" 같은 것들이 실제로 중요하다)
+        "notes": [_clean_note(n) for n in (notes or [])],
         "transcript": [_clean_entry(e) for e in transcript],
+    }
+
+
+def _clean_note(note: dict[str, Any]) -> dict[str, str]:
+    """메모도 전화번호를 마스킹해서 저장한다."""
+    return {
+        "text": redact_phones(str(note.get("text") or "").strip()),
+        "at": str(note.get("at") or ""),
+        "source": str(note.get("source") or "caller"),
     }
 
 

@@ -113,3 +113,48 @@ def post_stream(
         raise HTTPError(exc.code, exc.read(), url) from exc
     except urllib.error.URLError as exc:
         raise RuntimeError(f"연결 실패 {url}: {exc.reason}") from exc
+
+
+def post_sse_lines(
+    url: str,
+    payload: dict[str, Any],
+    headers: dict[str, str],
+    timeout: float = 60.0,
+):
+    """JSON 을 보내고 `data: ...` 형식(SSE) 응답을 줄 단위로 흘려보낸다.
+
+    OpenAI 의 `stream: true` 응답을 읽는 데 쓴다. 토큰이 도착하는 대로
+    넘겨줘야 첫 문장을 빨리 뽑을 수 있으므로 버퍼링하지 않는다.
+    `[DONE]` 센티널은 걸러내고 파싱된 dict 만 내보낸다.
+    """
+    body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+    merged = {
+        "Content-Type": "application/json; charset=utf-8",
+        "Accept": "text/event-stream",
+        **headers,
+    }
+    req = urllib.request.Request(url, data=body, headers=merged, method="POST")
+    try:
+        with urllib.request.urlopen(req, timeout=timeout) as resp:
+            buffer = b""
+            while True:
+                chunk = resp.read(1024)
+                if not chunk:
+                    break
+                buffer += chunk
+                while b"\n" in buffer:
+                    raw, buffer = buffer.split(b"\n", 1)
+                    line = raw.strip()
+                    if not line or not line.startswith(b"data:"):
+                        continue
+                    data = line[5:].strip()
+                    if data == b"[DONE]":
+                        return
+                    try:
+                        yield json.loads(data.decode("utf-8"))
+                    except json.JSONDecodeError:
+                        continue
+    except urllib.error.HTTPError as exc:
+        raise HTTPError(exc.code, exc.read(), url) from exc
+    except urllib.error.URLError as exc:
+        raise RuntimeError(f"연결 실패 {url}: {exc.reason}") from exc

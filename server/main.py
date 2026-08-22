@@ -11,6 +11,7 @@
 
 from __future__ import annotations
 
+import json
 import logging
 
 from fastapi import FastAPI, HTTPException
@@ -22,6 +23,24 @@ from typing import Any
 from pydantic import BaseModel, Field
 
 from voisso.agent import agent_status
+from voisso.agent.session import MAX_SESSION_TOKENS, MAX_TURNS
+from voisso.agent.callback import (
+    ROLE_AGENT,
+    STATUS_ANSWERED,
+    STATUS_PENDING,
+    Callback,
+    answer_from_facts,
+)
+from voisso.agent.callback import VALID_ROLES as CALLBACK_ROLES
+from voisso.agent.callback import empty_status as callback_empty_status
+from voisso.agent.callback import STATUS_CLOSED
+from voisso.agent.handoff import (
+    HANDOFF_NOTICE,
+    VALID_ROLES,
+    Handoff,
+    empty_status,
+)
+from voisso.agent.usage import PROCESS_TOTAL
 from voisso.voice import SpeechContext, get_tts_provider, stt_status, tts_status
 from voisso.voice import stream as tts_stream
 from voisso.voice.vocabulary import vocabulary_status
@@ -29,7 +48,7 @@ from voisso.voice.vocabulary import vocabulary_status
 import os
 
 from . import config
-from .store import ComplaintStore, SessionStore
+from .store import CallbackStore, ComplaintStore, HandoffStore, SessionStore
 
 # .env 는 다른 것을 읽기 전에 먼저 반영해야 한다.
 config.load_dotenv()
@@ -57,6 +76,8 @@ app.add_middleware(
 
 sessions = SessionStore()
 complaints = ComplaintStore(config.COMPLAINTS_DIR)
+handoffs = HandoffStore(config.HANDOFFS_DIR)
+callbacks = CallbackStore(config.CALLBACKS_DIR)
 
 
 # --------------------------------------------------------------------------
@@ -78,10 +99,38 @@ class TurnRequest(BaseModel):
     # 문자열 배열이거나 [{"transcript": ..., "confidence": ...}] 형태.
     # 없으면 기존처럼 text 만 쓴다(하위호환).
     alternatives: list[Any] | None = None
+    # False 면 TTS 를 건너뛰고 텍스트만 돌려준다. 클라이언트가
+    # /api/tts/stream 으로 따로 받아 재생할 때 쓴다.
+    want_audio: bool = True
 
 
 class EndRequest(BaseModel):
     session_id: str
+
+
+class TurnStreamRequest(TurnRequest):
+    """스트리밍 턴 요청. 필드는 `/api/call/turn` 과 같다."""
+
+
+class HandoffStartRequest(BaseModel):
+    officer_name: str = Field(default="", description="담당자 이름 — 마스킹해서만 저장한다")
+    department: str = Field(default="", description="담당 부서")
+
+
+class HandoffMessageRequest(BaseModel):
+    role: str = Field(description="officer | caller")
+    text: str
+
+
+class CallbackScheduleRequest(BaseModel):
+    briefing: str = Field(description="담당자가 표준어로 쓴 진행 상황")
+    officer_name: str = Field(default="", description="담당자 이름 — 마스킹해서만 저장한다")
+    department: str = Field(default="", description="담당 부서")
+
+
+class CallbackMessageRequest(BaseModel):
+    role: str = Field(description="caller | agent")
+    text: str
 
 
 class SpeakRequest(BaseModel):
@@ -138,7 +187,14 @@ def runtime_status() -> dict:
     else:
         stt_label = "음성 인식 꺼짐 · 텍스트 입력만"
 
-    tts_label = "음성 출력 꺼짐 · 텍스트만" if tts["provider"] == "none" else f"음성 출력 ({tts['provider']})"
+    tts_error = tts.get("last_error")
+    if tts_error:
+        tts_label = f"음성 출력 실패 · {tts_error}"
+        missing_keys.append(f"{tts['provider']} 크레딧/키 점검")
+    elif tts["provider"] == "none":
+        tts_label = "음성 출력 꺼짐 · 텍스트만"
+    else:
+        tts_label = f"음성 출력 ({tts['provider']})"
 
     integrations = agent["integrations"]
     return {
@@ -190,6 +246,11 @@ def call_turn(payload: TurnRequest) -> dict:
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다. 통화를 다시 시작해 주세요.")
 
+    # 핸드오프가 열렸으면 AI 는 말하지 않는다. 담당자를 연기하면 안 된다.
+    silenced = _handoff_notice(session)
+    if silenced is not None:
+        return silenced
+
     has_alternatives = bool(payload.alternatives)
     if (
         not (payload.text or "").strip()
@@ -203,6 +264,60 @@ def call_turn(payload: TurnRequest) -> dict:
         text=payload.text,
         audio_b64=payload.audio_b64,
         alternatives=payload.alternatives,
+        want_audio=payload.want_audio,
+    )
+
+
+@app.post("/api/call/turn/stream")
+def call_turn_stream(payload: TurnStreamRequest):
+    """턴을 NDJSON 으로 흘려보낸다 (계약 외 추가 엔드포인트).
+
+    계약서의 `/api/call/turn` 은 LLM 과 TTS 가 **다 끝나야** 응답이 나가므로
+    첫 소리까지 두 시간이 그대로 더해진다. 여기서는 LLM 이 첫 문장을 뱉는
+    즉시 합성을 시작해 시간이 겹쳐진다.
+
+    응답: `application/x-ndjson` — 한 줄에 JSON 객체 하나.
+
+        {"type":"heard","dialect":"…","standard":"…"}
+        {"type":"sentence","index":0,"standard":"…","dialect":"…"}
+        {"type":"audio_start","index":0,"mime":"audio/wav",
+         "sample_rate":32000,"bits":16,"channels":1}
+        {"type":"audio_chunk","index":0,"seq":0,"b64":"…"}   ← 첫 청크에 WAV 헤더
+        {"type":"audio_chunk","index":0,"seq":1,"b64":"…"}   ← 이후는 raw PCM
+        {"type":"audio_end","index":0,"chunks":49}
+        {"type":"sentence","index":1,…}                       ← 다음 문장 반복
+        {"type":"final","reply_text":…,"reply_dialect":…,"slots":{…},"done":false,"meta":{…}}
+
+    클라이언트는 `audio_chunk` 를 **seq 순서대로 이어 붙여** 재생하면 된다.
+    `final` 의 `slots`/`done` 은 `/api/call/turn` 과 같은 값이다.
+    """
+    session = sessions.get(payload.session_id)
+    if session is None:
+        raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다. 통화를 다시 시작해 주세요.")
+
+    silenced = _handoff_notice(session)
+    if silenced is not None:
+        return StreamingResponse(
+            iter([json.dumps({"type": "final", **silenced}, ensure_ascii=False) + "\n"]),
+            media_type="application/x-ndjson",
+        )
+
+    def emit():
+        try:
+            for event in session.turn_stream(
+                text=payload.text,
+                audio_b64=payload.audio_b64,
+                alternatives=payload.alternatives,
+            ):
+                yield json.dumps(event, ensure_ascii=False) + "\n"
+        except Exception as exc:  # 스트림 도중 죽어도 클라이언트가 알 수 있게
+            log.exception("스트리밍 턴 실패")
+            yield json.dumps({"type": "error", "message": str(exc)}, ensure_ascii=False) + "\n"
+
+    return StreamingResponse(
+        emit(),
+        media_type="application/x-ndjson",
+        headers={"Cache-Control": "no-store", "X-Accel-Buffering": "no"},
     )
 
 
@@ -232,7 +347,11 @@ def call_end(payload: EndRequest) -> dict:
         session.end_timings.get("routing_ms", 0.0),
     )
     # `complaint` 는 계약서 5절 스키마 그대로다. `meta` 는 추가 필드.
-    return {"complaint": complaint, "meta": {"timings": session.end_timings}}
+    # 사용량은 민원 데이터가 아니므로 카드에 넣지 않고 meta 로만 보낸다.
+    return {
+        "complaint": complaint,
+        "meta": {"timings": session.end_timings, "usage": session.usage.as_dict()},
+    }
 
 
 # --------------------------------------------------------------------------
@@ -242,7 +361,13 @@ def call_end(payload: EndRequest) -> dict:
 
 @app.get("/api/complaints")
 def list_complaints() -> dict:
-    return {"complaints": complaints.list_all()}
+    # `handoffs` 는 추가 필드다. 대시보드가 목록에서 연결 상태를 바로 보도록
+    # {민원번호: "open"|"closed"} 를 함께 준다. 계약의 `complaints` 는 그대로다.
+    return {
+        "complaints": complaints.list_all(),
+        "handoffs": handoffs.statuses(),
+        "callbacks": callbacks.statuses(),
+    }
 
 
 @app.get("/api/complaints/{complaint_id}")
@@ -288,6 +413,240 @@ def tts_stream_endpoint(payload: SpeakRequest):
     )
 
 
+def _handoff_notice(session) -> dict | None:
+    """이 통화에 열린 핸드오프가 있으면 AI 대신 안내를 돌려준다.
+
+    **AI 가 담당자를 연기하면 안 된다.** 접수까지가 AI 의 역할이고, 그 뒤로는
+    사람이 책임진다. 누가 말하는지 헷갈리는 순간 신뢰가 무너진다.
+    """
+    complaint_id = getattr(session, "complaint_id", None)
+    if not complaint_id:
+        return None
+    handoff = handoffs.get(complaint_id)
+    if handoff is None or not handoff.is_open:
+        return None
+
+    from voisso.agent import integrations
+
+    return {
+        "session_id": session.id,
+        "reply_text": HANDOFF_NOTICE,
+        "reply_dialect": integrations.to_dialect(HANDOFF_NOTICE),
+        "audio_b64": None,
+        "audio_mime": None,
+        "done": True,
+        "slots": session.slots.as_dict(),
+        "meta": {"engine": "handoff", "handoff": handoff.as_dict()["status"]},
+    }
+
+
+@app.post("/api/handoff/{complaint_id}/start")
+def handoff_start(complaint_id: str, payload: HandoffStartRequest) -> dict:
+    """담당자가 민원을 이어받는다. 민원카드가 있어야만 시작된다."""
+    if complaints.get(complaint_id) is None:
+        raise HTTPException(
+            status_code=400, detail=f"민원카드 {complaint_id} 가 없습니다. 접수 후에 연결할 수 있습니다."
+        )
+
+    existing = handoffs.get(complaint_id)
+    if existing is not None and existing.is_open:
+        # 중복 시작 — 이미 열린 채널을 그대로 돌려준다.
+        return {
+            "channel_id": existing.channel_id,
+            "status": existing.status,
+            "started_at": existing.started_at,
+        }
+
+    handoff = Handoff.open(complaint_id, payload.officer_name, payload.department)
+    handoffs.save(handoff)
+    log.info(
+        "핸드오프 시작 민원=%s 부서=%s 담당자=%s",
+        complaint_id,
+        handoff.officer_department or "-",
+        handoff.officer_name_masked or "-",
+    )
+    return {
+        "channel_id": handoff.channel_id,
+        "status": handoff.status,
+        "started_at": handoff.started_at,
+    }
+
+
+@app.post("/api/handoff/{complaint_id}/message")
+def handoff_message(complaint_id: str, payload: HandoffMessageRequest) -> dict:
+    """메시지를 남긴다. 저장 시 양방향 통역이 걸린다."""
+    if payload.role not in VALID_ROLES:
+        raise HTTPException(
+            status_code=400, detail=f"role 은 {' | '.join(VALID_ROLES)} 중 하나여야 합니다."
+        )
+    if not (payload.text or "").strip():
+        raise HTTPException(status_code=400, detail="text 가 비어 있습니다.")
+
+    handoff = handoffs.get(complaint_id)
+    if handoff is None:
+        raise HTTPException(status_code=400, detail="아직 담당자 연결이 시작되지 않았습니다.")
+    if not handoff.is_open:
+        raise HTTPException(status_code=400, detail="이미 종료된 상담입니다.")
+
+    message = handoff.add_message(payload.role, payload.text)
+    handoffs.save(handoff)
+    return {"ok": True, "message": message.as_dict()}
+
+
+@app.get("/api/handoff/{complaint_id}")
+def handoff_status(complaint_id: str) -> dict:
+    """통화 화면과 대시보드가 함께 폴링하는 엔드포인트."""
+    handoff = handoffs.get(complaint_id)
+    if handoff is None:
+        return empty_status(complaint_id)
+    return handoff.as_dict()
+
+
+@app.post("/api/handoff/{complaint_id}/close")
+def handoff_close(complaint_id: str) -> dict:
+    handoff = handoffs.get(complaint_id)
+    if handoff is None:
+        raise HTTPException(status_code=400, detail="아직 담당자 연결이 시작되지 않았습니다.")
+    if handoff.is_open:
+        handoff.close()
+        handoffs.save(handoff)
+        log.info("핸드오프 종료 민원=%s (메시지 %d건)", complaint_id, len(handoff.messages))
+    return {"status": handoff.status}
+
+
+@app.post("/api/callback/{complaint_id}/schedule")
+def callback_schedule(complaint_id: str, payload: CallbackScheduleRequest) -> dict:
+    """담당자가 진행 상황을 쓰고 '안내 전화 걸기' 를 누른다.
+
+    브리핑은 **AI 가 생성하지 않는다.** 담당자가 쓴 표준어를 `to_dialect()` 로
+    변환만 한다. 생성이 아니라 번역이라 없는 사실이 끼어들 수 없다.
+    """
+    if complaints.get(complaint_id) is None:
+        raise HTTPException(status_code=400, detail=f"민원카드 {complaint_id} 가 없습니다.")
+    if not (payload.briefing or "").strip():
+        raise HTTPException(status_code=400, detail="briefing 이 비어 있습니다.")
+
+    callback = Callback.schedule(
+        complaint_id, payload.briefing, payload.officer_name, payload.department
+    )
+    callbacks.save(callback)
+    log.info("안내 전화 예약 민원=%s 부서=%s", complaint_id, callback.officer_department or "-")
+    return {"callback_id": callback.callback_id, "status": callback.status}
+
+
+@app.get("/api/callback/{complaint_id}")
+def callback_status(complaint_id: str) -> dict:
+    """통화 화면이 폴링한다. status=pending 이면 수신 화면을 띄운다."""
+    callback = callbacks.get(complaint_id)
+    if callback is None:
+        return callback_empty_status(complaint_id)
+    return callback.as_dict()
+
+
+@app.post("/api/callback/{complaint_id}/answer")
+def callback_answer(complaint_id: str) -> dict:
+    """어르신이 전화를 받았다. 브리핑이 첫 발화로 남는다."""
+    callback = callbacks.get(complaint_id)
+    if callback is None:
+        raise HTTPException(status_code=400, detail="예약된 안내 전화가 없습니다.")
+    if callback.status == STATUS_PENDING:
+        callback.answer()
+        callbacks.save(callback)
+        log.info("안내 전화 수신 민원=%s", complaint_id)
+    return callback.as_dict()
+
+
+@app.post("/api/callback/{complaint_id}/message")
+def callback_message(complaint_id: str, payload: CallbackMessageRequest) -> dict:
+    """어르신의 추가 문의를 받아 적는다.
+
+    **AI 는 답하지 않는다.** 접수번호·담당 부서처럼 이미 확정된 사실만
+    민원카드에서 꺼내 답하고, 나머지는 담당자에게 넘긴다.
+    """
+    if payload.role not in CALLBACK_ROLES:
+        raise HTTPException(
+            status_code=400, detail=f"role 은 {' | '.join(CALLBACK_ROLES)} 중 하나여야 합니다."
+        )
+    if not (payload.text or "").strip():
+        raise HTTPException(status_code=400, detail="text 가 비어 있습니다.")
+
+    callback = callbacks.get(complaint_id)
+    if callback is None:
+        raise HTTPException(status_code=400, detail="예약된 안내 전화가 없습니다.")
+    if callback.status not in (STATUS_PENDING, STATUS_ANSWERED):
+        raise HTTPException(status_code=400, detail="이미 종료된 안내 전화입니다.")
+
+    message = callback.add_message(payload.role, payload.text)
+
+    reply = None
+    if payload.role != ROLE_AGENT:
+        # 확정된 사실이 아니면 DEFER_REPLY 가 돌아온다. 지어내지 않는다.
+        answer = answer_from_facts(payload.text, complaints.get(complaint_id))
+        reply = callback.add_message(ROLE_AGENT, answer).as_dict()
+
+    callbacks.save(callback)
+    return {"ok": True, "message": message.as_dict(), "reply": reply}
+
+
+@app.post("/api/callback/{complaint_id}/close")
+def callback_close(complaint_id: str) -> dict:
+    """안내 전화를 끝낸다. 어르신의 추가 문의는 민원카드에 쌓인다."""
+    callback = callbacks.get(complaint_id)
+    if callback is None:
+        raise HTTPException(status_code=400, detail="예약된 안내 전화가 없습니다.")
+
+    if callback.status != STATUS_CLOSED:
+        callback.close()
+        callbacks.save(callback)
+        _append_callback_notes(complaint_id, callback)
+        log.info(
+            "안내 전화 종료 민원=%s (추가 문의 %d건)", complaint_id, len(callback.caller_questions)
+        )
+    return {"status": callback.status}
+
+
+def _append_callback_notes(complaint_id: str, callback) -> None:
+    """어르신의 추가 문의를 민원카드 notes 로 옮긴다.
+
+    담당자가 다음에 그 카드를 열었을 때 무엇을 물어봤는지 보여야 한다.
+    """
+    questions = callback.caller_questions
+    if not questions:
+        return
+    complaint = complaints.get(complaint_id)
+    if complaint is None:
+        return
+
+    notes = list(complaint.get("notes") or [])
+    known = {n.get("text") for n in notes}
+    added = 0
+    for message in questions:
+        text = f"[안내 전화 문의] {message.standard}".strip()
+        if text in known:
+            continue
+        notes.append({"text": text, "at": message.at, "source": "callback"})
+        known.add(text)
+        added += 1
+    if added:
+        complaint["notes"] = notes
+        complaints.save(complaint)
+
+
+@app.get("/api/usage")
+def usage_total() -> dict:
+    """서버가 뜬 뒤 누적 API 사용량 (계약 외 추가 엔드포인트).
+
+    `api.usage.read` 스코프가 없으면 OpenAI 대시보드 말고는 조회 수단이 없다.
+    그래서 응답의 usage 를 우리가 직접 세어 여기로 노출한다.
+    리허설 스크립트(P3)는 실행 전후로 이걸 찍어 차이를 내면 된다.
+    """
+    return {
+        "usage": PROCESS_TOTAL.as_dict(),
+        "one_line": PROCESS_TOTAL.one_line(),
+        "limits": {"max_turns": MAX_TURNS, "max_session_tokens": MAX_SESSION_TOKENS},
+    }
+
+
 @app.get("/api/health")
 def health() -> dict:
     """지금 어떤 조합으로 돌고 있는지. 데모 전에 한 번 찍어보면 좋다."""
@@ -298,6 +657,12 @@ def health() -> dict:
         "stt": stt_status(),
         "tts": tts_status(),
         "agent": agent_status(),
+        # 서버가 뜬 뒤 누적 사용량. 리허설 스크립트가 이 값을 읽어 집계한다.
+        "usage_total": PROCESS_TOTAL.as_dict(),
+        "limits": {
+            "max_turns": MAX_TURNS,
+            "max_session_tokens": MAX_SESSION_TOKENS,
+        },
         "active_sessions": sessions.active_count(),
         "complaint_count": complaints.count(),
         "data_dir": str(config.DATA_DIR),
@@ -307,6 +672,35 @@ def health() -> dict:
 # --------------------------------------------------------------------------
 # 정적 파일 — web/call, web/dashboard
 # --------------------------------------------------------------------------
+
+
+# 브라우저가 되묻지도 않고 캐시를 쓰는 것을 막는 조합.
+# no-store 만으로 충분한 브라우저가 대부분이지만, 오래된 브라우저와
+# 중간 프록시까지 고려해 셋을 함께 보낸다.
+NO_CACHE_HEADERS = {
+    "Cache-Control": "no-store, no-cache, must-revalidate, max-age=0",
+    "Pragma": "no-cache",
+    "Expires": "0",
+}
+
+
+class NoCacheStaticFiles(StaticFiles):
+    """정적 파일에 캐시 방지 헤더를 붙여 서빙한다.
+
+    StaticFiles 는 기본적으로 Cache-Control 을 보내지 않는다. 그러면
+    브라우저가 휴리스틱 캐싱을 적용해 **재검증 요청조차 보내지 않고**
+    옛 파일을 쓴다. 시연 직전 수정이 반영되지 않는 사고의 원인이다.
+    """
+
+    async def get_response(self, path: str, scope):
+        response = await super().get_response(path, scope)
+        response.headers.update(NO_CACHE_HEADERS)
+        # 조건부 요청으로 304 가 나가면 브라우저는 캐시본을 쓴다.
+        # 검증자를 지워 항상 본문을 받도록 한다.
+        for header in ("etag", "last-modified"):
+            if header in response.headers:
+                del response.headers[header]
+        return response
 
 
 _PLACEHOLDER = """<!doctype html>
@@ -328,15 +722,24 @@ def _mount_static(url_path: str, directory, title: str) -> None:
     죽는 일은 없어야 한다.
     """
     if directory.is_dir():
-        app.mount(url_path, StaticFiles(directory=str(directory), html=True), name=title)
-        log.info("정적 파일 마운트 %s -> %s", url_path, directory)
+        factory = NoCacheStaticFiles if config.NO_CACHE_STATIC else StaticFiles
+        app.mount(url_path, factory(directory=str(directory), html=True), name=title)
+        log.info(
+            "정적 파일 마운트 %s -> %s (캐시 %s)",
+            url_path,
+            directory,
+            "차단" if config.NO_CACHE_STATIC else "허용",
+        )
         return
 
     rel = directory.relative_to(config.ROOT_DIR)
     log.warning("%s 없음 — %s 는 안내 페이지로 대체합니다.", rel, url_path)
 
     async def placeholder() -> HTMLResponse:
-        return HTMLResponse(_PLACEHOLDER.format(title=title, path=rel))
+        return HTMLResponse(
+            _PLACEHOLDER.format(title=title, path=rel),
+            headers=NO_CACHE_HEADERS if config.NO_CACHE_STATIC else None,
+        )
 
     app.get(url_path, include_in_schema=False)(placeholder)
 
@@ -362,6 +765,10 @@ def log_runtime_banner() -> None:
         "  옆 모듈   : 방언 %s / 라우팅 %s",
         "O" if status["dialect"] else "X",
         "O" if status["routing"] else "X",
+    )
+    log.info(
+        "  정적 캐시 : %s",
+        "차단 (수정 즉시 반영)" if config.NO_CACHE_STATIC else "허용 (VOISSO_NO_CACHE=0)",
     )
     if status["missing_keys"]:
         log.warning("  빠진 키   : %s — 폴백으로 동작합니다.", ", ".join(status["missing_keys"]))

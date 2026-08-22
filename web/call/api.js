@@ -16,7 +16,22 @@ window.VoissoAPI = (function () {
   if (CFG.USE_MOCK === 'auto' || CFG.USE_MOCK == null) useMock = location.protocol === 'file:';
   else useMock = CFG.USE_MOCK !== false;
   if (qs.has('mock')) useMock = !/^(0|false|no)$/i.test(qs.get('mock'));
-  const base = (qs.get('api') || CFG.API_BASE || '').replace(/\/+$/, '');
+  /* API 주소 결정 — 하드코딩 금지. 지자체가 어느 호스트·포트에 올리든 그대로 동작해야 한다.
+     우선순위: ?api= > API_BASE 가 명시된 절대주소 > 같은 오리진 > (file:// 일 때만) FILE_API_BASE */
+  function resolveBase() {
+    const q = qs.get('api');
+    if (q != null && q !== '') return q.replace(/\/+$/, '');
+    const cfg = CFG.API_BASE;
+    if (typeof cfg === 'string' && /^https?:\/\//i.test(cfg)) return cfg.replace(/\/+$/, '');
+    if (cfg === '') return '';                                   // 명시적으로 같은 오리진
+    // 'auto' 또는 미설정
+    if (location.protocol === 'http:' || location.protocol === 'https:') return '';
+    return String(CFG.FILE_API_BASE || 'http://localhost:8000').replace(/\/+$/, '');
+  }
+
+  const base = resolveBase();
+  // 화면에 보여줄 주소. 같은 오리진이면 빈 문자열이라 실제 주소로 바꿔 준다.
+  const baseLabel = () => base || location.origin;
 
   const mock = window.VoissoMockAPI;
   if (useMock && !mock) console.warn('[Voisso] mock-api.js 가 로드되지 않았습니다.');
@@ -63,16 +78,62 @@ window.VoissoAPI = (function () {
     return (r && r.complaint) ? r.complaint : r;
   }
 
-  /* ── 실서버 헬스 체크(대기 화면 표시용. 실패해도 무해) ── */
+  async function get(path) {
+    const res = await fetch(base + path, { method: 'GET' });
+    if (!res.ok) {
+      const err = new Error(`${path} 실패 (HTTP ${res.status})`);
+      err.status = res.status; err.path = path;
+      throw err;
+    }
+    return res.json();
+  }
+
+  /* ── 계약 5-B. 담당자 핸드오프 ─────────────────────────
+     어르신 화면은 '조회'와 '메시지 보내기(role: caller)'만 쓴다.
+     start 는 대시보드(담당자)가 호출한다. */
+  async function handoffGet(complaintId) {
+    const id = encodeURIComponent(complaintId);
+    return useMock ? mock.handoffGet(id) : get('/api/handoff/' + id);
+  }
+
+  async function handoffSay(complaintId, text) {
+    const id = encodeURIComponent(complaintId);
+    const body = { role: 'caller', text: text };
+    return useMock ? mock.handoffSay(id, body) : post('/api/handoff/' + id + '/message', body);
+  }
+
+  async function handoffClose(complaintId) {
+    const id = encodeURIComponent(complaintId);
+    return useMock ? mock.handoffClose(id) : post('/api/handoff/' + id + '/close', {});
+  }
+
+  /* ── 실서버 상태 확인 ──────────────────────────────────
+     연결 여부뿐 아니라 **서버가 어떤 능력을 켰는지**도 함께 읽는다.
+     프론트가 서버 설정을 하드코딩하면 서버가 STT 를 켜도 화면은 모른다. */
   async function probe() {
-    if (useMock) return { mode: 'mock', ok: true };
+    if (useMock) return { mode: 'mock', ok: true, base: baseLabel(), stt: null };
+    try {
+      const res = await fetch(base + '/api/health', { method: 'GET' });
+      if (res.ok) {
+        const j = await res.json().catch(() => null);
+        const rt = (j && j.runtime) || {};
+        return {
+          mode: 'server', ok: true, base: baseLabel(),
+          stt: rt.stt || null, sttLabel: rt.stt_label || null,
+          tts: rt.tts || null, engine: rt.engine || null,
+          degraded: !!rt.degraded,
+        };
+      }
+    } catch (e) { /* 아래 폴백으로 */ }
+    // /api/health 가 없는 서버(계약 5절만 구현한 경우)도 지원한다.
     try {
       const res = await fetch(base + '/api/complaints', { method: 'GET' });
-      return { mode: 'server', ok: res.ok, base: base || location.origin };
+      return { mode: 'server', ok: res.ok, base: baseLabel(), stt: null };
     } catch (e) {
-      return { mode: 'server', ok: false, base: base || location.origin, error: String(e.message || e) };
+      return { mode: 'server', ok: false, base: baseLabel(), stt: null, error: String(e.message || e) };
     }
   }
 
-  return { start, turn, end, probe, isMock: () => useMock, base: () => base };
+  return { start, turn, end, probe, handoffGet, handoffSay, handoffClose,
+           isMock: () => useMock, base: () => base, baseLabel };
 })();

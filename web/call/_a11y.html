@@ -1,0 +1,427 @@
+<!doctype html>
+<html lang="ko" data-theme="light" data-size="m" data-mode="elder">
+<head>
+<!-- ASSET_VERSION = 12 -->
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<title>Voisso — 경상북도 민원 통화</title>
+<meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
+<script>window.VOISSO_ASSET_VERSION = '12';</script>
+<script>
+/* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
+(function () {
+  try {
+    var pref = localStorage.getItem('voisso.theme') || 'auto';
+    var dark = pref === 'dark' || (pref === 'auto' &&
+      window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+    document.documentElement.dataset.size = localStorage.getItem('voisso.size') || 'm';
+    // 어르신 모드가 기본. ?debug=1 또는 저장된 설정으로 시연 모드가 된다.
+    var qs = new URLSearchParams(location.search);
+    var demo = qs.get('debug') === '1' || qs.get('demo') === '1' ||
+               (localStorage.getItem('voisso.mode') === 'demo' && qs.get('debug') !== '0');
+    document.documentElement.dataset.mode = demo ? 'demo' : 'elder';
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="styles.css?v=12">
+<link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
+</head>
+<body>
+
+<div class="phone" id="phone">
+
+  <!-- ── 상단 바 ─────────────────────────────────────────── -->
+  <header class="topbar">
+    <div class="brand">
+      <span class="brand-mark" aria-hidden="true">보</span>
+      <span class="brand-text">Voisso<em>보이소</em></span>
+    </div>
+    <div class="topbar-actions">
+      <button class="icon-btn" id="btnTextSize" type="button" title="글자 크기" aria-label="글자 크기 바꾸기">가<span class="sup">+</span></button>
+      <button class="icon-btn" id="btnTheme" type="button" title="화면 밝기" aria-label="밝은 화면 / 어두운 화면 바꾸기">◐</button>
+      <button class="mode-btn" id="btnMode" type="button" aria-label="시연 모드 켜기 / 끄기">시연</button>
+    </div>
+  </header>
+
+  <main class="screens">
+
+    <!-- ── 1. 대기 화면 ──────────────────────────────────── -->
+    <section class="screen is-active" id="screenIdle" aria-label="통화 시작">
+      <div class="idle-inner">
+        <p class="idle-kicker">경상북도청 민원 상담</p>
+        <h1 class="idle-title">경상북도 민원실</h1>
+        <p class="idle-sub">사투리로 편하게 말씀하시면 됩니더.</p>
+
+        <button class="call-btn" id="btnCall" type="button">
+          <span class="call-ring" aria-hidden="true"></span>
+          <span class="call-ico" aria-hidden="true">
+            <svg viewBox="0 0 24 24" width="46" height="46" fill="currentColor" aria-hidden="true">
+              <path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.7.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11.3 21 3 12.7 3 2.9c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.7.1.4 0 .8-.2 1l-2.3 2.2Z"/>
+            </svg>
+          </span>
+          <span class="call-label">전화 걸기</span>
+        </button>
+
+        <ul class="idle-points">
+          <li><b>사투리</b> 그대로 말해도 됩니더</li>
+          <li>대화만 하면 <b>민원 접수</b>까지 끝납니더</li>
+          <li>담당 부서와 <b>연결 근거</b>를 같이 보여줍니더</li>
+        </ul>
+      </div>
+      <p class="mode-chip" id="modeChip" title="서버 연결 상태"></p>
+    </section>
+
+    <!-- ── 2. 통화 화면 ──────────────────────────────────── -->
+    <section class="screen" id="screenCall" aria-label="통화 중">
+      <div class="callee">
+        <div class="callee-avatar" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
+        </div>
+        <div class="callee-meta">
+          <strong>경상북도 민원실</strong>
+          <span id="callStatus" role="status">연결 중…</span>
+        </div>
+        <div class="callee-timer" id="callTimer" aria-live="off"><span class="sr-only">통화 시간 </span>00:00</div>
+      </div>
+
+      <div class="std-switch">
+        <label class="switch">
+          <input type="checkbox" id="chkStandardAll">
+          <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
+          <span class="switch-label">표준어 변환 함께 보기</span>
+        </label>
+        <button class="path-chip" id="pathChip" type="button" title="지금 쓰는 음성 입력 경로"></button>
+      </div>
+
+      <p class="demo-bar" id="demoBar" hidden></p>
+      <p class="elder-status" id="elderStatus" role="status">말씀해 주이소</p>
+
+      <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
+
+      <div class="slots" id="slots" aria-live="polite">
+        <div class="slots-head">
+          <span class="slots-title">AI가 모으는 민원 정보</span>
+          <span class="slots-count" id="slotsCount">0 / 4</span>
+        </div>
+        <div class="slots-grid">
+          <button class="slot" type="button" data-slot="what" aria-expanded="false"><span class="slot-key">무슨 일</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="where" aria-expanded="false"><span class="slot-key">어디서</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="when" aria-expanded="false"><span class="slot-key">언제부터</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="contact" aria-expanded="false"><span class="slot-key">연락처</span><span class="slot-val">듣는 중…</span></button>
+        </div>
+      </div>
+
+      <div class="composer">
+        <div class="suggestions" id="suggestions"></div>
+        <div class="composer-row">
+          <button class="mic-btn" id="btnMic" type="button" aria-label="음성으로 말하기">
+            <span class="mic-level" aria-hidden="true"></span>
+            <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V22h2v-3.1A7 7 0 0 0 19 12h-2Z"/></svg>
+            <span class="mic-label" id="micLabel">말하기</span>
+          </button>
+          <input class="text-in" id="textIn" type="text" inputmode="text" autocomplete="off"
+                 placeholder="여기에 말씀을 적어도 됩니더" aria-label="할 말 입력">
+          <button class="send-btn" id="btnSend" type="button" aria-label="보내기">
+            <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M3 20.5 21 12 3 3.5 3 10l12 2-12 2z"/></svg>
+          </button>
+        </div>
+        <p class="composer-hint" id="composerHint">마이크를 눌러 말하거나, 글로 적어도 됩니더.</p>
+        <button class="end-btn" id="btnEnd" type="button">통화 끝내고 민원 접수</button>
+      </div>
+    </section>
+
+    <!-- ── 3. 결과(민원카드) 화면 ─────────────────────────── -->
+    <section class="screen" id="screenResult" aria-label="민원 접수 결과">
+      <div class="result-inner">
+        <div class="delivery" id="delivery" role="status">
+          <span class="delivery-spin" aria-hidden="true"></span>
+          <span class="delivery-text">담당 부서로 보내는 중…</span>
+        </div>
+
+        <article class="card" id="card" aria-label="민원카드"></article>
+
+        <div class="handoff-wait" id="handoffWait" hidden role="status">
+          <span class="hw-spin" aria-hidden="true"></span>
+          <div class="hw-text">
+            <strong>담당자에게 전달됐습니더.</strong>
+            <span>담당자가 연결되면 바로 알려드릴게예. 화면을 닫지 마이소.</span>
+          </div>
+        </div>
+
+        <div class="result-actions">
+          <button class="ghost-btn" id="btnAgain" type="button">처음으로</button>
+        </div>
+      </div>
+    </section>
+
+  </main>
+</div>
+
+<audio id="replyAudio" hidden></audio>
+<div class="toast" id="toast" role="status" aria-live="polite"></div>
+
+<script src="config.js?v=12"></script>
+<script src="dialect-hints.js?v=12"></script>
+<script src="mock-api.js?v=12"></script>
+<script src="speech.js?v=12"></script>
+<script src="api.js?v=12"></script>
+<script src="app.js?v=12"></script>
+<script>/* 접근성 실측 — WCAG 2.1 상대휘도 공식으로 직접 계산한다(외부 라이브러리 없음). */
+(function () {
+  'use strict';
+  // 헤드리스 virtual-time 에서는 CSS 트랜지션이 진행되지 않아 화면 전환 중간값(opacity 0)이
+  // 그대로 남는다. 색/크기 측정에는 영향이 없으므로 전환만 끈다.
+  const noAnim = document.createElement('style');
+  noAnim.textContent = '*,*::before,*::after{transition:none!important;animation:none!important}';
+  document.head.appendChild(noAnim);
+
+  const P = new URLSearchParams(location.search);
+  const MODE = P.get('a11y') || 'idle';        // idle | call | result | dash
+  const THEME = P.get('theme') || 'light';
+  document.documentElement.dataset.theme = THEME;
+
+  /* ── 색 계산 ─────────────────────────────────────────── */
+  function parse(c) {                          // "rgb(a)" -> [r,g,b,a]
+    const m = String(c).match(/rgba?\(([^)]+)\)/);
+    if (!m) return null;
+    const p = m[1].split(/[,\s/]+/).filter(Boolean).map(Number);
+    return [p[0], p[1], p[2], p.length > 3 ? p[3] : 1];
+  }
+  function over(fg, bg) {                      // 알파 합성
+    const a = fg[3];
+    return [fg[0] * a + bg[0] * (1 - a), fg[1] * a + bg[1] * (1 - a), fg[2] * a + bg[2] * (1 - a), 1];
+  }
+  function lum(c) {                            // WCAG 상대휘도
+    const f = (v) => { v /= 255; return v <= 0.03928 ? v / 12.92 : Math.pow((v + 0.055) / 1.055, 2.4); };
+    return 0.2126 * f(c[0]) + 0.7152 * f(c[1]) + 0.0722 * f(c[2]);
+  }
+  function ratio(a, b) {
+    const l1 = lum(a), l2 = lum(b);
+    return (Math.max(l1, l2) + 0.05) / (Math.min(l1, l2) + 0.05);
+  }
+
+  function effBg(el) {                         // 불투명 배경을 만날 때까지 위로 올라가며 합성
+    let stack = [], node = el;
+    while (node && node.nodeType === 1) {
+      const bg = parse(getComputedStyle(node).backgroundColor);
+      if (bg && bg[3] > 0) { stack.push(bg); if (bg[3] === 1) break; }
+      node = node.parentElement;
+    }
+    let base = [255, 255, 255, 1];
+    for (let i = stack.length - 1; i >= 0; i--) base = over(stack[i], base);
+    return base;
+  }
+  function cumulativeOpacity(el) {
+    let o = 1, node = el;
+    while (node && node.nodeType === 1) {
+      const v = parseFloat(getComputedStyle(node).opacity);
+      if (!isNaN(v)) o *= v;
+      node = node.parentElement;
+    }
+    return o;
+  }
+  const hex = (c) => '#' + [c[0], c[1], c[2]].map((v) => Math.round(v).toString(16).padStart(2, '0')).join('');
+
+  function visible(el) {
+    const r = el.getBoundingClientRect();
+    if (r.width < 2 || r.height < 2) return false;          // 1x1 clip 된 스크린리더 전용 텍스트 제외
+    if (/rect\(0px, 0px, 0px, 0px\)/.test(getComputedStyle(el).clip)) return false;
+    const s = getComputedStyle(el);
+    if (s.visibility === 'hidden' || s.display === 'none') return false;
+    if (cumulativeOpacity(el) < 0.05) return false;
+    // 화면 전환용으로 숨겨진 섹션 제외
+    let n = el;
+    while (n && n.nodeType === 1) {
+      if (getComputedStyle(n).visibility === 'hidden') return false;
+      n = n.parentElement;
+    }
+    return true;
+  }
+
+  function label(el) {
+    const id = el.id ? '#' + el.id : '';
+    const cls = el.className && typeof el.className === 'string'
+      ? '.' + el.className.trim().split(/\s+/).slice(0, 2).join('.') : '';
+    return el.tagName.toLowerCase() + id + cls;
+  }
+
+  /* ── 1) 텍스트 명도 대비 ─────────────────────────────── */
+  function auditText() {
+    const rows = [];
+    const seen = new Set();
+    document.querySelectorAll('*').forEach((el) => {
+      const hasText = Array.prototype.some.call(el.childNodes,
+        (n) => n.nodeType === 3 && n.textContent.trim().length > 0);
+      if (!hasText || !visible(el)) return;
+      const s = getComputedStyle(el);
+      const fg0 = parse(s.color);
+      if (!fg0) return;
+      const bg = effBg(el);
+      const op = cumulativeOpacity(el);
+      const fg = over([fg0[0], fg0[1], fg0[2], fg0[3] * op], bg);
+      const size = parseFloat(s.fontSize);
+      const weight = parseInt(s.fontWeight, 10) || 400;
+      const large = size >= 24 || (size >= 18.66 && weight >= 700);
+      const need = large ? 3 : 4.5;
+      const r = ratio(fg, bg);
+      const key = label(el) + '|' + hex(fg) + '|' + hex(bg) + '|' + size + '|' + weight;
+      if (seen.has(key)) return;
+      seen.add(key);
+      rows.push({
+        el: label(el),
+        text: el.textContent.trim().slice(0, 28),
+        fg: hex(fg), bg: hex(bg), size: Math.round(size * 10) / 10, weight: weight,
+        opacity: Math.round(op * 100) / 100,
+        large: large, need: need, ratio: Math.round(r * 100) / 100,
+        pass: r >= need, passAAA: r >= (large ? 4.5 : 7),
+      });
+    });
+
+    // placeholder 도 텍스트다
+    document.querySelectorAll('input').forEach((el) => {
+      if (!visible(el)) return;
+      const ps = getComputedStyle(el, '::placeholder');
+      const fg0 = parse(ps.color); if (!fg0) return;
+      const bg = effBg(el);
+      const op = cumulativeOpacity(el) * (parseFloat(ps.opacity) || 1);
+      const fg = over([fg0[0], fg0[1], fg0[2], fg0[3] * op], bg);
+      const size = parseFloat(getComputedStyle(el).fontSize);
+      const r = ratio(fg, bg);
+      rows.push({
+        el: label(el) + '::placeholder', text: el.placeholder ? el.placeholder.slice(0, 28) : '',
+        fg: hex(fg), bg: hex(bg), size: Math.round(size * 10) / 10, weight: 400,
+        opacity: Math.round(op * 100) / 100, large: size >= 24, need: size >= 24 ? 3 : 4.5,
+        ratio: Math.round(r * 100) / 100, pass: r >= (size >= 24 ? 3 : 4.5), passAAA: r >= 7,
+      });
+    });
+    return rows;
+  }
+
+  /* ── 2) 터치 영역 ─────────────────────────────────────── */
+  function auditTargets() {
+    const sel = 'button, a[href], input, select, textarea, [role="button"], [tabindex]:not([tabindex="-1"]), label.switch';
+    const rows = [];
+    document.querySelectorAll(sel).forEach((el) => {
+      if (!visible(el)) return;
+      const r = el.getBoundingClientRect();
+      const name = (el.getAttribute('aria-label') || el.textContent.trim() || el.placeholder || el.title || '').slice(0, 24);
+      rows.push({
+        el: label(el), name: name,
+        w: Math.round(r.width * 10) / 10, h: Math.round(r.height * 10) / 10,
+        pass: r.width >= 44 && r.height >= 44,
+      });
+    });
+    return rows;
+  }
+
+  /* ── 3) 키보드 / 포커스 ──────────────────────────────── */
+  function auditFocus() {
+    const focusables = Array.prototype.filter.call(
+      document.querySelectorAll('button, a[href], input, select, textarea, [tabindex]:not([tabindex="-1"])'),
+      visible);
+    const noName = focusables.filter((el) => {
+      const t = (el.textContent || '').trim();
+      return !t && !el.getAttribute('aria-label') && !el.getAttribute('aria-labelledby') &&
+             !el.title && !(el.labels && el.labels.length);
+    }).map(label);
+    const negative = Array.prototype.map.call(
+      document.querySelectorAll('[tabindex]'), (el) => label(el) + '=' + el.getAttribute('tabindex'));
+
+    // 스타일시트에서 포커스 관련 규칙을 직접 훑는다
+    let outlineNone = [], focusVisible = [], reducedMotion = false, cssText = '';
+    try {
+      for (const sheet of document.styleSheets) {
+        let rules; try { rules = sheet.cssRules; } catch (e) { continue; }
+        for (const rule of rules) {
+          cssText += (rule.cssText || '') + '\n';
+          const t = rule.cssText || '';
+          if (/prefers-reduced-motion/.test(t)) reducedMotion = true;
+          if (rule.selectorText && /:focus/.test(rule.selectorText)) {
+            if (/outline\s*:\s*(none|0)/.test(t)) outlineNone.push(rule.selectorText);
+            else focusVisible.push(rule.selectorText);
+          } else if (/outline\s*:\s*(none|0)/.test(t) && rule.selectorText) {
+            outlineNone.push(rule.selectorText + ' (비포커스 규칙)');
+          }
+        }
+      }
+    } catch (e) {}
+    return {
+      focusableCount: focusables.length,
+      focusOrder: focusables.map(label),
+      missingName: noName,
+      tabindexUsage: negative,
+      outlineNoneRules: outlineNone,
+      focusRules: focusVisible,
+      reducedMotion: reducedMotion,
+    };
+  }
+
+  /* ── 4) 스크린리더 ───────────────────────────────────── */
+  function auditAria() {
+    const live = Array.prototype.map.call(document.querySelectorAll('[aria-live]'),
+      (el) => label(el) + ' = ' + el.getAttribute('aria-live'));
+    const landmarks = Array.prototype.map.call(
+      document.querySelectorAll('header, main, nav, footer, aside, section[aria-label], [role]'),
+      (el) => label(el) + (el.getAttribute('role') ? '[role=' + el.getAttribute('role') + ']' : ''));
+    const svgUnlabeled = Array.prototype.filter.call(document.querySelectorAll('svg'),
+      (el) => !el.getAttribute('aria-hidden') && !el.getAttribute('aria-label') &&
+              !el.querySelector('title')).map(label);
+    const imgNoAlt = Array.prototype.filter.call(document.querySelectorAll('img'),
+      (el) => el.getAttribute('alt') == null).map(label);
+    return {
+      lang: document.documentElement.lang || '(없음)',
+      title: document.title,
+      liveRegions: live, landmarks: landmarks.slice(0, 20),
+      svgWithoutAriaHidden: svgUnlabeled, imgWithoutAlt: imgNoAlt,
+    };
+  }
+
+  function auditFont() {
+    const root = getComputedStyle(document.documentElement).fontSize;
+    const body = getComputedStyle(document.body).fontSize;
+    const samples = {};
+    ['.bubble-dialect', '.slot-val', '.text-in', '.idle-sub', '.composer-hint', '.card-summary',
+     '.field-val', 'td', 'th', '.chip', '.tag'].forEach((s) => {
+      const el = document.querySelector(s);
+      if (el) samples[s] = getComputedStyle(el).fontSize;
+    });
+    return { root: root, body: body, samples: samples };
+  }
+
+  function emit() {
+    const out = {
+      page: location.pathname, mode: MODE, theme: THEME,
+      viewport: [window.innerWidth, window.innerHeight],
+      font: auditFont(), text: auditText(), targets: auditTargets(),
+      focus: auditFocus(), aria: auditAria(),
+    };
+    const tag = document.createElement('script');
+    tag.type = 'application/json'; tag.id = '__a11y_out';
+    tag.textContent = JSON.stringify(out);
+    document.body.appendChild(tag);
+    document.title = 'A11Y-DONE';
+  }
+
+  const wait = (ms) => new Promise((r) => setTimeout(r, ms));
+  const q = (id) => document.getElementById(id);
+
+  (async () => {
+    await wait(400);
+    if (MODE === 'call' || MODE === 'result') {
+      q('btnCall').click();
+      await wait(2500);
+      const lines = ['비만 오모 집 앞에 물이 안 빠지가 마당이 마카 잠기뿌니더', '안동시 옥동 마을회관 앞이라예'];
+      for (const l of lines) { q('textIn').value = l; q('btnSend').click(); await wait(2400); }
+      if (MODE === 'result') {
+        q('textIn').value = '지난주부터라예'; q('btnSend').click(); await wait(2400);
+        q('textIn').value = '010-0000-0000'; q('btnSend').click(); await wait(2400);
+        q('btnEnd').click(); await wait(3500);
+      }
+    }
+    await wait(300);
+    emit();
+  })();
+})();
+</script></body>
+</html>

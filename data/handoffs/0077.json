@@ -1,0 +1,18 @@
+{
+  "complaint_id": "0077",
+  "channel_id": "65c1dff4f19141c69353256195c2adfb",
+  "status": "open",
+  "officer_name_masked": "홍○○",
+  "officer_department": "기후환경국 맑은물정책과",
+  "started_at": "2026-08-22T02:47:49Z",
+  "closed_at": null,
+  "messages": [
+    {
+      "role": "officer",
+      "text": "안녕하세요. 담당자입니다. 지금 바로 현장 확인 나가겠습니다.",
+      "dialect": "안녕하이소. 담당자입니더. 지금 바로 현장 확인 나가겠습니더.",
+      "standard": "안녕하세요. 담당자입니다. 지금 바로 현장 확인 나가겠습니다.",
+      "at": "2026-08-22T02:47:49Z"
+    }
+  ]
+}

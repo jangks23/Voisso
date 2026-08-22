@@ -51,6 +51,8 @@ def load_dotenv(path: Path | None = None) -> int:
 
 DATA_DIR = _resolve(os.getenv("VOISSO_DATA_DIR"), ROOT_DIR / "data")
 COMPLAINTS_DIR = DATA_DIR / "complaints"
+HANDOFFS_DIR = DATA_DIR / "handoffs"
+CALLBACKS_DIR = DATA_DIR / "callbacks"
 WEB_DIR = ROOT_DIR / "web"
 CALL_UI_DIR = WEB_DIR / "call"
 DASHBOARD_DIR = WEB_DIR / "dashboard"
@@ -65,6 +67,24 @@ CORS_ORIGINS = [
     for origin in (os.getenv("VOISSO_CORS_ORIGINS") or "*").split(",")
     if origin.strip()
 ]
+
+def _flag(name: str, default: bool) -> bool:
+    raw = (os.getenv(name) or "").strip().lower()
+    if not raw:
+        return default
+    return raw not in ("0", "false", "off", "no")
+
+
+# 정적 파일(통화 화면·대시보드)에 캐시 방지 헤더를 붙일지.
+#
+# **기본은 켜짐이다.** 이 서버는 개발·시연용이고, 시연 직전에 고친 파일이
+# 브라우저 캐시 때문에 반영되지 않으면 원인을 못 찾고 시간을 날린다.
+# 실제로 config.js 가 캐시에서 서빙돼 옛 API 주소로 붙는 사고가 있었다
+# (api.js/app.js 는 새로 받았는데 config.js 는 요청조차 없었다).
+# 캐시 이득보다 "고친 게 즉시 반영된다"가 훨씬 중요하다.
+#
+# 지자체가 실서비스로 올릴 때는 VOISSO_NO_CACHE=0 으로 끄면 된다.
+NO_CACHE_STATIC = _flag("VOISSO_NO_CACHE", True)
 
 # 메모리에 들고 있는 통화 세션의 수명. 끊긴 통화가 쌓여 메모리를 먹는 것을 막는다.
 SESSION_TTL_SEC = int(os.getenv("VOISSO_SESSION_TTL_SEC", "3600"))

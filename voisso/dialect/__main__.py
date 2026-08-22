@@ -200,6 +200,115 @@ def _demo_lines_markdown() -> str:
     return "".join(out)
 
 
+#: 담당자가 실제로 칠 법한 공문체 문장. handoff_samples.md 는 여기서 생성된다.
+#: 계약서 5-B(핸드오프)·5-C(진행 안내 콜백) 양쪽에서 같은 경로를 탄다.
+OFFICER_SAMPLES = [
+    ("접수·확인", "해당 건은 검토 후 회신드리겠습니다."),
+    ("접수·확인", "현장 확인이 필요합니다. 언제 방문하면 될까요?"),
+    ("접수·확인", "관련 부서에 이관하겠습니다."),
+    ("접수·확인", "신청서를 작성해 주셔야 합니다."),
+    ("일정 안내", "처리까지 약 2주 소요됩니다."),
+    ("일정 안내", "내일 오전 중으로 방문 예정입니다."),
+    ("일정 안내", "해당 구간은 내년 예산에 반영될 예정입니다."),
+    ("일정 안내", "우선 응급 조치를 하고 본 공사는 다음 주에 진행됩니다."),
+    ("되묻기", "혹시 사진을 찍어 두신 게 있으신가요?"),
+    ("되묻기", "정확한 주소를 알려주실 수 있으실까요?"),
+    ("되묻기", "언제부터 그러셨는지 다시 한번 말씀해 주시겠어요?"),
+    ("안내", "관련 서류는 읍사무소에서 발급받으실 수 있습니다."),
+    ("안내", "비용은 전액 도에서 부담합니다."),
+    ("안내", "담당 직원이 현장에 나가 확인하겠습니다."),
+    ("거절·한계", "죄송하지만 저희 소관이 아닙니다."),
+    ("거절·한계", "안타깝게도 예산이 부족하여 올해는 어렵습니다."),
+    ("거절·한계", "그 부분은 저희가 처리할 수 없는 사안입니다."),
+    ("거절·한계", "규정상 불가능한 점 양해 부탁드립니다."),
+    ("거절·한계", "신청 자격 요건을 충족하지 못하여 반려되었습니다."),
+    ("사과·공감", "불편을 끼쳐드려 죄송합니다."),
+    ("사과·공감", "많이 불편하셨겠습니다. 최대한 빨리 처리하겠습니다."),
+    ("마무리", "더 궁금하신 점 있으시면 언제든 연락 주십시오."),
+    ("마무리", "오늘 말씀해 주신 내용은 잘 기록해 두었습니다."),
+    ("진행 브리핑(5-C)", "어제 현장에 나가 확인했고, 배수관 교체가 필요한 것으로 판단됩니다."),
+    ("진행 브리핑(5-C)", "조치가 완료되었음을 알려드립니다."),
+    ("진행 브리핑(5-C)", "민원인께 통보되었습니다."),
+]
+
+#: to_dialect 가 손대지 않는 것이 맞는 형태들. 명사형 종결·표 형식 등.
+UNTOUCHED_SAMPLES = [
+    "현장 점검 후 조치 예정.",
+    "서류 제출 요망.",
+    "확인 결과 이상 없음",
+    "담당: 도로과 김주무관",
+]
+
+
+def _handoff_markdown() -> str:
+    from . import officer_to_dialect, soften
+
+    out = [
+        "# 담당자 핸드오프 — 공문체 사투리 변환 검수\n\n",
+        "> 이 파일은 `python -m voisso.dialect --handoff` 로 **생성된다.**\n",
+        "> 손으로 고치지 말고 사전이나 표본을 고친 뒤 다시 생성하라.\n\n",
+        "계약서 5-B(담당자 핸드오프)·5-C(진행 안내 콜백)에서 **담당자가 표준어로 입력하면 "
+        "어르신에게 사투리로 전달된다.** 사람과 사람 사이의 통역이라 품질이 곧 설득력이다.\n\n",
+        "## P6 이 부를 함수는 하나다\n\n```python\n"
+        "from voisso.dialect import officer_to_dialect\n"
+        "dialect = officer_to_dialect(officer_text)   # 어르신 화면용\n"
+        "# standard 는 원문 그대로 저장한다 (계약서 5-B: 둘 다 보관)\n```\n\n",
+        "`officer_to_dialect()` 는 두 단계를 묶은 것이다.\n\n",
+        "1. `soften()` — 공문체 낱말을 쉬운 말로 (`회신`→`연락`, `이관`→`넘김`, `소요`→`걸림`)\n",
+        "2. `to_dialect(strength=\"light\")` — **종결어미만** 바꾼다\n\n",
+        "### 왜 `strength=\"light\"` 인가 — 이번 검수의 핵심 발견\n\n",
+        "기본값 `polite` 는 어휘까지 역변환한다. AI 가 제 목소리로 말할 때는 정겹지만 "
+        "**공무원의 공식 답변에 섞이면 희화화된다.**\n\n",
+        "| 담당자 입력 | `polite` (기본) | `light` (핸드오프용) |\n|---|---|---|\n",
+        "| 많이 불편하셨겠습니다. 최대한 빨리 처리하겠습니다. "
+        "| 마이 불편하셨겠습니더. 최대한 **퍼뜩** 처리하겠습니더. ❌ "
+        "| 많이 불편하셨겠습니더. 최대한 빨리 처리하겠습니더. ✅ |\n\n",
+        "공무원이 \"퍼뜩\"이라고 말하지는 않는다. 담당자의 낱말은 그대로 두고 말끝만 경북으로 "
+        "바꾸는 편이 정중하고 안전하다. **변환하지 않는 것이 어색하게 변환하는 것보다 낫다.**\n\n",
+        "이 검수 결과 `퍼뜩`은 역변환 목록에서 **제외**했다 "
+        "(`normalize` 방향으로는 그대로 알아듣는다).\n\n",
+        "---\n\n## 변환 결과\n\n",
+    ]
+
+    current = None
+    for label, text in OFFICER_SAMPLES:
+        if label != current:
+            out.append(f"\n### {label}\n\n| 담당자 입력 (표준어) | 어르신 화면 (경북) |\n|---|---|\n")
+            current = label
+        out.append(f"| {text} | {officer_to_dialect(text)} |\n")
+
+    out.append("\n---\n\n## 일부러 건드리지 않는 형태\n\n")
+    out.append(
+        "명사형으로 끝나는 공문 표현에는 바꿀 종결어미가 없다. 억지로 손대면 문장이 깨지므로 "
+        "그대로 둔다.\n\n| 입력 | 출력 |\n|---|---|\n"
+    )
+    for text in UNTOUCHED_SAMPLES:
+        result = officer_to_dialect(text)
+        mark = " (그대로)" if result == text else ""
+        out.append(f"| {text} | {result}{mark} |\n")
+
+    out.append("\n---\n\n## 순화 단계만 따로 본 것\n\n")
+    out.append(
+        "`soften()` 이 무엇을 바꾸는지 보려면 사투리 변환 전 결과를 보면 된다.\n\n"
+        "| 담당자 입력 | `soften()` 결과 |\n|---|---|\n"
+    )
+    for _label, text in OFFICER_SAMPLES[:8]:
+        plain = soften(text)
+        if plain != text:
+            out.append(f"| {text} | {plain} |\n")
+
+    out.append(
+        "\n---\n\n## 한계\n\n"
+        "- `soften()` 은 **되돌릴 수 없는 의역**이다. 왕복 검증 대상이 아니고 "
+        "`to_dialect()` 안에서 자동으로 불리지도 않는다. 부르는 쪽이 선택한다.\n"
+        "- 사전에 없는 공문 용어는 그대로 통과한다. 새 용어가 보이면 "
+        "`tools/seed_lexicon.py` 의 `ADMIN_PLAIN` 에 추가하고 다시 생성하라.\n"
+        "- **AI 는 담당자가 쓴 내용만 옮긴다.** 이 레이어는 문장을 바꿔 말할 뿐, "
+        "처리 결과·일정·가능 여부를 만들어 내지 않는다 (계약서 5-C 절대 규칙).\n"
+    )
+    return "".join(out)
+
+
 def _demo() -> None:
     print("\n어르신 발화 → 표준어  (normalize · STT 결과 교정)")
     print("=" * 78)
@@ -319,6 +428,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--demo", action="store_true", help="민원 상황 변환 예시 실행")
     parser.add_argument("--samples", action="store_true", help="samples.md 내용 생성")
     parser.add_argument("--demo-lines", action="store_true", help="demo_lines.md 내용 생성")
+    parser.add_argument("--handoff", action="store_true", help="handoff_samples.md 내용 생성")
     parser.add_argument("--roundtrip-report", action="store_true", help="왕복 보존 통과율")
     parser.add_argument("--stats", action="store_true", help="사전 규모·분포")
     parser.add_argument("-v", "--verbose", action="store_true", help="적용된 규칙을 함께 표시")
@@ -332,6 +442,8 @@ def main(argv: list[str] | None = None) -> int:
         print(_samples_markdown(), end="")
     elif args.demo_lines:
         print(_demo_lines_markdown(), end="")
+    elif args.handoff:
+        print(_handoff_markdown(), end="")
     elif args.roundtrip_report:
         return _roundtrip_report()
     elif args.stats:

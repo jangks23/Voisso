@@ -9,6 +9,10 @@
   B) 어르신이 되묻는 경우   — 질문을 민원으로 오인하면 실패.
   C) 말을 정정하는 경우     — 앞서 채운 슬롯을 덮어써야 한다.
   D) 요약 품질             — 중복 없이 한 문장.
+  E) 무의미한 발화          — 잡음·오인식이 슬롯을 오염시키면 실패.
+  F) 랜드마크로 말하는 위치 — 어르신의 기본 화법이다. 시군을 확보해야 한다.
+  G) 슬롯 불변식            — 값이 빈 슬롯은 반드시 missing 에 있어야 한다.
+  H) 마무리 확인            — 슬롯이 차도 바로 끊지 않고 더 하실 말씀을 여쭙는다.
 
 **키가 없으면 건너뛴다.** 실제 API 를 호출하므로 비용이 든다. 케이스를
 4개로 제한한 것도 그래서다. 키 없이 도는 검증은 `server.selftest` 를 쓴다.
@@ -38,13 +42,34 @@ def check(label: str, ok: bool, detail: str = "") -> bool:
     return ok
 
 
+SLOT_NAMES = ("what", "where", "when", "contact")
+
+
+def assert_invariant(result: dict, where: str) -> list[str]:
+    """값이 빈 슬롯은 반드시 missing 에 있다. 예외 없다."""
+    slots = result.get("slots") or {}
+    missing = set(slots.get("missing") or [])
+    broken = []
+    for name in SLOT_NAMES:
+        empty = not (slots.get(name) or "").strip()
+        if empty and name not in missing:
+            broken.append(f"{where}: {name} 값이 비었는데 missing 에 없음")
+        if not empty and name in missing:
+            broken.append(f"{where}: {name} 값이 있는데 missing 에 있음")
+    return broken
+
+
 def run_call(utterances: list[str]) -> ConversationSession:
     session = ConversationSession()
     session.greet()
-    for line in utterances:
+    for index, line in enumerate(utterances, 1):
         result = session.turn(text=line)
         print(f"    어르신: {line}")
         print(f"    보이소: {result['reply_text']}")
+        broken = assert_invariant(result, f"턴 {index}")
+        for message in broken:
+            print(f"    [FAIL] 불변식 위반 — {message}")
+            _failures.append("슬롯 불변식")
     return session
 
 
@@ -99,6 +124,7 @@ def case_d() -> None:
             "안동시 옥동입니더",
             "장마철부터 그랬어예",
             "010-1234-5678 이라예",
+            "없어예",
         ]
     )
     card = session.end("dialogue-check")
@@ -117,11 +143,117 @@ def case_d() -> None:
     check("배정 근거가 비어 있지 않다", bool(card["assigned"]["evidence"].strip()))
 
 
+def case_e() -> None:
+    print("\nE) 무의미한 발화가 들어올 때")
+    session = run_call(
+        [
+            "가나다 가나다 가나다",
+            "집 앞에 물이 안 빠져예",
+        ]
+    )
+    what = session.slots.get("what")
+    check("무의미한 발화가 민원 내용에 섞이지 않았다", "가나다" not in what, what)
+    check("이후 정상 발화는 정상 처리됐다", any(k in what for k in ("물", "배수", "빠")), what)
+
+    replies = [e["standard"] for e in session.transcript if e["role"] == "agent"]
+    check("되묻되 통화를 끊지 않았다", len(replies) >= 2)
+
+
+def case_f() -> None:
+    print("\nF) 랜드마크로 위치를 말하는 경우")
+    session = run_call(
+        [
+            "집 앞에 물이 안 빠져예",
+            "포항공대요",
+        ]
+    )
+    where = session.slots.get("where")
+    landmark = session.slots.landmark
+
+    check("랜드마크에서 시·군을 확보했다", "포항" in where, f"where={where!r}")
+    check("랜드마크를 버리지 않았다", "포항공대" in landmark, f"landmark={landmark!r}")
+
+    last = session.turn(text="가나다")
+    check(
+        "위치가 비었으면 missing 에 남는다",
+        not assert_invariant(last, "추가턴"),
+        "; ".join(assert_invariant(last, "추가턴")) or "정상",
+    )
+
+
+def case_g() -> None:
+    print("\nG) 시군 없는 값은 where 에 들어가지 않는다")
+    session = run_call(
+        [
+            "집 앞에 물이 안 빠져예",
+            "보스텍 체육관이요",
+        ]
+    )
+    where = session.slots.get("where")
+    slots = session.slots.as_dict()
+    check(
+        "시군이 없는 값이 where 에 들어가지 않았다",
+        not where or any(city[:-1] in where for city in ("포항시", "안동시", "구미시")),
+        f"where={where!r}",
+    )
+    check(
+        "where 가 비었으면 missing 에 있다",
+        bool(where) or "where" in slots["missing"],
+        f"missing={slots['missing']}",
+    )
+    check("단서는 landmark 로 보존됐다", "체육관" in session.slots.landmark, session.slots.landmark)
+
+
+def case_h() -> None:
+    print("\nH) 마무리 확인과 추가 정보")
+    session = ConversationSession()
+    session.greet()
+    replies = []
+    for line in [
+        "집 앞에 물이 안 빠져예",
+        "안동시 옥동입니더",
+        "장마철부터예",
+        "010-1234-5678 이라예",
+    ]:
+        result = session.turn(text=line)
+        replies.append(result)
+        print(f"    어르신: {line}")
+        print(f"    보이소: {result['reply_text']}")
+
+    check("슬롯이 다 차도 바로 끊지 않았다", replies[-1]["done"] is False, str(replies[-1]["done"]))
+    check(
+        "더 하실 말씀을 여쭤봤다",
+        "말씀" in replies[-1]["reply_text"],
+        replies[-1]["reply_text"][:44],
+    )
+
+    extra = session.turn(text="아침에만 그래예")
+    print(f"    어르신: 아침에만 그래예")
+    print(f"    보이소: {extra['reply_text']}")
+    check("추가 정보가 메모로 쌓였다", len(session.notes) >= 1, str([n["text"] for n in session.notes]))
+    check("메모를 받고도 통화가 계속된다", extra["done"] is False)
+
+    final = session.turn(text="없어예")
+    print(f"    어르신: 없어예")
+    print(f"    보이소: {final['reply_text']}")
+    check("종료 신호에 통화를 마쳤다", final["done"] is True)
+    check("담당자 연결을 안내했다", "담당자" in final["reply_text"], final["reply_text"][:44])
+
+    card = session.end("dialogue-check-h")
+    check("민원카드에 notes 가 실렸다", len(card["notes"]) >= 1, str([n["text"] for n in card["notes"]]))
+    check(
+        "notes 항목이 계약 형태다",
+        all(set(n) == {"text", "at", "source"} for n in card["notes"]),
+    )
+
+
 def main() -> int:
     config.load_dotenv()
 
     parser = argparse.ArgumentParser(prog="python3 -m server.dialogue_check")
-    parser.add_argument("--case", choices=["a", "b", "c", "d"], help="한 케이스만 실행")
+    parser.add_argument(
+        "--case", choices=["a", "b", "c", "d", "e", "f", "g", "h"], help="한 케이스만 실행"
+    )
     args = parser.parse_args()
 
     status = engine_status()
@@ -137,7 +269,8 @@ def main() -> int:
         print("\n키 없이 도는 검증은 `python3 -m server.selftest` 를 쓰세요.")
         return 0
 
-    cases = {"a": case_a, "b": case_b, "c": case_c, "d": case_d}
+    cases = {"a": case_a, "b": case_b, "c": case_c, "d": case_d,
+             "e": case_e, "f": case_f, "g": case_g, "h": case_h}
     for key, func in cases.items():
         if args.case and args.case != key:
             continue

@@ -9,6 +9,8 @@
 fastapi>=0.110
 uvicorn[standard]>=0.27
 
-# 대화·요약용 Claude API. 키가 없으면 규칙 기반 폴백으로 동작하지만,
-# 패키지 자체는 import 되어야 하므로 필수 의존성으로 둔다.
+# 대화·요약을 Anthropic 으로 돌릴 때(VOISSO_AGENT_PROVIDER=anthropic)와
+# 선택적 방언 다듬기(VOISSO_DIALECT_LLM=1)에서만 쓰인다. OpenAI 경로와 STT/TTS 는
+# 표준 라이브러리 urllib 로만 호출한다. 설치돼 있지 않으면 코드가 ImportError 를
+# 잡아 그 경로를 건너뛰지만, 한 줄 설치로 선택지를 열어 두는 편이 낫다.
 anthropic>=0.40

@@ -108,6 +108,48 @@ GET  /api/complaints                  -> {"complaints": [<민원카드>...]}
 GET  /api/complaints/{id}             -> {"complaint": <민원카드>}
 ```
 
+**계약 외 추가 엔드포인트와 추가 필드 (있어도 계약 위반이 아니다. 없다고 가정해도 된다.)**
+
+```
+POST /api/call/turn/stream                       -> application/x-ndjson (아래 참조)
+POST /api/tts/stream   {"text","previous_text?"} -> audio/wav 청크 스트림
+GET  /api/health                                 -> 지금 어떤 엔진·STT·TTS 로 도는가
+```
+
+- `/api/call/start` 응답에는 첫 인사(`reply_text` 등)와 `status`(런타임 상태)가 함께 온다.
+  왕복 한 번을 아끼고, 저하 상태를 화면에 표시하기 위한 것이다.
+- `/api/call/turn` 요청은 두 필드를 더 받는다.
+  `alternatives`(브라우저 음성인식 후보 배열)와 `want_audio`(기본 `true`).
+  **둘 다 없어도 기존과 똑같이 동작한다.** `want_audio: false` 면 TTS 를 건너뛰고
+  텍스트만 돌려주므로, 클라이언트가 `/api/tts/stream` 으로 따로 받아 재생할 때 쓴다.
+- `turn`/`end` 응답의 `meta.timings` 에 구간별 소요(ms)가 실린다. STT 가 실패하면
+  `meta.stt_error` 에 사유가 담긴다 — **실패해도 200 이고 통화는 이어진다.**
+- `/api/tts/stream` 은 통짜 `audio_b64` 보다 첫 음성이 빠르다.
+  **TTS 키는 서버 안에서만 쓰인다. 브라우저로 내려보내지 않는다.**
+
+**`/api/call/turn/stream` (NDJSON)** — 요청 본문은 `/api/call/turn` 과 같다.
+일괄 경로는 LLM 과 TTS 가 다 끝나야 응답이 나가지만, 이 경로는 LLM 이 첫 문장을
+뱉는 즉시 합성을 시작해 두 시간이 겹쳐진다. 한 줄에 JSON 객체 하나가 온다.
+
+```
+{"type":"heard","dialect":…,"standard":…}                       받아쓴 어르신 발화
+{"type":"sentence","index":0,"standard":…,"dialect":…}          응답 문장 하나
+{"type":"audio_start","index":0,"mime":"audio/wav",
+ "sample_rate":32000,"bits":16,"channels":1}
+{"type":"audio_chunk","index":0,"seq":0,"b64":…}                 첫 청크에 WAV 헤더
+{"type":"audio_chunk","index":0,"seq":1,"b64":…}                 이후는 raw PCM
+{"type":"audio_end","index":0,"chunks":49}
+{"type":"final","reply_text":…,"reply_dialect":…,"slots":{…},"done":…,"meta":{…}}
+{"type":"error","message":…}                                     스트림 도중 실패
+```
+
+- 클라이언트는 `audio_chunk` 를 **`seq` 순서대로 이어 붙여** 재생한다.
+- TTS 가 꺼져 있으면(`VOISSO_TTS_PROVIDER=none`) `audio_*` 이벤트가 아예 없다.
+  `sentence` 와 `final` 은 그대로 온다.
+- 합성이 깨져도 통화는 끊지 않는다. **`final` 은 어떤 경로로든 반드시 나간다**,
+  그리고 그 `slots`/`done` 은 `/api/call/turn` 과 같은 값이다.
+- 실측 효과와 구간별 수치는 [`docs/E2E_SERVER.md`](./E2E_SERVER.md) 에 자동 기록된다.
+
 **민원카드 스키마 (고정)**
 
 ```json
@@ -133,6 +175,89 @@ GET  /api/complaints/{id}             -> {"complaint": <민원카드>}
 `assigned.evidence`는 **비워두면 안 된다.** "AI가 왜 나한테 보냈는지"를 담당자에게
 보여주는 값이고, 심사 기준(공공부문 활용 가능성 25%)의 핵심이다.
 
+## 5-B. 담당자 핸드오프 (신규 · 고정)
+
+AI 가 접수하고 **사람이 이어받는다.** 공공기관은 AI 에 전권을 주지 않는다.
+접수까지는 AI, 그 다음은 담당자가 책임진다. 이 구조가 실제로 채택 가능한 형태다.
+
+```
+POST /api/handoff/{complaint_id}/start
+     body {"officer_name": "홍길동", "department": "기후환경국 맑은물정책과"}
+     -> {"channel_id": "...", "status": "open", "started_at": "..."}
+
+POST /api/handoff/{complaint_id}/message
+     body {"role": "officer" | "caller", "text": "..."}
+     -> {"ok": true, "message": {...}}
+
+GET  /api/handoff/{complaint_id}
+     -> {"status": "none" | "open" | "closed",
+         "officer": {"name": "...", "department": "..."},
+         "messages": [{"role","text","dialect","standard","at"}]}
+
+POST /api/handoff/{complaint_id}/close  -> {"status": "closed"}
+```
+
+**양방향 통역이 이 기능의 핵심이다.**
+
+- 담당자는 **표준어로 입력**한다. 어르신 화면에는 `to_dialect()` 를 거친 **사투리**로 보인다.
+- 어르신은 **사투리로 말한다.** 담당자 화면에는 `normalize()` 를 거친 **표준어**로 보인다.
+- 각 메시지는 `dialect` 와 `standard` 를 **둘 다** 담는다. 양쪽 화면에서 원문 대조가 가능해야 한다.
+
+방언 레이어가 AI 응답 생성용 장치에서 **사람과 사람 사이의 통역기**로 확장된다.
+이게 우리 기술의 가장 강한 서사다. 담당자가 경상도 사람이 아니어도 어르신과 대화할 수 있다.
+
+**규칙**
+
+- 핸드오프는 민원카드가 생성된 뒤에만 시작된다. `complaint_id` 가 없으면 400.
+- 담당자 이름·부서는 대시보드에서 입력받는다. **실명을 저장하지 마라.** 표시용으로만 쓰고
+  민원카드에는 남기지 않는다. (도청 데이터에 담당자 실명이 없다는 원칙과 일관되게)
+- 통화 화면은 `end` 이후에도 `GET /api/handoff/{id}` 를 폴링해 담당자 연결을 기다린다.
+- **AI 가 담당자를 연기하지 마라.** 핸드오프가 열리면 AI 는 발화를 멈춘다.
+  화면에도 "지금부터 담당자가 직접 응대합니더" 를 명확히 표시한다.
+  누가 말하는지 헷갈리면 그 자체로 신뢰 문제가 된다.
+
+## 5-C. 진행 안내 콜백 (신규 · 고정)
+
+**시스템이 먼저 전화를 건다.** 지금 어르신이 민원 진행 상황을 알려면 다시 전화해서
+ARS 를 또 뚫어야 한다. 우리가 없애려던 벽을 어르신이 다시 만난다. 그래서 방향을 뒤집는다.
+
+```
+POST /api/callback/{complaint_id}/schedule
+     body {"briefing": "현장 확인 완료. 이번 주 내 배수관 준설 예정입니다.",
+           "officer_name": "홍길동", "department": "기후환경국 맑은물정책과"}
+     -> {"callback_id": "...", "status": "pending"}
+
+GET  /api/callback/{complaint_id}
+     -> {"status": "none"|"pending"|"answered"|"closed",
+         "briefing": {"standard": "...", "dialect": "..."},
+         "officer": {...},
+         "messages": [{"role","text","dialect","standard","at"}]}
+
+POST /api/callback/{complaint_id}/answer   -> 어르신이 전화를 받음. status: answered
+POST /api/callback/{complaint_id}/message  body {"role":"caller"|"agent","text":"..."}
+POST /api/callback/{complaint_id}/close
+```
+
+**흐름**
+
+1. 담당자가 대시보드에서 **진행 상황을 표준어로 작성**하고 "안내 전화 걸기" 를 누른다.
+2. 어르신 화면에 **수신 전화**가 뜬다. 벨 표시와 "경상북도청에서 전화가 왔습니더" 안내.
+   받기 버튼 하나뿐이다. (어르신 모드 원칙)
+3. 받으면 AI 가 **사투리로 브리핑**한다. 담당자가 쓴 내용을 `to_dialect()` 로 변환한 것이다.
+4. 어르신이 추가로 물으면 받아 적어 담당자에게 전달한다. 통화 종료 시 민원카드에 쌓인다.
+
+**절대 규칙 — 이걸 어기면 기능 자체가 위험해진다**
+
+- **AI 는 담당자가 쓴 내용만 전달한다.** 처리 결과·일정·가능 여부를 AI 가 생성하지 마라.
+  "언제 됩니꺼?" 라는 질문에 브리핑에 없는 답을 지어내면 그것은 행정 약속이 된다.
+  모르는 것은 "담당자에게 여쭤보고 다시 연락드릴게예" 로 넘긴다.
+- 어르신의 추가 질문은 **받아 적어 담당자에게 전달**한다. AI 가 답하지 않는다.
+  단순 확인(접수번호, 담당 부서명 같은 이미 확정된 사실)은 답해도 된다.
+- 브리핑 원문(`standard`)과 사투리 변환(`dialect`)을 **둘 다** 보관한다.
+  담당자가 "내가 쓴 대로 전달됐는가" 를 확인할 수 있어야 한다.
+- **실제 전화망(PSTN) 연동은 H3 다.** 지금은 브라우저에서 수신 화면을 띄우는 시뮬레이션이다.
+  문서와 발표에서 이 점을 정직하게 밝혀라. 숨기면 질문 하나에 무너진다.
+
 ## 6. 개발 환경 제약 (필독)
 
 **개발 환경은 노트북이다. 디스크·메모리·연산이 제한적이다.**
@@ -149,15 +274,32 @@ GET  /api/complaints/{id}             -> {"complaint": <민원카드>}
 
 ## 7. 환경변수
 
+**전체 목록과 각 변수의 기본값·없을 때의 동작은 [`.env.example`](../.env.example) 에 있다.**
+아래는 자주 쓰는 것만 추린 것이다. 새 변수를 추가하면 `.env.example` 을 같은 커밋에서 갱신하라
+(README 만으로 실행 가능해야 한다는 것이 이 프로젝트의 탈락 조건이다).
+
 ```
-ANTHROPIC_API_KEY=       # 대화·요약·방언 변환
-VOISSO_TTS_PROVIDER=      # typecast | elevenlabs | none   (기본 none = 텍스트 모드)
+# 대화 엔진
+VOISSO_AGENT_PROVIDER=    # openai | anthropic | rule  (비우면 키 있는 쪽 자동, OpenAI 우선)
+VOISSO_AGENT_MODEL=       # 비우면 gpt-5.6-terra / claude-sonnet-5
+VOISSO_SUMMARY_MODEL=     # 비우면 gpt-5.6-terra / claude-opus-5
+OPENAI_API_KEY=           # 대화 LLM 과 음성 인식이 같이 쓴다
+ANTHROPIC_API_KEY=        # anthropic 경로 · 선택적 방언 다듬기
+
+# 음성
+VOISSO_TTS_PROVIDER=none  # typecast | elevenlabs | none  (기본 none = 텍스트 모드)
 TYPECAST_API_KEY=
 TYPECAST_VOICE_ID=
+VOISSO_TTS_TEMPO=0.85     # 어르신 청취용으로 표준보다 느리게
 ELEVENLABS_API_KEY=
-VOISSO_STT_PROVIDER=      # openai | none
-OPENAI_API_KEY=          # Whisper API (로컬 모델 아님)
+VOISSO_STT_PROVIDER=none  # openai | none
+VOISSO_STT_MODEL=         # 비우면 gpt-4o-transcribe (로컬 모델 아님)
+
+# 데이터·서버
 VOISSO_DATA_DIR=./data
+VOISSO_DATA_FILE=         # 데이터 파일 직접 지정 (합성 샘플용)
+VOISSO_HOST= / VOISSO_PORT=      # 비우면 127.0.0.1:8000
+VOISSO_CORS_ORIGINS=             # 비우면 *
 ```
 
 ## 8. 막히면

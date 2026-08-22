@@ -40,9 +40,9 @@
     <span class="stat-sub">아직 열어보지 않음</span>
   </div>
   <div class="stat">
-    <span class="stat-label">처리중</span>
-    <span class="stat-value stat-value--info" id="stat-progress">–</span>
-    <span class="stat-sub" id="stat-progress-sub">완료 – 건</span>
+    <span class="stat-label">담당자 통화중</span>
+    <span class="stat-value stat-value--live" id="stat-live">–</span>
+    <span class="stat-sub" id="stat-live-sub">처리중 – 건</span>
   </div>
   <div class="stat">
     <span class="stat-label">미배정</span>
@@ -80,6 +80,16 @@
         <option value="wf:progress">처리중</option>
         <option value="wf:done">완료</option>
         <option value="wf:rejected">반려</option>
+      </optgroup>
+      <optgroup label="담당자 통화">
+        <option value="ho:none">미연결</option>
+        <option value="ho:open">통화중</option>
+        <option value="ho:closed">상담종료</option>
+      </optgroup>
+      <optgroup label="진행 안내 전화">
+        <option value="cb:pending">안내 대기</option>
+        <option value="cb:answered">안내 통화중</option>
+        <option value="cb:closed">안내 완료</option>
       </optgroup>
       <optgroup label="배정">
         <option value="as:unassigned">미배정</option>
@@ -128,6 +138,8 @@
 
 <script src="config.js"></script>
 <script src="mock-data.js"></script>
+<script src="handoff-mock.js"></script>
+<script src="callback-mock.js"></script>
 <script src="app.js"></script>
 </body>
 </html>

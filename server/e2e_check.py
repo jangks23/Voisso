@@ -152,6 +152,68 @@ def run_call(base: str, audio: dict[str, bytes] | None, label: str = "") -> dict
     }
 
 
+def stream_turn(base: str, session_id: str, payload_extra: dict) -> dict:
+    """스트리밍 턴을 돌리고 **첫 오디오 청크까지의 시간(TTFA)** 을 잰다."""
+    url = f"{base}/api/call/turn/stream"
+    body = json.dumps({"session_id": session_id, **payload_extra}).encode("utf-8")
+    req = urllib.request.Request(
+        url, data=body, headers={"Content-Type": "application/json"}, method="POST"
+    )
+    start = time.perf_counter()
+    ttfa = None
+    first_sentence = None
+    final = None
+    sentences = 0
+
+    # 반드시 readline() 으로 읽는다. read(n) 은 n 바이트가 찰 때까지 블록해서
+    # 작은 `sentence` 줄이 뒤따르는 오디오 청크와 함께 도착한 것처럼 보인다
+    # (첫 문장과 첫 음성이 1ms 차이로 찍히면 이 함정에 빠진 것이다).
+    with urllib.request.urlopen(req, timeout=180) as resp:
+        while True:
+            raw = resp.readline()
+            if not raw:
+                break
+            if not raw.strip():
+                continue
+            event = json.loads(raw.decode("utf-8"))
+            now = (time.perf_counter() - start) * 1000
+            kind = event.get("type")
+            if kind == "sentence":
+                sentences += 1
+                if first_sentence is None:
+                    first_sentence = now
+            elif kind == "audio_chunk" and ttfa is None:
+                ttfa = now
+            elif kind == "final":
+                final = event
+    total = (time.perf_counter() - start) * 1000
+    return {
+        "ttfa_ms": round(ttfa, 1) if ttfa else None,
+        "first_sentence_ms": round(first_sentence, 1) if first_sentence else None,
+        "total_ms": round(total, 1),
+        "sentences": sentences,
+        "final": final or {},
+    }
+
+
+def run_call_streaming(base: str, audio: dict[str, bytes] | None) -> dict:
+    """스트리밍 경로로 통화 한 건. 턴마다 TTFA 를 기록한다."""
+    started = api(base, "/api/call/start", {})
+    session_id = started["session_id"]
+    turns = []
+    for line in SCRIPT:
+        extra = (
+            {"audio_b64": base64.b64encode(audio[line]).decode("ascii")}
+            if audio is not None
+            else {"text": line}
+        )
+        result = stream_turn(base, session_id, extra)
+        result["line"] = line
+        turns.append(result)
+    ended = api(base, "/api/call/end", {"session_id": session_id})
+    return {"session_id": session_id, "turns": turns, "complaint": ended["complaint"]}
+
+
 def _heard(result: dict) -> str:
     """서버가 무엇으로 알아들었는지 — 통화 기록 대신 슬롯으로 확인한다."""
     slots = result.get("slots") or {}
@@ -297,6 +359,50 @@ def main() -> int:
     table = stage_table(stages, call["end_timings"])
     print("  " + table.replace("\n", "\n  "))
 
+    streaming = None
+    if runtime["tts"] != "none" or True:
+        print("\n2-1) 스트리밍 경로 — 첫 음성까지(TTFA)")
+        streaming = run_call_streaming(base, audio)
+        for index, turn in enumerate(streaming["turns"], 1):
+            fs = turn["first_sentence_ms"]
+            ttfa = turn["ttfa_ms"]
+            print(
+                f"    턴 {index}: 첫 문장 {fs or 0:6.0f}ms → 첫 음성 {ttfa or 0:6.0f}ms "
+                f"(전체 {turn['total_ms']:.0f}ms, 문장 {turn['sentences']}개)"
+            )
+        ttfas = [t["ttfa_ms"] for t in streaming["turns"] if t["ttfa_ms"]]
+        if ttfas:
+            print(f"    TTFA 중앙값 {statistics.median(ttfas):.0f}ms / 최소 {min(ttfas):.0f}ms")
+
+        if audio is not None:
+            # 데모 기본 경로는 브라우저 음성인식(text)이다. STT 가 빠지면
+            # 얼마나 빨라지는지 같은 방식으로 재서 함께 남긴다.
+            print("    텍스트 입력 경로(브라우저 음성인식 사용 시)")
+            text_run = run_call_streaming(base, None)
+            streaming["text_turns"] = text_run["turns"]
+            t_ttfas = [t["ttfa_ms"] for t in text_run["turns"] if t["ttfa_ms"]]
+            for index, turn in enumerate(text_run["turns"], 1):
+                print(
+                    f"      턴 {index}: 첫 문장 {turn['first_sentence_ms'] or 0:6.0f}ms "
+                    f"→ 첫 음성 {turn['ttfa_ms'] or 0:6.0f}ms"
+                )
+            if t_ttfas:
+                print(
+                    f"      TTFA 중앙값 {statistics.median(t_ttfas):.0f}ms "
+                    f"/ 최소 {min(t_ttfas):.0f}ms"
+                )
+                check(
+                    "기본 경로 TTFA 가 1.5초 이내다",
+                    statistics.median(t_ttfas) <= 1500,
+                    f"{statistics.median(t_ttfas):.0f}ms",
+                )
+        blocking_totals = [st["wall_ms"] for st in stages]
+        check(
+            "스트리밍 TTFA 가 일괄 경로보다 빠르다",
+            bool(ttfas) and statistics.median(ttfas) < statistics.median(blocking_totals),
+            f"{statistics.median(ttfas):.0f}ms vs {statistics.median(blocking_totals):.0f}ms",
+        )
+
     stream = None
     if runtime["tts"] != "none":
         print("\n  스트리밍 TTS 비교")
@@ -347,7 +453,9 @@ def main() -> int:
         except ApiError as exc:
             check("키 없는 서버에 연결됐다", False, str(exc))
 
-    report = write_report(args.report, base, runtime, call, stream, sessions, mode, keyless)
+    report = write_report(
+        args.report, base, runtime, call, stream, sessions, mode, keyless, streaming
+    )
     print(f"\n결과를 {report} 에 남겼습니다.")
 
     print(f"\n  실패 {len(_failures)}건")
@@ -358,13 +466,17 @@ def main() -> int:
     return 0
 
 
-def write_report(path_str, base, runtime, call, stream, sessions, mode, keyless=None) -> Path:
+def write_report(
+    path_str, base, runtime, call, stream, sessions, mode, keyless=None, streaming=None
+) -> Path:
     from .e2e_report import render
 
     path = Path(config.ROOT_DIR) / path_str
     path.parent.mkdir(parents=True, exist_ok=True)
     path.write_text(
-        render(base, runtime, call, stream, sessions, mode, _failures, stage_table, keyless),
+        render(
+            base, runtime, call, stream, sessions, mode, _failures, stage_table, keyless, streaming
+        ),
         encoding="utf-8",
     )
     return path

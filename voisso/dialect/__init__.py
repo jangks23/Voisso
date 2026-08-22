@@ -36,12 +36,15 @@ from .core import (
     LEXICON_PATH,
     STRENGTHS,
     LexiconError,
+    admin_plain,
     convert,
+    cues,
     entries,
     explain,
     load_lexicon,
     restricted_entries,
     rules,
+    soften,
     source_counts,
 )
 from .llm import refine
@@ -52,6 +55,10 @@ __all__ = [
     "lexicon_size",
     "rule_count",
     "explain",
+    "closing_cues",
+    "officer_to_dialect",
+    "soften",
+    "admin_plain",
     "source_counts",
     "restricted_entries",
     "load_lexicon",
@@ -118,3 +125,64 @@ def rule_count() -> int:
         return len(rules())
     except LexiconError:
         return 0
+
+
+def closing_cues() -> dict[str, list[str]]:
+    """통화 마무리 신호 목록 — P6 의 종료 판정용.
+
+    슬롯이 다 찬 뒤 "더 하실 말씀 있으신교?" 를 물었을 때, 어르신의 대답이
+    종료인지 계속인지 가르는 표현들이다. 어르신이 "없다"를 말하는 방식은
+    아주 다양해서(없어예 / 됐어예 / 괘안타 / 그기 다라예 / 끝이라예 …)
+    이걸 못 알아들으면 통화가 끝나지 않는다.
+
+    Returns:
+        ``{"closing_negative": [...], "closing_positive": [...]}``
+        사투리형과 표준어형이 함께 들어 있다. :func:`normalize` 전후 어느 쪽에
+        매칭해도 걸리도록 한 것이다.
+
+    사용 예::
+
+        cues = closing_cues()
+        said = normalize(caller_text)
+        if any(c in said or c in caller_text for c in cues["closing_positive"]):
+            ...  # 계속 듣는다 (긍정을 먼저 본다 — 놓치면 민원을 잃는다)
+        elif any(c in said or c in caller_text for c in cues["closing_negative"]):
+            ...  # 담당자 연결로 넘어간다
+    """
+    try:
+        return {k: list(v) for k, v in cues().items()}
+    except LexiconError:
+        return {"closing_negative": [], "closing_positive": []}
+
+
+def officer_to_dialect(text: str) -> str:
+    """담당자가 쓴 표준어를 어르신이 들을 경북 말투로. **핸드오프·콜백 브리핑 공용.**
+
+    계약서 5-B(담당자 핸드오프)·5-C(진행 안내 콜백)에서 부르는 단 하나의 함수다.
+    두 가지를 한 번에 처리한다.
+
+    1. :func:`soften` — 공문체 낱말을 쉬운 말로 ("회신"→"연락", "이첩"→"넘겨")
+    2. :func:`to_dialect` 의 ``strength="light"`` — **종결어미만** 바꾼다
+
+    ``strength="light"`` 인 이유가 핵심이다. 기본값 ``"polite"`` 는 어휘까지 역변환해서
+    "최대한 **퍼뜩** 처리하겠습니더", "**마이** 불편하셨겠습니더" 같은 결과를 만든다.
+    AI 가 제 목소리로 말할 때는 정겹지만, **공무원의 공식 답변으로는 희화화된다.**
+    담당자의 낱말은 그대로 두고 말끝만 경북으로 바꾸는 편이 정중하고 안전하다.
+
+    변환하지 않는 것이 어색하게 변환하는 것보다 낫다.
+
+    Args:
+        text: 담당자가 입력한 표준어 문장.
+
+    Returns:
+        어르신에게 보여 줄 경북 말투 문장.
+        계약서 5-B에 따라 원문(``standard``)과 이 결과(``dialect``)를 **둘 다** 저장하라.
+
+    사용 예::
+
+        >>> officer_to_dialect("해당 건은 검토 후 회신드리겠습니다.")
+        '말씀하신 건은 살펴보고 연락드리겠습니더.'
+        >>> officer_to_dialect("많이 불편하셨겠습니다. 최대한 빨리 처리하겠습니다.")
+        '많이 불편하셨겠습니더. 최대한 빨리 처리하겠습니더.'
+    """
+    return to_dialect(soften(text), strength="light")

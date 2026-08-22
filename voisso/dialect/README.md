@@ -37,7 +37,7 @@ python -c "from voisso.dialect import normalize, to_dialect, lexicon_size; \
 ```
 
 ```
-367
+382
 확인해 드리겠습니더. 담당자가 연락드릴 예정입니더.
 물이 안 빠져서 큰일이에요
 ```
@@ -72,6 +72,56 @@ normalize(text, use_llm=True)         # LLM 다듬기 강제 (키 필요)
 | `explain(text, direction)` | 이 문장에 **실제로 적용된** 항목 목록. 대시보드 "사투리/표준어 대조 보기"용 |
 | `source_counts()` | 출처별 항목 수 |
 | `restricted_entries()` | 재배포 금지 출처 항목 (**항상 비어 있어야 한다**) |
+| `closing_cues()` | 통화 마무리 신호 목록 — 종료/계속 판정용 (P6) |
+| `soften(text)` | 행정 문체를 쉬운 말로. **`to_dialect()` 앞에 쓴다** |
+| `admin_plain()` | 행정용어 → 쉬운 말 대응표 |
+
+### 통화 마무리 (P6 연동)
+
+슬롯이 다 찬 뒤 "더 하실 말씀 있으십니꺼?" 를 묻고, 대답이 종료인지 계속인지 가른다.
+어르신이 "없다"를 말하는 방식은 아주 다양해서(없어예 / 됐어예 / 괘안타 / 그기 다라예 /
+끝이라예 …) **이걸 못 알아들으면 통화가 끝나지 않는다.**
+
+```python
+from voisso.dialect import closing_cues, normalize
+
+cues = closing_cues()          # {"closing_negative": [...64개], "closing_positive": [...31개]}
+said = normalize(caller_text)
+
+# 긍정을 먼저 본다 — 놓치면 민원을 잃는다
+if any(c in said or c in caller_text for c in cues["closing_positive"]):
+    ...   # 계속 듣는다
+elif any(c in said or c in caller_text for c in cues["closing_negative"]):
+    ...   # 담당자 연결로 넘어간다
+```
+
+목록에는 사투리형과 표준어형이 **둘 다** 들어 있다. `normalize()` 전후 어느 쪽에
+매칭해도 걸리게 하려는 것이다.
+
+### 담당자 핸드오프 — `soften()` 을 먼저 거쳐라
+
+담당자는 공문체로 입력하는데 어르신은 그걸 사투리로 듣는다. `to_dialect()` 는 어미만
+바꾸므로 그대로 넣으면 이렇게 된다.
+
+```
+관련 부서에 이첩하여 처리하도록 하겠습니다.
+  → 관련 부서에 이첩하여 처리하도록 하겠습니더.     ← 표준어일 때보다 나쁘다
+```
+
+공무원이 사투리를 흉내 내는 소리가 된다. **낱말 난이도를 먼저 낮춰야 한다.**
+
+```python
+from voisso.dialect import soften, to_dialect
+to_dialect(soften(staff_text))
+```
+
+```
+해당 건은 검토 후 회신드리겠습니다.
+  → 말씀하신 건은 살펴보고 연락드리겠습니더.        ← soften() 을 거친 결과
+```
+
+`soften()` 은 되돌릴 수 없는 의역이라 **`to_dialect()` 안에서 자동으로 불리지 않는다.**
+부르는 쪽이 명시적으로 선택한다. 왕복 검증 대상도 아니다.
 
 `explain()` 반환 예:
 

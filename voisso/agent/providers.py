@@ -20,9 +20,10 @@ import logging
 import os
 from typing import Any
 
-from ..voice._http import HTTPError, post_json
+from ..voice._http import HTTPError, post_json, post_sse_lines
 from . import prompts
 from .slots import SLOT_ORDER, Slots
+from .usage import PROCESS_TOTAL, Usage
 
 log = logging.getLogger("voisso.agent.providers")
 
@@ -30,14 +31,18 @@ log = logging.getLogger("voisso.agent.providers")
 OPENAI_CHAT_URL = "https://api.openai.com/v1/chat/completions"
 
 # 실시간 통화라 **지연이 곧 사용성**이다. 어르신이 말을 마치고 응답이 올 때까지
-# 2~3초가 넘어가면 통화로 안 느껴진다. 그래서 대화 턴은 가장 빠르고 싼 등급을
-# 기본으로 둔다.
-#   gpt-5.6-luna : $0.20/$1.20 per MTok — 비용 최적화·저지연 등급.
-#                  슬롯 채우기는 어려운 추론이 아니라 이 등급으로 충분하다.
+# 2~3초가 넘어가면 통화로 안 느껴진다.
+#
+# 처음에는 가장 싼 등급(gpt-5.6-luna)을 기본으로 뒀는데, 재보니 **더 비싼
+# terra 가 더 빨랐다.** 같은 프롬프트로 3회씩 측정한 첫 토큰까지 시간(TTFT):
+#   gpt-5.6-luna  : 1226ms (1180 / 1226 / 1354)   전체 1718ms
+#   gpt-5.6-terra :  772ms ( 772 /  790 /  756)   전체 1399ms
+# 값싼 등급이 항상 빠르지는 않다 — 큰 모델이 더 좋은 하드웨어에 배치되면
+# 지연은 오히려 줄어든다. 턴당 토큰이 얼마 안 되므로(입력 ~1K, 출력 ~150)
+# terra 를 써도 통화 한 건이 2센트 안쪽이다. 지연을 사는 값으로 싸다.
+DEFAULT_OPENAI_TURN_MODEL = "gpt-5.6-terra"
 # 요약은 통화가 끝난 뒤 한 번만 돌고, 그 문장이 담당 공무원 대시보드에 그대로
-# 뜨는 산출물이라 품질을 우선한다.
-#   gpt-5.6-terra: $2/$12 per MTok — 지능과 비용의 균형 등급.
-DEFAULT_OPENAI_TURN_MODEL = "gpt-5.6-luna"
+# 뜨는 산출물이라 품질을 우선한다. 지연은 중요하지 않다.
 DEFAULT_OPENAI_SUMMARY_MODEL = "gpt-5.6-terra"
 
 # --- Anthropic ------------------------------------------------------------
@@ -62,11 +67,17 @@ class LLMProvider:
     def available(self) -> bool:  # pragma: no cover - 인터페이스
         return False
 
-    def respond(self, transcript: list[dict[str, Any]], slots: Slots):  # pragma: no cover
+    def respond(self, transcript, slots, usage=None):  # pragma: no cover
         raise NotImplementedError
 
-    def summarize(self, transcript: list[dict[str, Any]], slots: Slots) -> dict[str, str]:  # pragma: no cover
+    def summarize(self, transcript, slots, usage=None) -> dict[str, str]:  # pragma: no cover
         raise NotImplementedError
+
+    def _record(self, model: str, raw_usage: dict[str, Any] | None, usage: Usage | None) -> None:
+        """응답의 usage 를 세션 원장과 프로세스 누적에 함께 기록한다."""
+        if usage is not None:
+            usage.add_llm(model, raw_usage)
+        PROCESS_TOTAL.add_llm(model, raw_usage)
 
 
 class OpenAIProvider(LLMProvider):
@@ -106,6 +117,7 @@ class OpenAIProvider(LLMProvider):
         schema: dict[str, Any],
         schema_name: str,
         max_tokens: int,
+        usage: Usage | None = None,
     ) -> dict[str, Any]:
         payload: dict[str, Any] = {
             "model": model,
@@ -143,6 +155,7 @@ class OpenAIProvider(LLMProvider):
                 raise
 
         body = json.loads(raw.decode("utf-8"))
+        self._record(model, body.get("usage"), usage)
         choice = (body.get("choices") or [{}])[0]
         message = choice.get("message") or {}
         if message.get("refusal"):
@@ -153,10 +166,10 @@ class OpenAIProvider(LLMProvider):
         self.last_error = None
         return json.loads(content)
 
-    def respond(self, transcript: list[dict[str, Any]], slots: Slots):
+    def respond(self, transcript, slots, usage: Usage | None = None):
         from .engine import TurnDecision, build_messages
 
-        messages = build_messages(transcript)
+        messages = build_messages(transcript, slots)
         if not messages:
             return TurnDecision(reply=prompts.opening_line(), engine=self.name)
 
@@ -168,10 +181,70 @@ class OpenAIProvider(LLMProvider):
             schema=prompts.TURN_SCHEMA,
             schema_name="voisso_turn",
             max_tokens=1200,
+            usage=usage,
         )
         return _decision_from(data, slots, self.name)
 
-    def summarize(self, transcript: list[dict[str, Any]], slots: Slots) -> dict[str, str]:
+    def respond_stream(self, transcript, slots, usage: Usage | None = None):
+        """토큰이 오는 대로 **완성된 문장부터** 내보낸다.
+
+        `("sentence", 문장)` 을 여러 번, 마지막에 `("final", TurnDecision)`.
+        첫 문장을 일찍 얻는 것이 목적이다 — 그 사이에 TTS 를 시작하면
+        LLM 시간과 합성 시간이 겹쳐져 첫 소리가 훨씬 빨리 난다.
+        """
+        from .engine import TurnDecision, build_messages
+        from .streaming import ReplySentenceExtractor
+
+        messages = build_messages(transcript, slots)
+        if not messages:
+            yield ("final", TurnDecision(reply=prompts.opening_line(), engine=self.name))
+            return
+
+        messages[-1]["content"] = f"{messages[-1]['content']}\n\n{prompts.build_state_note(slots)}"
+        payload: dict[str, Any] = {
+            "model": self.turn_model,
+            "messages": [{"role": "system", "content": prompts.SYSTEM_PROMPT}, *messages],
+            "response_format": {
+                "type": "json_schema",
+                "json_schema": {"name": "voisso_turn", "strict": True, "schema": prompts.TURN_SCHEMA},
+            },
+            self._token_field: 1200,
+            "stream": True,
+            # 스트리밍은 기본적으로 usage 를 안 준다. 명시해야 마지막 청크에 실린다.
+            "stream_options": {"include_usage": True},
+        }
+
+        extractor = ReplySentenceExtractor()
+        raw = ""
+        for event in post_sse_lines(
+            OPENAI_CHAT_URL,
+            payload,
+            headers={"Authorization": f"Bearer {self.api_key}"},
+            timeout=45.0,
+        ):
+            if event.get("usage"):
+                self._record(self.turn_model, event["usage"], usage)
+            choices = event.get("choices") or []
+            if not choices:
+                continue
+            delta = (choices[0].get("delta") or {}).get("content") or ""
+            if not delta:
+                continue
+            raw += delta
+            for sentence in extractor.feed(delta):
+                yield ("sentence", sentence)
+
+        for sentence in extractor.finish():
+            yield ("sentence", sentence)
+
+        self.last_error = None
+        try:
+            data = json.loads(raw)
+        except json.JSONDecodeError as exc:
+            raise RuntimeError(f"스트리밍 JSON 파싱 실패: {exc}") from exc
+        yield ("final", _decision_from(data, slots, self.name))
+
+    def summarize(self, transcript, slots, usage: Usage | None = None) -> dict[str, str]:
         data = self._call(
             model=self.summary_model,
             system=prompts.SUMMARY_PROMPT,
@@ -179,6 +252,7 @@ class OpenAIProvider(LLMProvider):
             schema=prompts.SUMMARY_SCHEMA,
             schema_name="voisso_summary",
             max_tokens=1200,
+            usage=usage,
         )
         return _summary_from(data)
 
@@ -233,6 +307,7 @@ class AnthropicProvider(LLMProvider):
         max_tokens: int,
         thinking: dict[str, Any] | None,
         effort: str | None,
+        usage: Usage | None = None,
     ) -> dict[str, Any]:
         import anthropic
 
@@ -261,20 +336,27 @@ class AnthropicProvider(LLMProvider):
             output_config.pop("effort")
             response = client.messages.create(**kwargs)
 
+        raw_usage = getattr(response, "usage", None)
+        self._record(
+            model,
+            raw_usage.model_dump() if hasattr(raw_usage, "model_dump") else None,
+            usage,
+        )
         text = "".join(block.text for block in response.content if block.type == "text")
         self.last_error = None
         return json.loads(text)
 
-    def respond(self, transcript: list[dict[str, Any]], slots: Slots):
+    def respond(self, transcript, slots, usage: Usage | None = None):
         from .engine import TurnDecision, build_messages
 
-        messages = build_messages(transcript)
+        messages = build_messages(transcript, slots)
         if not messages:
             return TurnDecision(reply=prompts.opening_line(), engine=self.name)
 
         messages[-1]["content"] = f"{messages[-1]['content']}\n\n{prompts.build_state_note(slots)}"
         data = self._call(
             model=self.turn_model,
+            usage=usage,
             system=prompts.SYSTEM_PROMPT,
             messages=messages,
             schema=prompts.TURN_SCHEMA,
@@ -285,9 +367,10 @@ class AnthropicProvider(LLMProvider):
         )
         return _decision_from(data, slots, self.name)
 
-    def summarize(self, transcript: list[dict[str, Any]], slots: Slots) -> dict[str, str]:
+    def summarize(self, transcript, slots, usage: Usage | None = None) -> dict[str, str]:
         data = self._call(
             model=self.summary_model,
+            usage=usage,
             system=prompts.SUMMARY_PROMPT,
             messages=[{"role": "user", "content": _summary_input(transcript, slots)}],
             schema=prompts.SUMMARY_SCHEMA,
@@ -321,6 +404,10 @@ def _decision_from(data: dict[str, Any], slots: Slots, engine_name: str):
         ready_to_close=bool(data.get("ready_to_close")),
         engine=engine_name,
         answered_question=bool(data.get("answered_question")),
+        caller_unclear=bool(data.get("caller_unclear")),
+        landmark=str(raw_slots.get("landmark") or "").strip(),
+        caller_finished=bool(data.get("caller_finished")),
+        note=str(data.get("note") or "").strip(),
     )
 
 

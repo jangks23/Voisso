@@ -208,7 +208,10 @@ CASES: list[dict[str, Any]] = [
     {
         "id": "hold-drought",
         "text": "농사지을 물이 없어서 논이 다 말라갑니다",
-        "expect": ["스마트농업혁신과", "농업대전환과", "수자원관리과"],
+        # 처음엔 농업 부서만 적었는데, 사무분장을 확인하니 '가뭄'을 문자 그대로
+        # 명시한 곳은 안전행정실 자연재난과("재해영향평가, 한파, 가뭄")였다.
+        # 농사용 물 부족은 농촌용수 소관과도 겹치므로 둘 다 정답으로 인정한다.
+        "expect": ["스마트농업혁신과", "농업대전환과", "수자원관리과", "자연재난과"],
         "tag": "홀드아웃",
     },
     {
@@ -237,6 +240,218 @@ CASES: list[dict[str, Any]] = [
         "tag": "홀드아웃",
     },
 ]
+
+
+# ─────────────────────────────────────────── 일관성 쌍 (같은 성격 = 같은 부서)
+#
+# 실사용에서 #0074("물이 안 빠진다" -> 맑은물정책과)와
+# #0075("집이 물에 잠겼어요" -> 자연재난과)가 갈렸다. 둘 다 주택 침수인데
+# 배정이 달랐다. 일관성 없는 배정은 담당자 신뢰를 깎는다.
+#
+# 침수는 **원인**에 따라 소관이 갈리는 게 맞다. 그래서 세 갈래로 고정한다.
+#   상시·반복 배수 불량 -> 하수도 (맑은물정책과)
+#   태풍·호우 재난 피해 -> 자연재난과
+#   원인 불명           -> 단정 금지, 후보 두 갈래를 함께
+CONSISTENCY_GROUPS: list[dict[str, Any]] = [
+    {
+        "id": "flood-chronic",
+        "label": "상시 배수 불량 (원인이 상시임이 드러난 문장)",
+        "expect": ["맑은물정책과"],
+        "require_confident": True,
+        "texts": [
+            "집 앞에 물이 안 빠지고 자꾸 고여서 큰일이에요",
+            "집 앞에 물이 안 빠지고 자꾸 고여서 큰일이라예",
+            "비만 오면 마당에 물이 고여서 못 살겠어요",
+            "비만 오모 집 앞에 물이 안 빠지가 마당이 모두 잠기뿌니더",
+            "장마철부터 집 앞에 물이 안 빠집니다",
+            "상습 침수 구역이라 비만 오면 잠깁니다",
+        ],
+    },
+    {
+        "id": "drain-variants",
+        "label": "같은 배수 민원의 표현 변형 (전부 같은 부서로 가야 한다)",
+        "expect": ["맑은물정책과"],
+        "require_confident": True,
+        "texts": [
+            "비만 오면 마당에 물이 찬다",
+            "마당에 물이 찹니다",
+            "집 앞에 물이 안 빠져요",
+            "빗물이 안 내려가요",
+            "지하실에 물이 차올라요",
+            "골목에 물이 고여서 못 지나갑니다",
+            "배수구가 막혔어요",
+            "하수구가 막혀서 물이 넘칩니다",
+            "도랑이 막혀서 물이 안 빠집니다",
+            "소나기만 와도 마당이 잠겨요",
+            # 아래 10개는 위 파라미터/패턴을 고친 **뒤에** 새로 만든 홀드아웃이다.
+            "대문 앞에 물이 그득 차서 못 나갑니다",
+            "맨홀에서 물이 역류합니다",
+            "장마 때마다 반지하에 물이 들어옵니다",
+            "우수관이 막힌 것 같아요",
+            "길바닥에 물이 고여서 차가 못 다닙니다",
+            "집 앞 도랑을 좀 쳐 주세요",
+            "화장실 변기에서 물이 거꾸로 올라옵니다",
+            "논밭에 물이 안 빠져서 벼가 썩습니다",
+        ],
+    },
+    {
+        "id": "water-supply-variants",
+        "label": "상수도 민원의 표현 변형",
+        "expect": ["맑은물정책과"],
+        "require_confident": True,
+        "texts": [
+            "상수도가 터져서 물이 샙니다",
+            "며칠째 수돗물이 안 나옵니다",
+            "수도에서 녹물이 나와요",
+            "물이 안 나와서 밥을 못 합니다",
+            "수도관이 터졌어요",
+        ],
+    },
+    {
+        "id": "road-variants",
+        "label": "도로 파손의 표현 변형",
+        "expect": ["도로철도과"],
+        "require_confident": True,
+        "texts": [
+            "도로가 파여서 차가 덜컹거려요",
+            "길에 구멍이 났어요",
+            "아스팔트가 깨져서 위험합니다",
+            "포트홀 때문에 타이어가 터졌어요",
+            "길이 울퉁불퉁해서 못 다닙니다",
+        ],
+    },
+    {
+        "id": "streetlight-variants",
+        "label": "가로등 (시군 소관) 의 표현 변형",
+        "expect": "referral",
+        "texts": [
+            "가로등이 안 들어와요",
+            "밤에 골목이 캄캄해요",
+            "보안등이 나갔습니다",
+            "가로등 불이 깜빡거려요",
+            "동네가 어두워서 무서워요",
+        ],
+    },
+    {
+        "id": "waste-variants",
+        "label": "폐기물 무단투기·소각의 표현 변형",
+        "expect": ["환경관리과"],
+        "require_confident": True,
+        "texts": [
+            "쓰레기를 아무데나 버려요",
+            "길가에 쓰레기가 쌓였습니다",
+            "밤에 몰래 쓰레기를 버리고 갑니다",
+            "폐기물 불법투기 신고합니다",
+            "쓰레기 태우는 냄새가 납니다",
+        ],
+    },
+    {
+        "id": "farm-infra-variants",
+        "label": "농업기반 시설의 표현 변형",
+        "expect": ["스마트농업혁신과", "농업대전환과"],
+        "require_confident": True,
+        "texts": [
+            "농로가 무너졌어요",
+            "논둑이 터졌습니다",
+            "밭에 가는 길이 유실됐어요",
+            "수로가 막혀서 물이 안 갑니다",
+            "저수지 둑이 위험해 보입니다",
+        ],
+    },
+    {
+        "id": "senior-variants",
+        "label": "어르신 복지의 표현 변형",
+        "expect": ["어르신복지과"],
+        "require_confident": True,
+        "texts": [
+            "혼자 사시는 어르신이 걱정됩니다",
+            "경로당 보일러가 고장났어요",
+            "노인 일자리 알아보고 싶어요",
+            "요양 서비스를 못 받고 있어요",
+            "독거노인 돌봄이 필요합니다",
+        ],
+    },
+    {
+        "id": "livelihood-variants",
+        # 기초생활보장·긴급복지는 어르신복지과가 아니라 사회복지과 소관이다.
+        # 처음에 '복지'로 뭉쳐 놨다가 사무분장을 확인하고 그룹을 갈랐다.
+        "label": "저소득 생계 지원의 표현 변형",
+        "expect": ["사회복지과"],
+        "require_confident": True,
+        "texts": [
+            "기초생활 신청하려면요",
+            "생계가 어려워서 도움이 필요합니다",
+            "긴급복지 지원을 받고 싶습니다",
+            "먹고 살기가 너무 힘듭니다",
+        ],
+    },
+    {
+        "id": "bus-variants",
+        "label": "버스 운행의 표현 변형",
+        "expect": ["교통정책과"],
+        "require_confident": True,
+        "texts": [
+            "버스가 하루에 두 번밖에 안 와요",
+            "우리 마을에 버스가 안 들어옵니다",
+            "버스 노선을 늘려주세요",
+            "정류장에 지붕이 없어요",
+            "막차가 너무 일찍 끊깁니다",
+        ],
+    },
+    {
+        "id": "wildlife-variants",
+        "label": "야생동물 피해의 표현 변형",
+        "expect": ["기후환경정책과"],
+        "require_confident": True,
+        "texts": [
+            "멧돼지가 밭을 다 망쳐놨어요",
+            "고라니가 농작물을 먹어치웁니다",
+            "산돼지가 내려와서 무섭습니다",
+            "들짐승 때문에 농사를 못 짓겠어요",
+        ],
+    },
+    {
+        "id": "flood-disaster",
+        "label": "태풍·호우 재난 피해",
+        "expect": ["자연재난과"],
+        "require_confident": True,
+        "texts": [
+            "지난 호우로 마을이 침수됐습니다",
+            "태풍 때문에 집이 물에 잠기고 세간이 다 떠내려갔어요",
+            "집중호우로 침수 피해를 입었는데 지원을 받을 수 있나요",
+        ],
+    },
+    {
+        "id": "flood-unclear",
+        "label": "원인 불명 침수 — 단정하면 안 된다",
+        "expect": "ambiguous",
+        "expect_both": ["맑은물정책과", "자연재난과"],
+        "texts": [
+            "집이 물에 잠겼어요",
+            "물이 차서 집이 잠겼습니다",
+            "주택 침수 발생",
+        ],
+    },
+]
+
+
+def consistency_cases() -> list[dict[str, Any]]:
+    out: list[dict[str, Any]] = []
+    for group in CONSISTENCY_GROUPS:
+        for text in group["texts"]:
+            case = {
+                "id": f"{group['id']}::{text[:14]}",
+                "text": text,
+                "expect": group["expect"],
+                "tag": f"일관성:{group['label'][:14]}",
+                "note": group["label"],
+            }
+            if group.get("require_confident"):
+                case["require_confident"] = True
+            if group.get("expect_both"):
+                case["expect_both"] = group["expect_both"]
+            out.append(case)
+    return out
 
 
 # ------------------------------------------------ P5 demo_lines.md 케이스
@@ -329,9 +544,20 @@ def judge(case: dict[str, Any]) -> dict[str, Any]:
                 got += f" / 시군={action.get('region') or '미확인'}"
             else:
                 got += f" / {action.get('type')}"
+    elif expect == "ambiguous":
+        # 단정하면 안 되고, 두 갈래가 후보에 다 보여야 한다.
+        names = " ".join(m["full_name"] for m in matches)
+        both = all(k in names for k in case.get("expect_both", []))
+        ok = (not result["confident"]) and both
+        got = f"{'후보제시' if not result['confident'] else '단독배정(실패)'} / " + (
+            ", ".join(m["full_name"] for m in matches[:3]) or "매칭 0건"
+        )
     else:
         ok = bool(top) and any(k in top["full_name"] for k in expect)
         got = f"{top['full_name']} ({top['score']:.2f})" if top else "매칭 0건"
+        if ok and case.get("require_confident") and not result["confident"]:
+            ok = False
+            got += " (confident=False — 같은 성격 민원은 일관되게 단독 배정돼야 한다)"
 
     return {
         "id": case["id"],
@@ -359,7 +585,7 @@ def needs_real_data(case: dict[str, Any]) -> bool:
 
 
 def all_cases() -> list[dict[str, Any]]:
-    return CASES + load_demo_cases()
+    return CASES + consistency_cases() + load_demo_cases()
 
 
 def run(dataset: str = "real") -> tuple[int, int, list[dict[str, Any]]]:

@@ -105,6 +105,26 @@ _AUDIO_MAGIC = (
 )
 
 
+def audio_duration_sec(audio: bytes) -> float:
+    """오디오 길이(초). WAV 는 헤더에서 정확히 계산한다.
+
+    STT 는 오디오 길이로 과금되므로 이 값이 곧 비용이다. WAV 가 아니면
+    (브라우저 webm 등) 헤더만으로는 알 수 없어 0 을 돌려준다 — 추정치를
+    지어내느니 모른다고 하는 편이 낫다.
+    """
+    if len(audio) < 44 or not audio.startswith(b"RIFF") or b"WAVE" not in audio[:16]:
+        return 0.0
+    try:
+        import io
+        import wave
+
+        with wave.open(io.BytesIO(audio)) as handle:
+            rate = handle.getframerate()
+            return round(handle.getnframes() / rate, 2) if rate else 0.0
+    except Exception:
+        return 0.0
+
+
 def _sniff_extension(audio: bytes) -> str:
     """오디오 바이트의 매직 넘버로 컨테이너를 판별한다.
 
@@ -131,6 +151,10 @@ class STTResult:
     duration_sec: float = 0.0
     provider: str = "none"
     error: str | None = None
+    model: str = ""
+    # 응답이 usage 를 주면 그대로 담는다. 분 단위 과금이라 duration_sec 이
+    # 실질 비용 지표이고, 토큰 과금 모델이면 usage 쪽이 정확하다.
+    usage: dict[str, Any] | None = None
 
     def as_dict(self) -> dict[str, Any]:
         return {
@@ -138,6 +162,8 @@ class STTResult:
             "language": self.language,
             "duration_sec": round(self.duration_sec, 2),
             "provider": self.provider,
+            "model": self.model,
+            "usage": self.usage,
             "error": self.error,
         }
 
@@ -222,13 +248,18 @@ class OpenAIWhisperSTT(STTProvider):
             return STTResult(
                 text=(payload.get("text") or "").strip(),
                 language=language,
+                duration_sec=audio_duration_sec(audio),
                 provider=self.name,
+                model=self.model,
+                usage=payload.get("usage"),
             )
         except Exception as exc:
             message = _explain(exc)
             self.last_error = message
             log.warning("음성 인식 실패: %s", message)
-            return STTResult(text="", language=language, provider=self.name, error=message)
+            return STTResult(
+                text="", language=language, provider=self.name, model=self.model, error=message
+            )
 
     def status(self) -> dict[str, Any]:
         return {

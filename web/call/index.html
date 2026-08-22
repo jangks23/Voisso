@@ -1,10 +1,12 @@
 <!doctype html>
-<html lang="ko" data-theme="light" data-size="m">
+<html lang="ko" data-theme="light" data-size="m" data-mode="elder">
 <head>
+<!-- ASSET_VERSION = 12 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Voisso — 경상북도 민원 통화</title>
 <meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
+<script>window.VOISSO_ASSET_VERSION = '12';</script>
 <script>
 /* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
 (function () {
@@ -14,10 +16,15 @@
       window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
     document.documentElement.dataset.theme = dark ? 'dark' : 'light';
     document.documentElement.dataset.size = localStorage.getItem('voisso.size') || 'm';
+    // 어르신 모드가 기본. ?debug=1 또는 저장된 설정으로 시연 모드가 된다.
+    var qs = new URLSearchParams(location.search);
+    var demo = qs.get('debug') === '1' || qs.get('demo') === '1' ||
+               (localStorage.getItem('voisso.mode') === 'demo' && qs.get('debug') !== '0');
+    document.documentElement.dataset.mode = demo ? 'demo' : 'elder';
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="styles.css">
+<link rel="stylesheet" href="styles.css?v=12">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
 </head>
 <body>
@@ -33,6 +40,7 @@
     <div class="topbar-actions">
       <button class="icon-btn" id="btnTextSize" type="button" title="글자 크기" aria-label="글자 크기 바꾸기">가<span class="sup">+</span></button>
       <button class="icon-btn" id="btnTheme" type="button" title="화면 밝기" aria-label="밝은 화면 / 어두운 화면 바꾸기">◐</button>
+      <button class="mode-btn" id="btnMode" type="button" aria-label="시연 모드 켜기 / 끄기">시연</button>
     </div>
   </header>
 
@@ -43,7 +51,7 @@
       <div class="idle-inner">
         <p class="idle-kicker">경상북도청 민원 상담</p>
         <h1 class="idle-title">경상북도 민원실</h1>
-        <p class="idle-sub">사투리로 편하게 말씀하시면<br>AI가 알아듣고 담당 부서로 넘겨드립니더.</p>
+        <p class="idle-sub">사투리로 편하게 말씀하시면 됩니더.</p>
 
         <button class="call-btn" id="btnCall" type="button">
           <span class="call-ring" aria-hidden="true"></span>
@@ -83,8 +91,11 @@
           <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
           <span class="switch-label">표준어 변환 함께 보기</span>
         </label>
-        <span class="path-chip" id="pathChip" title="지금 쓰는 음성 입력 경로"></span>
+        <button class="path-chip" id="pathChip" type="button" title="지금 쓰는 음성 입력 경로"></button>
       </div>
+
+      <p class="demo-bar" id="demoBar" hidden></p>
+      <p class="elder-status" id="elderStatus" role="status">말씀해 주이소</p>
 
       <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
 
@@ -94,10 +105,10 @@
           <span class="slots-count" id="slotsCount">0 / 4</span>
         </div>
         <div class="slots-grid">
-          <div class="slot" data-slot="what"><span class="slot-key">무슨 일</span><span class="slot-val">듣는 중…</span></div>
-          <div class="slot" data-slot="where"><span class="slot-key">어디서</span><span class="slot-val">듣는 중…</span></div>
-          <div class="slot" data-slot="when"><span class="slot-key">언제부터</span><span class="slot-val">듣는 중…</span></div>
-          <div class="slot" data-slot="contact"><span class="slot-key">연락처</span><span class="slot-val">듣는 중…</span></div>
+          <button class="slot" type="button" data-slot="what" aria-expanded="false"><span class="slot-key">무슨 일</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="where" aria-expanded="false"><span class="slot-key">어디서</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="when" aria-expanded="false"><span class="slot-key">언제부터</span><span class="slot-val">듣는 중…</span></button>
+          <button class="slot" type="button" data-slot="contact" aria-expanded="false"><span class="slot-key">연락처</span><span class="slot-val">듣는 중…</span></button>
         </div>
       </div>
 
@@ -107,6 +118,7 @@
           <button class="mic-btn" id="btnMic" type="button" aria-label="음성으로 말하기">
             <span class="mic-level" aria-hidden="true"></span>
             <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M12 15a3 3 0 0 0 3-3V6a3 3 0 1 0-6 0v6a3 3 0 0 0 3 3Zm5-3a5 5 0 0 1-10 0H5a7 7 0 0 0 6 6.9V22h2v-3.1A7 7 0 0 0 19 12h-2Z"/></svg>
+            <span class="mic-label" id="micLabel">말하기</span>
           </button>
           <input class="text-in" id="textIn" type="text" inputmode="text" autocomplete="off"
                  placeholder="여기에 말씀을 적어도 됩니더" aria-label="할 말 입력">
@@ -129,6 +141,14 @@
 
         <article class="card" id="card" aria-label="민원카드"></article>
 
+        <div class="handoff-wait" id="handoffWait" hidden role="status">
+          <span class="hw-spin" aria-hidden="true"></span>
+          <div class="hw-text">
+            <strong>담당자에게 전달됐습니더.</strong>
+            <span>담당자가 연결되면 바로 알려드릴게예. 화면을 닫지 마이소.</span>
+          </div>
+        </div>
+
         <div class="result-actions">
           <button class="ghost-btn" id="btnAgain" type="button">처음으로</button>
         </div>
@@ -141,11 +161,11 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js"></script>
-<script src="dialect-hints.js"></script>
-<script src="mock-api.js"></script>
-<script src="speech.js"></script>
-<script src="api.js"></script>
-<script src="app.js"></script>
+<script src="config.js?v=12"></script>
+<script src="dialect-hints.js?v=12"></script>
+<script src="mock-api.js?v=12"></script>
+<script src="speech.js?v=12"></script>
+<script src="api.js?v=12"></script>
+<script src="app.js?v=12"></script>
 </body>
 </html>

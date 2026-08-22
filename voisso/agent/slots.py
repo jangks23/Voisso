@@ -65,6 +65,13 @@ _NOT_A_PLACE = frozenset(
 _MOBILE_RE = re.compile(r"(01[016-9])[-.\s]?(\d{3,4})[-.\s]?(\d{4})")
 _LANDLINE_RE = re.compile(r"(0\d{1,2})[-.\s]?(\d{3,4})[-.\s]?(\d{4})")
 
+# 어르신이 위치 대신 대는 지형지물. 시군이 없어도 담당자에게는 쓸모가 있다.
+_LANDMARK_RE = re.compile(
+    r"(체육관|경기장|학교|초등학교|중학교|고등학교|대학교|시장|정류장|터미널|역앞|역 앞|"
+    r"우체국|파출소|지구대|보건소|복지관|경로당|마을회관|아파트|다리|교회|절|사거리|삼거리|"
+    r"공원|저수지|둑|하천|천변|대교|고가|굴다리)"
+)
+
 _WHEN_PATTERNS = (
     r"[0-9일이삼사오육칠팔구십한두세네다섯여섯일곱여덟아홉열몇]+\s*(?:년|달|개월|주|일|시간)\s*(?:전|쯤|째|정도)?부터",
     r"[0-9일이삼사오육칠팔구십한두세네다섯여섯일곱여덟아홉열몇]+\s*(?:년|달|개월|주|일|시간)\s*전",
@@ -90,6 +97,166 @@ _PROBLEM_HINTS = (
 )
 
 
+# 같은 말이 반복되거나(잡음·혼잣말), 내용이 없는 발화. 실제 통화에서는
+# 헛기침·잡음·STT 오인식이 이런 모양으로 들어온다.
+_HANGUL_RE = re.compile(r"[가-힣]")
+# "가나다"는 한글 자모 순서를 읊는 말이라 내용이 없다. 마이크 테스트에서 흔하다.
+_FILLER_WORDS = frozenset(
+    """
+    가나다 가나다라 라마바 아아 어어 음음 흠흠 에이 테스트 테스트중
+    여보시오 야야 뭐뭐 그그 저저 아니아니
+    """.split()
+)
+
+
+def is_meaningless(text: str) -> bool:
+    """민원 내용으로 볼 수 없는 발화인지.
+
+    되묻기 경로로 보내기 위한 판정이다. **어르신이 표현을 잘 못하는 경우와
+    구분해야 한다** — "물이... 그게..." 같은 더듬는 말은 의미 있는 발화다.
+    그래서 '내용이 빈약하다'가 아니라 '내용이 없다'만 잡는다.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return True
+
+    # 한글이 하나도 없으면(기호·잡음) 내용이 없다. 숫자만 있는 것은 연락처일
+    # 수 있으므로 제외한다.
+    if not _HANGUL_RE.search(cleaned) and not any(ch.isdigit() for ch in cleaned):
+        return True
+
+    tokens = cleaned.replace(",", " ").split()
+    if not tokens:
+        return True
+
+    # 같은 토큰만 2번 이상 반복 — "가나다 가나다 가나다"
+    unique = {t.strip(".,!?~") for t in tokens}
+    if len(tokens) >= 2 and len(unique) == 1:
+        return True
+
+    # 전부 무의미어로만 이루어진 경우
+    if unique and all(t in _FILLER_WORDS for t in unique):
+        return True
+
+    # 한 글자 감탄사만 있는 짧은 발화
+    if len(cleaned) <= 2 and cleaned in ("어", "음", "아", "네", "예", "응", "흠"):
+        return True
+
+    return False
+
+
+# 통화 마무리 신호. **P5 사전(`voisso.dialect.closing_cues`)이 원본이다.**
+# 어르신이 "더 없다"를 말하는 방식은 아주 다양해서(없어예 / 괘안타 / 그기 다라예 /
+# 그거뿐이라예 …) 직접 정규식으로 감당하기 어렵다. 방언 지식은 P5 소관이라
+# 그쪽 목록을 쓰고, 모듈이 없을 때만 아래 최소 폴백으로 버틴다.
+_FALLBACK_CLOSING_NEGATIVE = (
+    "없어예", "없습니더", "없어요", "됐어예", "됐습니더", "됐어요",
+    "그만", "그마 됐다", "괜찮습니더", "괜찮아요", "다 했어예", "다 말했어예",
+    "끝이라예", "이상입니더", "아니요", "그거뿐이라예",
+)
+_FALLBACK_CLOSING_POSITIVE = (
+    "더 있어예", "또 있어예", "하나 더", "아 맞다", "아 참", "그란데예", "저기예",
+)
+
+# 민원 내용의 부정 표현을 종료로 오인하면 안 된다.
+# ("전기가 안 들어와예" 의 '안', "물이 안 빠져서 못 살겠어예" 의 '못')
+_NOT_DONE_HINTS = ("빠지", "안 나", "안 들어", "안 되", "못 하", "고장", "안 와", "안 켜")
+
+_CLOSING_CACHE: dict[str, tuple[tuple[str, ...], tuple[str, ...]]] = {}
+
+
+def _closing_cues() -> tuple[tuple[str, ...], tuple[str, ...]]:
+    """`(종료 신호, 계속 신호)`. P5 사전 우선, 없으면 내장 폴백."""
+    cached = _CLOSING_CACHE.get("cues")
+    if cached is not None:
+        return cached
+
+    negative: tuple[str, ...] = _FALLBACK_CLOSING_NEGATIVE
+    positive: tuple[str, ...] = _FALLBACK_CLOSING_POSITIVE
+    try:
+        import voisso.dialect as dialect
+
+        cues = dialect.closing_cues()
+        neg = tuple(str(x) for x in (cues.get("closing_negative") or []) if str(x).strip())
+        pos = tuple(str(x) for x in (cues.get("closing_positive") or []) if str(x).strip())
+        if neg:
+            negative = neg
+        if pos:
+            positive = pos
+    except Exception:
+        pass  # 사전이 아직 없다. 폴백으로 진행한다.
+
+    # 긴 표현이 먼저 걸려야 "됐다"보다 "그마 됐다"가 우선 매칭된다.
+    result = (
+        tuple(sorted(negative, key=len, reverse=True)),
+        tuple(sorted(positive, key=len, reverse=True)),
+    )
+    _CLOSING_CACHE["cues"] = result
+    return result
+
+
+def closing_intent(text: str) -> str | None:
+    """`"close"` | `"continue"` | None.
+
+    **계속 신호가 종료 신호를 이긴다.** "아 맞다, 그라고 하나 더 있어예" 처럼
+    두 신호가 같이 들어오면 어르신은 아직 할 말이 남은 것이다.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+
+    negative, positive = _closing_cues()
+
+    for cue in positive:
+        if cue in cleaned:
+            return "continue"
+
+    # 민원 내용을 말하는 중이면 종료로 보지 않는다.
+    if any(hint in cleaned for hint in _NOT_DONE_HINTS):
+        return None
+
+    for cue in negative:
+        if cue in cleaned:
+            return "close"
+    return None
+
+
+def looks_finished(text: str) -> bool:
+    """어르신이 '더 할 말 없다'는 뜻으로 말했는가."""
+    return closing_intent(text) == "close"
+
+
+def has_gb_city(text: str) -> bool:
+    """경상북도 시군 이름이 들어 있는가."""
+    if not text:
+        return False
+    return bool(_CITY_RE.search(text) or _BARE_CITY_RE.search(text))
+
+
+def extract_city(text: str) -> str:
+    """시군만 뽑는다. 없으면 빈 문자열."""
+    match = _CITY_RE.search(text or "")
+    if match:
+        return match.group(1)
+    bare = _BARE_CITY_RE.search(text or "")
+    if bare:
+        return GB_CITIES[GB_BARE.index(bare.group(1))]
+    return ""
+
+
+def extract_dong(text: str) -> str:
+    """읍/면/동/리 만 뽑는다. 없으면 빈 문자열."""
+    city = extract_city(text or "")
+    for match in _DONG_RE.finditer(text or ""):
+        candidate = match.group(1)
+        if candidate in _NOT_A_PLACE:
+            continue
+        if city and (candidate == city or candidate == city[:-1]):
+            continue
+        return candidate
+    return ""
+
+
 @dataclass
 class Slots:
     """4개 슬롯 + 질문 횟수."""
@@ -98,6 +265,12 @@ class Slots:
     where: str = ""
     when: str = ""
     contact: str = ""
+    # 어르신은 시군 대신 랜드마크를 말하는 일이 잦다("포스텍 체육관 앞").
+    # 그건 버릴 정보가 아니라 담당자에게 그대로 전달해야 할 단서다.
+    # 다만 `where` 는 아니므로 시군은 따로 확보한다.
+    landmark: str = ""
+    # 시군 없이 읍면동만 들은 경우 임시 보관. 시군이 오면 합친다.
+    pending_dong: str = ""
     ask_counts: dict[str, int] = field(default_factory=lambda: {k: 0 for k in SLOT_ORDER})
     # 2회 물어도 못 채운 슬롯 — 다시 묻지 않는다.
     given_up: set[str] = field(default_factory=set)
@@ -113,24 +286,90 @@ class Slots:
         return [s for s in SLOT_ORDER if self.is_filled(s)]
 
     def missing(self) -> list[str]:
-        """아직 못 채웠고, 아직 포기하지도 않은 슬롯."""
-        return [s for s in SLOT_ORDER if not self.is_filled(s) and s not in self.given_up]
+        """**값이 없는 슬롯. 오직 값에서만 파생된다.**
+
+        불변식: 값이 빈 슬롯은 반드시 여기에 있다. 예외 없다.
+
+        예전에는 여기서 `given_up` 을 빼고 계산했는데, 그러면 두 번 물어보고
+        포기한 슬롯이 **값이 비어 있는데도 missing 에서 사라졌다.**
+        "채워진 걸로 치는데 값은 비어 있는" 모순 상태가 되고, 그대로 통화가
+        끝나면 민원카드의 위치가 공란으로 나간다. 담당자가 어디로 출동할지
+        모르게 되는 것이다.
+
+        '더 물어볼지'는 값의 문제가 아니라 대화 진행의 문제다. `askable()` 이
+        따로 판단한다.
+        """
+        return [s for s in SLOT_ORDER if not self.is_filled(s)]
+
+    def askable(self) -> list[str]:
+        """아직 값이 없고, 더 여쭤봐도 되는 슬롯.
+
+        `missing` 에서 이미 두 번 물어본 것(`given_up`)을 뺀 목록이다.
+        질문을 고를 때만 쓴다. 슬롯 상태 보고에는 쓰지 마라.
+        """
+        return [s for s in self.missing() if s not in self.given_up]
 
     def is_complete(self) -> bool:
-        """모두 채웠거나, 남은 건 전부 포기한 상태."""
-        return not self.missing()
+        """더 물어볼 것이 없는 상태.
+
+        **'다 채웠다'는 뜻이 아니다.** 두 번 물어도 답을 못 얻은 슬롯이 있으면
+        비어 있어도 여기서는 완료로 본다 — 같은 질문을 세 번 하지 않기 위해서다.
+        실제로 무엇이 비었는지는 `missing()` 이 정직하게 알려준다.
+        """
+        return not self.askable()
 
     def next_slot(self) -> str | None:
-        pending = self.missing()
+        pending = self.askable()
         return pending[0] if pending else None
 
     # -- 상태 변경 ---------------------------------------------------------
+    def add_landmark(self, value: str) -> None:
+        """랜드마크 단서를 모은다. 중복은 넣지 않는다."""
+        cleaned = (value or "").strip()
+        if not cleaned or cleaned in self.landmark:
+            return
+        self.landmark = f"{self.landmark}, {cleaned}".strip(", ")[:200]
+
+    def _update_where(self, cleaned: str) -> bool:
+        """`where` 는 **경북 시군이 확인된 값만** 받는다.
+
+        "보스텍 체육관이요" 같은 값이 그대로 들어가면 담당자는 어느 시군인지
+        알 수 없고, 라우팅도 지명을 못 쓴다. 시군이 없으면 landmark 로 돌리고
+        `where` 는 비워 둬서 **다시 여쭙게** 한다. 단서는 버리지 않는다.
+        """
+        city = extract_city(cleaned)
+        dong = extract_dong(cleaned)
+
+        if not city:
+            if dong:
+                # 읍면동만 들었다. 시군이 올 때까지 들고 있는다.
+                self.pending_dong = dong
+            else:
+                self.add_landmark(cleaned)
+            return False
+
+        dong = dong or self.pending_dong
+        resolved = f"{city} {dong}".strip()
+        if resolved == self.where:
+            return False
+        self.where = resolved
+        self.pending_dong = ""
+        self.given_up.discard("where")
+        return True
+
     def update(self, name: str, value: str | None) -> bool:
         """슬롯을 채운다. 빈 값으로 기존 값을 덮어쓰지 않는다."""
         if name not in SLOT_ORDER:
             return False
         cleaned = (value or "").strip()
         if not cleaned or cleaned == UNKNOWN:
+            return False
+
+        if name == "where":
+            return self._update_where(cleaned)
+
+        # 무의미한 발화가 민원 내용으로 굳는 것을 막는다.
+        if name == "what" and is_meaningless(cleaned):
             return False
         current = self.get(name)
         # 더 길고 구체적인 값이 들어오면 갱신한다 (예: "안동" -> "안동시 옥동").
@@ -166,14 +405,23 @@ class Slots:
             "where": self.where,
             "when": self.when,
             "contact": self.contact,
+            "landmark": self.landmark,
             "filled": self.filled(),
+            # 값이 비어 있는 슬롯. 값에서만 파생된다(불변식).
             "missing": self.missing(),
+            # 두 번 물어도 답을 못 얻어 더 묻지 않는 슬롯. missing 의 부분집합.
+            "unanswered": sorted(s for s in self.given_up if not self.is_filled(s)),
+            # 더 물어볼 것이 없다는 뜻. "다 채웠다"가 아니다.
             "complete": self.is_complete(),
         }
 
     def for_card(self) -> dict[str, str]:
         """민원카드 본문에 넣을 때는 못 채운 값을 명시적으로 표기한다."""
-        return {name: (self.get(name) or UNKNOWN) for name in SLOT_ORDER}
+        data = {name: (self.get(name) or UNKNOWN) for name in SLOT_ORDER}
+        if self.landmark:
+            # 담당자가 현장을 찾는 데 쓰는 단서다. 반드시 함께 전달한다.
+            data["landmark"] = self.landmark
+        return data
 
 
 # --------------------------------------------------------------------------
@@ -258,6 +506,9 @@ def extract_slots(text: str, existing: Slots | None = None) -> dict[str, str]:
     location = extract_location(text)
     if location:
         found["where"] = _merge_location(existing.get("where") if existing else "", location)
+    elif existing is not None and _LANDMARK_RE.search(text or ""):
+        # 시군이 안 잡혔지만 랜드마크로 보이는 표현이 있다.
+        existing.add_landmark(text.strip())
 
     when = extract_when(text)
     if when:

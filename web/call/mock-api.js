@@ -348,5 +348,86 @@ window.VoissoMockAPI = (function () {
     return { complaint };
   }
 
-  return { start, turn, end, normalize };
+  /* ── 계약 5-B. 담당자 핸드오프 (목) ──────────────────────────────────
+     서버가 없어도 "AI 접수 → 사람이 이어받음 → 양방향 통역" 서사를 끝까지 보여준다.
+     담당자는 표준어로 말하고, 어르신 화면에는 사투리로 나간다. */
+  const HANDOFF_DELAY_MS = 6000;          // 이만큼 뒤에 담당자가 연결된다
+  const OFFICER_SCRIPT = [
+    { after: 0,     text: '안녕하세요. 기후환경국 맑은물정책과 담당자입니다. 접수 내용 확인했습니다.' },
+    { after: 7000,  text: '말씀하신 곳은 오늘 오후에 현장 확인을 나가겠습니다.' },
+    { after: 16000, text: '배수로가 막힌 것이면 바로 준설하겠습니다. 다른 불편한 점 있으실까요?' },
+  ];
+  const handoffs = new Map();
+
+  // 표준어 -> 사투리. P5 사전의 대응쌍을 거꾸로 쓴다(어미는 아래에서 따로).
+  function toDialect(text) {
+    let out = ' ' + (text || '') + ' ';
+    const pairs = (window.VoissoHints && window.VoissoHints.pairs) || [];
+    for (const [d, st] of pairs) {
+      if (st && st.length >= 2) out = out.split(st).join(d);
+    }
+    const endings = [
+      ['습니다.', '습니더.'], ['습니다', '습니더'], ['입니다', '입니더'], ['합니다', '합니더'],
+      ['하세요', '하이소'], ['세요', '이소'], ['할까요', '할까예'], ['을까요', '을까예'],
+      ['가요', '가예'], ['어요', '어예'], ['지요', '지예'], ['나요', '능교'], ['까요', '까예'],
+    ];
+    for (const [a, b] of endings) out = out.split(a).join(b);
+    return out.replace(/\s+/g, ' ').trim();
+  }
+
+  function ensureHandoff(id) {
+    if (!handoffs.has(id)) handoffs.set(id, { id, status: 'none', started: Date.now(), messages: [] });
+    return handoffs.get(id);
+  }
+
+  async function handoffGet(id) {
+    await sleep(160);
+    const h = ensureHandoff(id);
+    const age = Date.now() - h.started;
+    if (h.status === 'none' && age >= HANDOFF_DELAY_MS) {
+      h.status = 'open';
+      h.openedAt = Date.now();
+    }
+    if (h.status === 'open') {
+      const t = Date.now() - h.openedAt;
+      for (const line of OFFICER_SCRIPT) {
+        if (t >= line.after && !h.messages.some((m) => m.standard === line.text)) {
+          h.messages.push({
+            role: 'officer', text: line.text,
+            dialect: toDialect(line.text), standard: line.text,
+            at: new Date().toISOString(),
+          });
+        }
+      }
+    }
+    return {
+      status: h.status,
+      channel_id: h.status === 'none' ? null : 'mock-' + id,
+      complaint_id: id,
+      officer: h.status === 'none'
+        ? { name: '', department: '' }
+        : { name: '홍○○', department: '기후환경국 맑은물정책과' },
+      notice: h.status === 'open' ? '지금부터 담당자가 직접 응대합니다.' : '',
+      messages: h.messages.slice(),
+    };
+  }
+
+  async function handoffSay(id, body) {
+    await sleep(240);
+    const h = ensureHandoff(id);
+    const raw = (body && body.text) || '';
+    const msg = { role: 'caller', text: raw, dialect: raw, standard: normalize(raw),
+                  at: new Date().toISOString() };
+    h.messages.push(msg);
+    return { ok: true, message: msg };
+  }
+
+  async function handoffClose(id) {
+    await sleep(200);
+    const h = ensureHandoff(id);
+    h.status = 'closed';
+    return { status: 'closed' };
+  }
+
+  return { start, turn, end, normalize, handoffGet, handoffSay, handoffClose };
 })();

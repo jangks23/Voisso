@@ -160,6 +160,13 @@ read_env() {  # .env 에서 값 하나 읽기 (없으면 기본값)
 
 HOST="$(read_env VOISSO_HOST 127.0.0.1)"
 PORT="$(read_env VOISSO_PORT 8000)"
+
+# 8111 은 사용자 미리보기 전용이다. 바인딩도 종료도 하지 않는다.
+if [ "${PORT}" = "8111" ]; then
+  die "포트 8111 은 사용자 미리보기 전용이라 쓸 수 없다" \
+      "다른 포트를 지정해라:" \
+      "  VOISSO_PORT=8020 ./scripts/demo.sh"
+fi
 # 0.0.0.0 은 접속용 주소가 아니다. 브라우저에는 루프백을 준다.
 BROWSER_HOST="${HOST}"
 [ "${HOST}" = "0.0.0.0" ] && BROWSER_HOST="127.0.0.1"
@@ -209,6 +216,8 @@ PYEOF
 SERVER_PID=""
 STARTED_BY_US=0
 
+# 정리 대상은 **이 스크립트가 띄운 PID 하나뿐**이다.
+# 포트로 프로세스를 찾아 죽이면(lsof | xargs kill) 남이 보고 있는 서버를 끊게 된다.
 cleanup() {
   if [ "${STARTED_BY_US}" = "1" ] && [ -n "${SERVER_PID}" ] && kill -0 "${SERVER_PID}" 2>/dev/null; then
     echo
@@ -223,6 +232,10 @@ cleanup() {
   fi
 }
 trap cleanup EXIT INT TERM
+
+if [ "${PORT}" = "8000" ]; then
+  info "8000 은 데모용 공용 포트다. 개발·테스트로 띄울 때는 VOISSO_PORT 로 자기 포트를 써라."
+fi
 
 if STATUS="$(health)"; then
   ok "${BASE_URL} 에 서버가 이미 떠 있다 — 중복 기동하지 않는다"
@@ -245,7 +258,7 @@ else
       die "서버가 기동하지 못했다" \
           "· 포트 ${PORT} 를 이미 다른 프로그램이 쓰고 있을 수 있다:" \
           "    lsof -i :${PORT}          # 쓰는 프로세스 확인" \
-          "    VOISSO_PORT=8010 ./scripts/demo.sh   # 다른 포트로 실행" \
+          "    VOISSO_PORT=8020 ./scripts/demo.sh   # 다른 포트로 실행" \
           "· 전체 로그: ${LOG_FILE}"
     fi
     if STATUS="$(health)"; then break; fi
@@ -260,7 +273,7 @@ else
     die "서버가 30초 안에 뜨지 않았다" \
         "· 전체 로그: ${LOG_FILE}" \
         "· 직접 띄워서 오류를 확인해라: ${PY} -m server" \
-        "· 포트 충돌이면: VOISSO_PORT=8010 ./scripts/demo.sh"
+        "· 포트 충돌이면: VOISSO_PORT=8020 ./scripts/demo.sh"
   fi
   ok "기동 완료 (PID ${SERVER_PID})"
   info "${STATUS}"

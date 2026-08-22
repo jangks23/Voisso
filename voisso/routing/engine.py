@@ -229,6 +229,7 @@ class RoutingIndex:
         exact_tokens = [t for t in base_tokens if len(t) >= 2]
 
         per_dept: dict[int, list[tuple[float, _Unit]]] = {}
+        strong_depts: set[int] = set()
         for unit in self.units:
             dot = 0.0
             bm = 0.0
@@ -259,6 +260,8 @@ class RoutingIndex:
                 # 2글자 겹침만으로 걸렸다. 우연일 가능성이 높다.
                 score *= WEAK_MATCH_PENALTY
             per_dept.setdefault(unit.dept_idx, []).append((score, unit))
+            if strong:
+                strong_depts.add(unit.dept_idx)
 
         results: list[dict[str, Any]] = []
         for dept_idx, hits in per_dept.items():
@@ -270,6 +273,14 @@ class RoutingIndex:
             terms_in_dept = self.dept_terms[dept_idx]
             dept_cover = sum(w for t, w in qvec.items() if t in terms_in_dept) / qmass
             total = min(W_UNITS * decayed + W_DEPT_COVERAGE * dept_cover, 1.0)
+
+            # 부서 커버리지는 유닛 점수와 따로 계산되므로, 유닛에 걸어 둔
+            # 짧은-겹침 감점을 우회한다. 질의어가 2글자 겹침으로만 걸린
+            # 부서는 커버리지도 신뢰할 수 없다 — 같은 감점을 총점에 적용한다.
+            #   "비만 오면 마당에 물이 찬다" 에서 '마당' 하나로 전통시장 부서가
+            #   0.30 을 받던 경로가 여기였다.
+            if dept_idx not in strong_depts:
+                total *= WEAK_MATCH_PENALTY
 
             # 민원인이 실제로 쓴 어절이 이 부서 어디에도 없으면 확장어만으로
             # 걸린 것이다. 후보로 남기되 아래로 민다.

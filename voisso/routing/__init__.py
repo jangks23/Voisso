@@ -195,7 +195,15 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
     margin = top - matches[1]["score"] if len(matches) > 1 else top
     confident = top >= engine.CONFIDENT_SCORE and margin >= engine.CONFIDENT_MARGIN
 
-    if not grounding["grounded"]:
+    unclear = concepts.unresolved_context(hits)
+    if unclear is not None:
+        # 같은 말이라도 원인에 따라 소관이 갈리는 민원이다. 후보를 함께 낸다.
+        confident = False
+        reason = (
+            f"'{unclear.label}' 은(는) 맥락에 따라 소관이 갈립니다 — "
+            f"후보 {len(matches)}곳을 함께 제시하고 담당자가 판단하게 하세요"
+        )
+    elif not grounding["grounded"]:
         # 민원인이 쓴 말이 96개 부서 사무분장 어디에도 없다. 유사어로 좁힌
         # 결과일 뿐이므로 단정하지 않는다. 모른다고 말할 수 있어야 한다.
         confident = False
@@ -220,6 +228,14 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
                            "배정 근거(evidence)를 함께 전달하면 담당자가 바로 확인할 수 있습니다.",
             "phone": "",
             "phone_label": top_match["phone_token"],
+        }
+    elif unclear is not None:
+        action = {
+            "type": "need_context",
+            "region": "",
+            "instruction": unclear.needs_context,
+            "phone": FALLBACK_PHONE,
+            "phone_label": "판단이 안 서면 경상북도청 대표번호",
         }
     else:
         action = {

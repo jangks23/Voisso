@@ -25,6 +25,10 @@
   // TODO(P6): 서버에 쓰기 API(PATCH /api/complaints/{id})가 생기면 이 자리를 서버로 옮긴다.
   //           지금은 브라우저 localStorage 에만 남는다 — README 에 명시.
   var LS_BOOK = "voisso.dashboard.casebook.v1";
+  // 계약 5-B: 담당자 실명을 저장하지 않는다.
+  // 이름은 이 탭의 메모리에만 두고(새로고침하면 사라진다) 어디에도 기록하지 않는다.
+  // 부서는 개인정보가 아니므로 다음 연결 때 자동으로 채워지도록 브라우저에 남긴다.
+  var LS_OFFICER_DEPT = "voisso.dashboard.officer.department.v1";
   var LS_REASSIGN_V1 = "voisso.dashboard.reassign.v1"; // 이전 버전 마이그레이션용
   var LS_THEME = "voisso.dashboard.theme";
   var LS_TRMODE = "voisso.dashboard.trmode";
@@ -51,6 +55,21 @@
   var WF = {};
   WORKFLOW.forEach(function (w) { WF[w.key] = w; });
 
+  // 진행 안내 콜백 상태 (계약 5-C)
+  var CALLBACK = {
+    none:     { label: "안내 없음", cls: "cb--none" },
+    pending:  { label: "안내 대기", cls: "cb--pending" },
+    answered: { label: "안내 통화중", cls: "cb--answered" },
+    closed:   { label: "안내 완료", cls: "cb--closed" }
+  };
+
+  // 핸드오프 상태 — 담당자가 '지금 나를 기다리는 민원'을 한눈에 알아야 한다.
+  var HANDOFF = {
+    none:   { label: "미연결", cls: "ho--none" },
+    open:   { label: "통화중", cls: "ho--open" },
+    closed: { label: "상담종료", cls: "ho--closed" }
+  };
+
   // ---------- 상태 ----------
   var state = {
     complaints: [],
@@ -64,6 +83,17 @@
     fresh: {},           // id -> 도착 시각(ms)
     animated: {},        // 하이라이트를 이미 재생한 id
     expanded: {},        // 상세에서 펼쳐 둔 근거 블록
+    handoff: {},           // id -> {status, officer, messages, ...} 마지막으로 받은 상태
+    handoffApi: null,      // true=실서버, false=목, null=아직 판정 전
+    officer: { name: "", department: localStorage.getItem(LS_OFFICER_DEPT) || "" },
+    handoffDialect: {},    // 상세에서 사투리 원문을 펼쳐 둔 메시지
+    handoffBusy: false,
+    callback: {},          // id -> 마지막으로 받은 콜백 상태
+    callbackApi: null,     // true=실서버, false=목
+    callbackStatuses: {},  // 목록 뱃지용
+    callbackForm: null,
+    callbackDraft: "",
+    callbackBusy: false,
     lastSync: null,
     lastChange: Date.now(),  // 마지막으로 뭔가 달라진 시각 (폴링 주기 결정용)
     etag: null,              // 서버가 ETag 를 주면 조건부 요청으로 바꾼다
@@ -86,7 +116,7 @@
 
   function cacheEls() {
     ["source-badge","last-sync","live-region","refresh-btn","theme-btn","stat-today","stat-today-sub",
-     "stat-unread","stat-progress","stat-progress-sub","stat-unassigned",
+     "stat-unread","stat-live","stat-live-sub","stat-unassigned",
      "stat-rate","stat-rate-sub","stat-rate-fill","stat-dist",
      "q","f-dept","f-status","reset-btn","export-btn","export-menu",
      "export-n-filtered","export-n-all","list","list-count","detail","detail-empty"].forEach(function (id) {
@@ -218,8 +248,24 @@
         if (!list) throw new Error("bad payload");
         state.inFlight = false;
         state.apiBase = base;
+        // 서버가 handoffs 맵을 실어 주면 /api/handoff/* 도 있다는 뜻이다(추가 요청 없이 판정).
+        state.handoffApi = data.handoffs !== undefined && data.handoffs !== null;
+        if (state.handoffApi) {
+          var before = state.handoffStatuses || {};
+          state.handoffStatuses = data.handoffs;
+          Object.keys(data.handoffs).forEach(function (id) {
+            if (before[id] !== data.handoffs[id]) state.lastChange = Date.now();
+          });
+        }
+        // 서버가 callbacks 맵을 주면 콜백 API 도 있다는 뜻. (P6 에 추가 요청해 둔 필드)
+        if (data.callbacks !== undefined && data.callbacks !== null) {
+          state.callbackApi = true;
+          state.callbackStatuses = data.callbacks;
+        }
         setSource("live");
         apply(list, opts);
+        refreshHandoff(state.selectedId);
+        refreshCallback(state.selectedId);
       }).catch(function () {
         if (state.apiBase !== null && !opts.manual) {
           // 붙어 있던 서버가 잠깐 끊긴 경우 — 화면은 그대로 두고 다음 폴링에서 재시도한다.
@@ -234,8 +280,12 @@
     function useMock() {
       var wasLive = state.source === "live";
       state.apiBase = null;
+      state.handoffApi = false;
       setSource("mock");
+      state.callbackApi = false;
       if (!wasLive || CFG.USE_MOCK) apply((window.VOISSO_MOCK_COMPLAINTS || []).slice(), opts);
+      refreshHandoff(state.selectedId);
+      refreshCallback(state.selectedId);
     }
   }
 
@@ -349,6 +399,147 @@
       : "";
   }
 
+  // ---------- 핸드오프 (계약 5-B) ----------
+  // 실서버에 /api/handoff/* 가 있으면 그쪽을, 없으면 handoff-mock.js 를 쓴다.
+  // 판정은 GET /api/complaints 응답에 `handoffs` 맵이 실려 오는지로 한다(추가 요청 없음).
+  function handoffLive() {
+    return state.handoffApi === true && state.apiBase !== null;
+  }
+
+  function MOCK() { return window.VOISSO_HANDOFF_MOCK; }
+
+  function hoGet(id) {
+    if (!handoffLive()) return Promise.resolve(MOCK().get(id));
+    return fetchJSON(state.apiBase + "/api/handoff/" + encodeURIComponent(id), 3000)
+      .catch(function () { return null; });   // 일시적 실패 — 화면은 마지막 상태를 유지한다
+  }
+
+  function hoPost(id, path, body) {
+    if (!handoffLive()) {
+      if (path === "start") return Promise.resolve(MOCK().start(id, body.officer_name, body.department));
+      if (path === "message") return Promise.resolve(MOCK().message(id, body.role, body.text));
+      if (path === "close") return Promise.resolve(MOCK().close(id));
+      return Promise.reject(new Error("unknown"));
+    }
+    return fetch(state.apiBase + "/api/handoff/" + encodeURIComponent(id) + "/" + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) throw new Error(data && data.detail ? data.detail : "HTTP " + r.status);
+        return data;
+      });
+    });
+  }
+
+  /** 목록에서 쓰는 핸드오프 상태. 서버가 주면 그 값, 아니면 목에서 계산한다. */
+  function handoffStatusOf(id) {
+    if (handoffLive()) {
+      return (state.handoffStatuses && state.handoffStatuses[id]) || "none";
+    }
+    var h = state.handoff[id];
+    if (h) return h.status;
+    return MOCK().get(id).status;
+  }
+
+  /** 선택된 민원의 대화를 다시 받아온다. 목록 폴링과 같은 주기로 돌린다. */
+  function refreshHandoff(id, opts) {
+    if (!id) return Promise.resolve();
+    return hoGet(id).then(function (h) {
+      if (!h || h.status === undefined) return;
+      var prev = state.handoff[id];
+      var grew = prev && h.messages && prev.messages && h.messages.length > prev.messages.length;
+      state.handoff[id] = h;
+      // 목록 뱃지는 handoffStatuses 를 보므로 여기서 같이 갱신한다.
+      // 안 그러면 '통화 잇기' 직후 다음 목록 폴링(최대 4초)까지 '미연결' 로 보인다.
+      if (!state.handoffStatuses) state.handoffStatuses = {};
+      if (h.status === "none") delete state.handoffStatuses[id];
+      else state.handoffStatuses[id] = h.status;
+      if (h.status === "open") state.lastChange = Date.now();  // 상담 중에는 느려지지 않는다
+      if (grew) {
+        var last = h.messages[h.messages.length - 1];
+        if (last && last.role === "caller") {
+          announce("어르신 답변: " + (last.standard || last.text || ""));
+          if (state.selectedId !== id) toast("#" + id + " 어르신 답변이 도착했습니다.");
+        }
+      }
+      if ((grew || (opts && opts.render)) && state.selectedId === id) renderDetail();
+    });
+  }
+
+  // ---------- 진행 안내 콜백 (계약 5-C) ----------
+  // 핸드오프와 같은 구조다. 서버에 /api/callback/* 가 있으면 그쪽, 없으면 callback-mock.js.
+  function CBMOCK() { return window.VOISSO_CALLBACK_MOCK; }
+
+  function callbackLive() {
+    return state.callbackApi === true && state.apiBase !== null;
+  }
+
+  function cbGet(id) {
+    if (!callbackLive()) return Promise.resolve(CBMOCK().get(id));
+    return fetchJSON(state.apiBase + "/api/callback/" + encodeURIComponent(id), 3000)
+      .catch(function () { return null; });
+  }
+
+  function cbPost(id, path, body) {
+    if (!callbackLive()) {
+      var M = CBMOCK();
+      if (path === "schedule") return Promise.resolve(M.schedule(id, body.briefing, body.officer_name, body.department));
+      if (path === "answer") return Promise.resolve(M.answer(id));
+      if (path === "message") return Promise.resolve(M.message(id, body.role, body.text));
+      if (path === "close") return Promise.resolve(M.close(id));
+      return Promise.reject(new Error("unknown"));
+    }
+    return fetch(state.apiBase + "/api/callback/" + encodeURIComponent(id) + "/" + path, {
+      method: "POST",
+      headers: { "Content-Type": "application/json", Accept: "application/json" },
+      body: JSON.stringify(body || {})
+    }).then(function (r) {
+      return r.json().then(function (data) {
+        if (!r.ok) throw new Error(data && data.detail ? data.detail : "HTTP " + r.status);
+        return data;
+      });
+    });
+  }
+
+  function callbackStatusOf(id) {
+    var c = state.callback[id];
+    if (c && c.status) return c.status;
+    if (callbackLive()) return (state.callbackStatuses && state.callbackStatuses[id]) || "none";
+    return CBMOCK().get(id).status;
+  }
+
+  /** 어르신이 추가로 물은 것 — 담당자가 답해야 할 목록 */
+  function callerQuestions(id) {
+    var c = state.callback[id];
+    if (!c || !c.messages) return [];
+    return c.messages.filter(function (m) { return m.role === "caller"; });
+  }
+
+  function refreshCallback(id, opts) {
+    if (!id) return Promise.resolve();
+    return cbGet(id).then(function (c) {
+      if (!c || c.status === undefined) return;
+      var prev = state.callback[id];
+      var grew = prev && c.messages && prev.messages && c.messages.length > prev.messages.length;
+      state.callback[id] = c;
+      if (!state.callbackStatuses) state.callbackStatuses = {};
+      if (c.status === "none") delete state.callbackStatuses[id];
+      else state.callbackStatuses[id] = c.status;
+      if (c.status === "pending" || c.status === "answered") state.lastChange = Date.now();
+      if (grew) {
+        var last = c.messages[c.messages.length - 1];
+        if (last && last.role === "caller") {
+          var q = last.standard || last.text || "";
+          announce("어르신 추가 질문: " + q);
+          if (state.selectedId !== id) toast("#" + id + " 어르신이 추가로 물으셨습니다.");
+        }
+      }
+      if ((grew || (opts && opts.render)) && state.selectedId === id) renderDetail();
+    });
+  }
+
   // ---------- 민원카드 파생값 ----------
   function effective(c) {
     var e = state.book[c.id];
@@ -432,6 +623,8 @@
         var f = state.filter.status;
         if (f.indexOf("wf:") === 0) { if (workflowOf(c) !== f.slice(3)) return false; }
         else if (f.indexOf("as:") === 0) { if (statusOf(c) !== f.slice(3)) return false; }
+        else if (f.indexOf("ho:") === 0) { if (handoffStatusOf(c.id) !== f.slice(3)) return false; }
+        else if (f.indexOf("cb:") === 0) { if (callbackStatusOf(c.id) !== f.slice(3)) return false; }
       }
       if (!q) return true;
       return haystack(c).indexOf(q) !== -1;
@@ -446,6 +639,9 @@
                  c.caller && c.caller.name_masked];
     (c.alternatives || []).forEach(function (a) { parts.push(a.full_name, a.evidence); });
     (c.transcript || []).forEach(function (t) { parts.push(t.dialect, t.standard); });
+    (c.notes || []).forEach(function (n) { parts.push(n && (n.text || n.standard)); });
+    var cb = state.callback[c.id];
+    if (cb && cb.briefing) parts.push(cb.briefing.standard);
     var s = parts.filter(Boolean).join(" ").toLowerCase();
     c._hay = s;
     return s;
@@ -514,9 +710,15 @@
     var wfCount = {};
     all.forEach(function (c) { var k = workflowOf(c); wfCount[k] = (wfCount[k] || 0) + 1; });
     el.statUnread.textContent = wfCount.received || 0;
-    el.statProgress.textContent = wfCount.progress || 0;
-    el.statProgressSub.textContent = "완료 " + (wfCount.done || 0) + "건" +
-      (wfCount.rejected ? " · 반려 " + wfCount.rejected + "건" : "");
+    var liveCount = all.filter(function (c) { return handoffStatusOf(c.id) === "open"; }).length;
+    el.statLive.textContent = liveCount;
+    el.statLive.className = "stat-value " + (liveCount ? "stat-value--live" : "");
+    var cbWaiting = all.filter(function (c) {
+      var s = callbackStatusOf(c.id);
+      return s === "pending" || s === "answered";
+    }).length;
+    el.statLiveSub.textContent = "처리중 " + (wfCount.progress || 0) + "건" +
+      (cbWaiting ? " · 안내 " + cbWaiting + "건 진행" : " · 완료 " + (wfCount.done || 0) + "건");
     el.statUnassigned.textContent = all.filter(function (c) { return statusOf(c) === "unassigned"; }).length;
 
     renderReassignRate(all);
@@ -601,6 +803,8 @@
     el.list.innerHTML = rows.map(function (c) {
       var st = statusOf(c);
       var wf = workflowOf(c);
+      var ho = handoffStatusOf(c.id);
+      var cb = callbackStatusOf(c.id);
       var dept = deptOf(c);
       var fresh = isFresh(c.id);
       // 하이라이트는 도착 직후 한 번만 재생한다. 폴링·필터로 다시 튀지 않게.
@@ -608,6 +812,7 @@
       if (animate) state.animated[c.id] = 1;
       var selected = c.id === state.selectedId;
       return '<li class="card' + (selected ? " is-selected" : "") +
+          (ho === "open" ? " is-live" : "") +
           (animate ? " is-arriving" : "") + '" data-id="' + esc(c.id) + '"' +
           ' id="card-' + esc(c.id) + '" role="option" aria-selected="' + (selected ? "true" : "false") + '">' +
         '<div class="card-top">' +
@@ -619,6 +824,10 @@
         '<p class="card-summary">' + esc(c.summary || "(요약 없음)") + "</p>" +
         '<div class="card-bottom">' +
           '<span class="badge ' + WF[wf].cls + '">' + WF[wf].label + "</span>" +
+          (ho !== "none" ? '<span class="badge ' + HANDOFF[ho].cls + '">' +
+              (ho === "open" ? "● " : "") + HANDOFF[ho].label + "</span>" : "") +
+          (cb === "pending" || cb === "answered"
+            ? '<span class="badge ' + CALLBACK[cb].cls + '">☎ ' + CALLBACK[cb].label + "</span>" : "") +
           (st !== "assigned" ? '<span class="badge ' + ASSIGN_STATE[st].cls + '">' + ASSIGN_STATE[st].label + "</span>" : "") +
           '<span class="card-dept' + (dept ? "" : " is-none") + '">' + esc(dept || "담당 부서 미확인") + "</span>" +
           (c.category ? '<span class="tag">' + esc(c.category) + "</span>" : "") +
@@ -645,6 +854,9 @@
       if (node) node.scrollIntoView({ block: "nearest" });
       el.detail.parentElement.scrollTop = 0;
     }
+    refreshHandoff(id, { render: true });
+    refreshCallback(id, { render: true });
+
     // 서버가 살아 있으면 상세는 계약서의 단건 API로 다시 받아 최신값을 쓴다.
     if (state.apiBase !== null) {
       fetchJSON(state.apiBase + "/api/complaints/" + encodeURIComponent(id), 3000)
@@ -752,6 +964,15 @@
     }
     html += "</div>";
 
+    // 통화 끝에 어르신이 덧붙인 말 — 슬롯에 안 담긴 정보가 여기 있다
+    html += renderNotes(c);
+
+    // 담당자 핸드오프 — AI 가 접수하고 사람이 이어받는 지점
+    html += renderHandoff(raw);
+
+    // 진행 안내 콜백 — 이번엔 시스템이 먼저 전화를 건다
+    html += renderCallback(raw);
+
     // 후보 부서
     html += '<div class="section"><h3>다른 후보 부서 · 한 번 클릭으로 재배정</h3><div class="alts">';
     if (alts.length) {
@@ -790,7 +1011,7 @@
       "</div>" +
       '<span class="pane-hint">사투리 정규화: voisso/dialect (STT 교정 결과)</span></div>';
     if (turns.length) {
-      html += '<div class="transcript mode-' + esc(state.trMode) + '" id="transcript">' +
+      html += '<div class="scroll-x"><div class="transcript mode-' + esc(state.trMode) + '" id="transcript">' +
         '<div class="tr-head"><span>화자</span><span>사투리 원문</span><span>표준어</span></div>' +
         turns.map(function (t) {
           var caller = t.role === "caller";
@@ -799,7 +1020,7 @@
             '<div class="tr-cell tr-cell--dialect">' + esc(t.dialect || t.standard || "") + "</div>" +
             '<div class="tr-cell tr-cell--standard">' + esc(t.standard || t.dialect || "") + "</div>" +
           "</div>";
-        }).join("") + "</div>";
+        }).join("") + "</div></div>";
     } else {
       html += '<p class="alt-empty">전사 데이터가 없습니다.</p>';
     }
@@ -854,8 +1075,271 @@
     var flips = events.filter(function (e) { return e.type === "assign"; }).length;
     return '<div class="section"><h3>처리 이력' +
       (flips ? ' <span class="hist-flag">담당자 재배정 ' + flips + "회</span>" : "") + "</h3>" +
-      '<ol class="hist">' + rows.reverse().join("") + "</ol>" +
+      '<div class="scroll-x"><ol class="hist">' + rows.reverse().join("") + "</ol></div>" +
       '<p class="note">담당자가 AI 배정을 뒤집은 기록은 라우팅 품질 측정에 쓰입니다(목표: 재배정 20% 미만).</p></div>';
+  }
+
+  /**
+   * 추가 말씀(notes).
+   *
+   * 통화 종료 직전 "더 하실 말씀 있으실까예?" 에서 나온 발화가 쌓인다.
+   * 슬롯(무엇/어디/언제/연락처)에 안 맞는 정보 — "아침에만 그래예", "옆집도 같이 그래예" —
+   * 가 담기는데, 현장에 나가는 담당자에게는 이게 요약보다 쓸모 있을 때가 많다.
+   * 그래서 통화 전문 안에 묻어 두지 않고 배정 근거 바로 다음에 따로 세운다.
+   *
+   * 서버(P6)가 아직 notes 를 안 보내면 이 섹션은 나오지 않는다(빈 배열은 "없음"으로 표시).
+   */
+  function renderNotes(c) {
+    var notes = c.notes;
+    if (!Array.isArray(notes)) return "";   // 아직 필드를 안 주는 서버 — 자리만 비워 둔다
+
+    var head = '<div class="section"><h3>어르신이 덧붙인 말 ' +
+      '<span class="notes-count">' + notes.length + "건</span></h3>";
+
+    if (!notes.length) {
+      return head + '<p class="alt-empty">통화 마지막에 추가로 말씀하신 내용은 없습니다.</p></div>';
+    }
+
+    return head + '<ul class="notes">' + notes.map(function (n) {
+      var text = String((n && (n.text || n.standard)) || "").trim();
+      if (!text) return "";
+      var src = (n && n.source) === "caller" ? "신고자" : (n && n.source) || "신고자";
+      return '<li class="note-item">' +
+        '<p class="note-text">' + esc(text) + "</p>" +
+        '<div class="note-meta"><span class="note-src">' + esc(src) + "</span>" +
+          (n && n.at ? '<span class="note-at">' + esc(fmtDateTime(n.at)) + "</span>" : "") +
+        "</div></li>";
+    }).join("") + "</ul>" +
+    '<p class="note">슬롯(무엇·어디·언제·연락처)에 담기지 않은 내용입니다. 현장 확인 전에 함께 보세요.</p></div>';
+  }
+
+  /**
+   * 담당자 핸드오프 패널 (계약 5-B).
+   *
+   * 이 화면의 핵심 가치: **담당자는 표준어만 쓰면 된다.**
+   * 담당자가 친 표준어는 어르신에게 사투리로 가고, 어르신의 사투리는 표준어로 도착한다.
+   * 경상도 사람이 아니어도 어르신과 대화할 수 있다 — 그 사실이 화면에 보여야 한다.
+   */
+  function renderHandoff(raw) {
+    var h = state.handoff[raw.id];
+    var status = h ? h.status : handoffStatusOf(raw.id);
+    var dept = deptOf(raw) || "";
+
+    var head = '<div class="section"><h3>담당자 통화' +
+      (handoffLive() ? "" : ' <span class="tag tag--mock">목 모드</span>') + "</h3>";
+
+    // ── 아직 연결 전
+    if (status === "none") {
+      if (state.handoffForm === raw.id) {
+        return head + '<div class="ho ho--form">' +
+          '<p class="ho-lead">이 민원의 신고자와 직접 통화합니다. 연결하면 AI 응대는 멈춥니다.</p>' +
+          '<div class="ho-fields">' +
+            '<label class="ho-field"><span>담당자 이름</span>' +
+              '<input id="ho-name" type="text" maxlength="20" placeholder="예: 홍길동" value="' +
+              esc(state.officer.name) + '" autocomplete="off"></label>' +
+            '<label class="ho-field"><span>부서</span>' +
+              '<input id="ho-dept" type="text" maxlength="60" value="' +
+              esc(state.officer.department || dept) + '"></label>' +
+          "</div>" +
+          '<p class="ho-privacy">이름은 <b>어르신 화면에 표시하기 위한 용도</b>입니다. ' +
+            '서버는 마스킹된 형태로만 기록하고, 민원카드·CSV 에는 남지 않습니다. ' +
+            '이 브라우저에도 저장하지 않습니다(새로고침하면 지워집니다).</p>' +
+          '<div class="ho-actions">' +
+            '<button class="btn btn-primary" data-act="ho-confirm">통화 연결</button>' +
+            '<button class="btn btn-ghost" data-act="ho-cancel">취소</button>' +
+          "</div></div></div>";
+      }
+      return head + '<div class="ho ho--idle">' +
+        '<div class="ho-idle-text"><b>아직 담당자가 연결되지 않았습니다.</b>' +
+          '<span>신고자는 접수 후 담당자 연결을 기다리고 있습니다.</span></div>' +
+        '<button class="btn btn-primary btn-lg" data-act="ho-open">☎ 통화 잇기</button>' +
+        "</div></div>";
+    }
+
+    // ── 연결됨 / 종료됨
+    var msgs = (h && h.messages) || [];
+    var officer = (h && h.officer) || { name: "", department: "" };
+    var open = status === "open";
+    var name = state.officer.name || officer.name || "담당자";
+
+    var out = head + '<div class="ho ho--live' + (open ? "" : " is-closed") + '">';
+
+    out += '<div class="ho-head">' +
+      '<span class="ho-dot' + (open ? " is-on" : "") + '"></span>' +
+      '<div class="ho-who"><b>' + esc(name) + "</b>" +
+        '<span>' + esc(officer.department || dept || "부서 미지정") + "</span></div>" +
+      '<span class="badge ' + HANDOFF[status].cls + '">' + HANDOFF[status].label + "</span>" +
+      (open ? '<button class="btn btn-ghost ho-close" data-act="ho-close">통화 종료</button>' : "") +
+      "</div>";
+
+    // 통역이 무슨 일을 하는지 화면에 못박는다
+    out += '<p class="ho-bridge">' +
+      '<span class="ho-bridge-k">표준어로 입력하시면 사투리로 전달됩니더</span>' +
+      '<span class="ho-bridge-d">어르신 말씀은 표준어로 바꿔서 보여 드립니다 · voisso/dialect</span></p>';
+
+    if (open) {
+      out += '<p class="ho-notice">' + esc((h && h.notice) || "지금부터 담당자가 직접 응대합니더.") +
+        ' <span>— 어르신 화면에도 같은 안내가 표시되고, AI 는 발화를 멈춥니다.</span></p>';
+    }
+
+    // ── 대화
+    out += '<ol class="ho-log" id="ho-log">';
+    if (!msgs.length) {
+      out += '<li class="ho-empty">아직 대화가 없습니다. 아래에 첫 인사를 표준어로 입력하세요.</li>';
+    } else {
+      out += msgs.map(function (m, i) {
+        var mine = m.role === "officer";
+        var key = raw.id + ":" + i;
+        var shown = mine ? (m.standard || m.text || "") : (m.standard || m.text || "");
+        var other = mine ? (m.dialect || "") : (m.dialect || "");
+        var openRaw = !!state.handoffDialect[key];
+        return '<li class="ho-msg ' + (mine ? "is-officer" : "is-caller") + '">' +
+          '<div class="ho-msg-top"><span class="ho-role">' + (mine ? "담당자" : "신고자") + "</span>" +
+            '<span class="ho-at">' + esc(fmtClock(m.at)) + "</span></div>" +
+          '<p class="ho-text">' + esc(shown) + "</p>" +
+          (other && other !== shown
+            ? '<button type="button" class="ho-raw-toggle" data-act="ho-raw" data-key="' + esc(key) + '">' +
+                (openRaw ? "▲ " : "▼ ") + (mine ? "어르신에게 전달된 사투리" : "사투리 원문 보기") + "</button>" +
+              (openRaw ? '<p class="ho-raw">' + esc(other) + "</p>" : "")
+            : "") +
+        "</li>";
+      }).join("");
+    }
+    out += "</ol>";
+
+    // ── 입력
+    if (open) {
+      out += '<div class="ho-input">' +
+        '<label class="sr-only" for="ho-text">담당자 메시지 (표준어로 입력)</label>' +
+        '<textarea id="ho-text" rows="2" maxlength="500" placeholder="표준어로 입력하세요. 어르신께는 사투리로 전달됩니다."></textarea>' +
+        '<button class="btn btn-primary" data-act="ho-send"' + (state.handoffBusy ? " disabled" : "") + ">전송</button>" +
+        "</div>" +
+        '<p class="ho-hint">Enter 전송 · Shift+Enter 줄바꿈</p>';
+    } else {
+      out += '<p class="ho-closed-note">상담이 종료되었습니다' +
+        (h && h.closed_at ? " (" + esc(fmtDateTime(h.closed_at)) + ")" : "") +
+        '. 위 대화 기록은 이 민원에 계속 남습니다.</p>';
+    }
+
+    return out + "</div></div>";
+  }
+
+  /**
+   * 진행 안내 콜백 패널 (계약 5-C).
+   *
+   * 어르신이 진행 상황을 알려면 다시 전화해 ARS 를 또 뚫어야 한다.
+   * 방향을 뒤집어 시스템이 먼저 건다. 담당자는 진행 상황만 표준어로 쓰고,
+   * AI 는 **그 문장을 사투리로 읽어 줄 뿐** 아무것도 지어내지 않는다.
+   *
+   * 그래서 이 화면은 두 가지를 반드시 보여 준다.
+   *  1) 내가 쓴 원문과 실제로 전달된 사투리 (내 말대로 갔는가)
+   *  2) 어르신이 추가로 물은 것 (AI 가 답하지 않았으니 담당자가 답해야 한다)
+   */
+  function renderCallback(raw) {
+    var c = state.callback[raw.id];
+    var status = c ? c.status : callbackStatusOf(raw.id);
+    var dept = deptOf(raw) || "";
+    var live = callbackLive();
+
+    var head = '<div class="section"><h3>진행 안내 전화' +
+      (live ? "" : ' <span class="tag tag--mock">목 모드</span>') +
+      ' <span class="badge ' + CALLBACK[status].cls + '">' + CALLBACK[status].label + "</span></h3>";
+
+    var pstn = '<p class="cb-pstn">실제 전화망(PSTN) 연동은 다음 단계입니다. ' +
+      '지금은 어르신 화면에 수신 화면을 띄우는 <b>시뮬레이션</b>입니다.</p>';
+
+    // ── 아직 안내 전 (또는 종료 후 새로 걸기)
+    if (status === "none" || state.callbackForm === raw.id) {
+      var prefill = state.callbackDraft || "";
+      return head + '<div class="cb cb--form">' +
+        '<p class="cb-lead"><b>진행 상황을 표준어로 쓰면, AI 가 어르신께 사투리로 읽어 드립니다.</b>' +
+          '<span>어르신은 다시 전화해서 ARS 를 뚫을 필요가 없습니다.</span></p>' +
+        '<label class="sr-only" for="cb-text">진행 상황 (표준어로 작성)</label>' +
+        '<textarea id="cb-text" rows="3" maxlength="600" placeholder="예: 현장 확인 완료했습니다. 이번 주 내로 배수관 준설 예정입니다.">' +
+          esc(prefill) + "</textarea>" +
+        '<p class="cb-rule">⚠ <b>AI 는 여기 쓰신 내용만 전달합니다.</b> ' +
+          '처리 결과·일정·가능 여부를 AI 가 지어내지 않습니다. 여기 없는 것을 어르신이 물으면 ' +
+          '<i>“담당자에게 여쭤보고 다시 연락드릴게예”</i> 로 넘기고, 그 질문을 이 화면에 가져옵니다.</p>' +
+        '<div class="cb-actions">' +
+          '<button class="btn btn-primary btn-lg" data-act="cb-send">☎ 안내 전화 걸기</button>' +
+          (status !== "none" ? '<button class="btn btn-ghost" data-act="cb-cancel">취소</button>' : "") +
+          '<span class="cb-who">' + esc(state.officer.name || "담당자") + " · " +
+            esc(state.officer.department || dept || "부서 미지정") + "</span>" +
+        "</div>" + pstn + "</div></div>";
+    }
+
+    var out = head + '<div class="cb cb--live' + (status === "closed" ? " is-closed" : "") + '">';
+
+    // ── 브리핑 원문 / 사투리 대조 — "내가 쓴 대로 전달됐는가"
+    var b = (c && c.briefing) || { standard: "", dialect: "" };
+    out += '<div class="cb-brief">' +
+      '<div class="cb-brief-col"><span class="cb-brief-label">담당자가 쓴 내용 (표준어)</span>' +
+        '<p class="cb-brief-text">' + esc(b.standard || "(내용 없음)") + "</p></div>" +
+      '<div class="cb-brief-arrow" aria-hidden="true">→</div>' +
+      '<div class="cb-brief-col is-dialect"><span class="cb-brief-label">어르신께 전달된 말 (사투리)</span>' +
+        '<p class="cb-brief-text">' + esc(b.dialect || "(변환 없음)") + "</p></div>" +
+      "</div>";
+    out += '<p class="cb-verify">AI 는 위 문장을 사투리로 바꿔 읽었을 뿐입니다. 새로 만든 내용은 없습니다.</p>';
+
+    // ── 상태별 안내
+    if (status === "pending") {
+      out += '<p class="cb-state cb-state--pending">' +
+        '<span class="cb-ring"></span> 어르신 화면에서 <b>수신 대기 중</b>입니다. 받으시면 브리핑이 재생됩니다.</p>';
+    } else if (status === "answered") {
+      out += '<p class="cb-state cb-state--answered">어르신이 전화를 받았습니다' +
+        (c && c.answered_at ? " (" + esc(fmtClock(c.answered_at)) + ")" : "") + ".</p>";
+    }
+
+    // ── 어르신 추가 질문 — 담당자가 답해야 할 것
+    var qs = callerQuestions(raw.id);
+    if (qs.length) {
+      out += '<div class="cb-questions"><div class="cb-q-head">' +
+        '<b>어르신이 추가로 물으신 것</b> <span class="badge cb--pending">' + qs.length + "건</span>" +
+        '<span class="cb-q-note">AI 가 답하지 않았습니다. 담당자 확인이 필요합니다.</span></div>' +
+        "<ul>" + qs.map(function (m) {
+          return "<li><p class=\"cb-q-text\">" + esc(m.standard || m.text || "") + "</p>" +
+            '<div class="cb-q-meta"><span>' + esc(fmtClock(m.at)) + "</span>" +
+            (m.dialect && m.dialect !== (m.standard || m.text)
+              ? '<span class="cb-q-raw">원문: ' + esc(m.dialect) + "</span>" : "") +
+            "</div></li>";
+        }).join("") + "</ul>" +
+        (status !== "closed"
+          ? '<button class="btn btn-primary" data-act="cb-reply">이 질문에 답해 다시 안내하기</button>'
+          : '<button class="btn btn-primary" data-act="cb-reply">답변 담아 새 안내 전화</button>') +
+        "</div>";
+    }
+
+    // ── 전체 통화 기록
+    var msgs = (c && c.messages) || [];
+    if (msgs.length) {
+      out += '<details class="cb-log"><summary>안내 통화 기록 ' + msgs.length + "건</summary><ol>" +
+        msgs.map(function (m) {
+          var isCaller = m.role === "caller";
+          return '<li class="cb-msg ' + (isCaller ? "is-caller" : "is-agent") + '">' +
+            '<span class="cb-msg-role">' + (isCaller ? "신고자" : "AI 안내") + "</span>" +
+            '<p>' + esc(m.standard || m.text || "") + "</p>" +
+            (m.dialect && m.dialect !== (m.standard || m.text)
+              ? '<p class="cb-msg-dia">' + esc(m.dialect) + "</p>" : "") +
+          "</li>";
+        }).join("") + "</ol></details>";
+    }
+
+    if (status !== "closed") {
+      out += '<div class="cb-actions"><button class="btn btn-ghost" data-act="cb-close">안내 종료</button></div>';
+    } else {
+      out += '<p class="cb-closed-note">안내가 종료되었습니다' +
+        (c && c.closed_at ? " (" + esc(fmtDateTime(c.closed_at)) + ")" : "") +
+        '. 기록은 이 민원에 남습니다. ' +
+        '<button class="btn btn-ghost" data-act="cb-again">새 안내 전화 걸기</button></p>';
+    }
+
+    return out + pstn + "</div></div>";
+  }
+
+  function fmtClock(iso) {
+    var d = new Date(iso);
+    if (isNaN(d)) return "";
+    return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
   function seg(mode, label) {
@@ -889,6 +1373,194 @@
     });
     var undo = el.detail.querySelector('[data-act="undo"]');
     if (undo) undo.addEventListener("click", function () { undoReassign(raw); });
+
+    bindHandoff(raw);
+    bindCallback(raw);
+  }
+
+  // ---------- 핸드오프 동작 ----------
+  function bindHandoff(raw) {
+    var on = function (act, fn) {
+      var b = el.detail.querySelector('[data-act="' + act + '"]');
+      if (b) b.addEventListener("click", fn);
+    };
+
+    on("ho-open", function () {
+      state.handoffForm = raw.id;
+      renderDetail();
+      var f = document.getElementById("ho-name");
+      if (f) f.focus();
+    });
+    on("ho-cancel", function () { state.handoffForm = null; renderDetail(); });
+
+    on("ho-confirm", function () {
+      var nameEl = document.getElementById("ho-name");
+      var deptEl = document.getElementById("ho-dept");
+      var name = (nameEl && nameEl.value || "").trim();
+      var dept = (deptEl && deptEl.value || "").trim();
+      if (!name) { toast("담당자 이름을 입력하세요."); if (nameEl) nameEl.focus(); return; }
+      startHandoff(raw, name, dept);
+    });
+
+    on("ho-close", function () { closeHandoff(raw); });
+    on("ho-send", function () { sendHandoff(raw); });
+
+    el.detail.querySelectorAll('[data-act="ho-raw"]').forEach(function (b) {
+      b.addEventListener("click", function () {
+        var k = b.dataset.key;
+        if (state.handoffDialect[k]) delete state.handoffDialect[k]; else state.handoffDialect[k] = 1;
+        renderDetail();
+      });
+    });
+
+    var ta = document.getElementById("ho-text");
+    if (ta) {
+      ta.value = state.handoffDraft || "";
+      ta.addEventListener("input", function () { state.handoffDraft = ta.value; });
+      ta.addEventListener("keydown", function (e) {
+        if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendHandoff(raw); }
+      });
+      if (state.handoffFocus) { ta.focus(); state.handoffFocus = false; }
+    }
+    var log = document.getElementById("ho-log");
+    if (log) log.scrollTop = log.scrollHeight;
+  }
+
+  function startHandoff(raw, name, dept) {
+    // 이름은 어르신 화면 표시용으로 서버에 보내고(서버가 마스킹해 저장한다),
+    // 이 탭의 메모리에만 남긴다. localStorage 에는 부서만 저장한다.
+    state.officer = { name: name, department: dept };
+    try { localStorage.setItem(LS_OFFICER_DEPT, dept); } catch (e) {}
+
+    hoPost(raw.id, "start", { officer_name: name, department: dept }).then(function () {
+      state.handoffForm = null;
+      state.handoffFocus = true;
+      state.lastChange = Date.now();
+      if (workflowOf(raw) !== "progress" && workflowOf(raw) !== "done") {
+        setWorkflow(raw.id, "progress", { silent: true });   // 통화를 시작하면 처리중이다
+      }
+      return refreshHandoff(raw.id, { render: true });
+    }).then(function () {
+      render();
+      toast("통화를 연결했습니다. 지금부터 담당자가 직접 응대합니다.");
+      announce("접수번호 " + raw.id + " 담당자 통화가 연결되었습니다.");
+    }).catch(function (err) {
+      toast("연결 실패: " + (err && err.message ? err.message : "잠시 후 다시 시도하세요."));
+    });
+  }
+
+  function sendHandoff(raw) {
+    var ta = document.getElementById("ho-text");
+    var text = (ta && ta.value || "").trim();
+    if (!text || state.handoffBusy) return;
+    state.handoffBusy = true;
+    if (ta) { ta.value = ""; }
+    state.handoffDraft = "";
+
+    hoPost(raw.id, "message", { role: "officer", text: text }).then(function (res) {
+      state.handoffBusy = false;
+      state.handoffFocus = true;
+      state.lastChange = Date.now();
+      var m = res && res.message;
+      if (m && m.dialect && m.dialect !== m.standard) {
+        toast("사투리로 전달: " + truncate(m.dialect, 30));
+      }
+      return refreshHandoff(raw.id, { render: true });
+    }).catch(function (err) {
+      state.handoffBusy = false;
+      state.handoffDraft = text;
+      if (ta) ta.value = text;
+      toast("전송 실패: " + (err && err.message ? err.message : "다시 시도하세요."));
+      renderDetail();
+    });
+  }
+
+  function closeHandoff(raw) {
+    hoPost(raw.id, "close", {}).then(function () {
+      state.lastChange = Date.now();
+      return refreshHandoff(raw.id, { render: true });
+    }).then(function () {
+      render();
+      toast("통화를 종료했습니다. 대화 기록은 카드에 남습니다.");
+      announce("접수번호 " + raw.id + " 통화를 종료했습니다.");
+    }).catch(function (err) {
+      toast("종료 실패: " + (err && err.message ? err.message : "다시 시도하세요."));
+    });
+  }
+
+  // ---------- 진행 안내 콜백 동작 ----------
+  function bindCallback(raw) {
+    var on = function (act, fn) {
+      var b = el.detail.querySelector('[data-act="' + act + '"]');
+      if (b) b.addEventListener("click", fn);
+    };
+
+    var ta = document.getElementById("cb-text");
+    if (ta) {
+      ta.addEventListener("input", function () { state.callbackDraft = ta.value; });
+      if (state.callbackFocus) { ta.focus(); state.callbackFocus = false; }
+    }
+
+    on("cb-send", function () { scheduleCallback(raw); });
+    on("cb-close", function () { closeCallback(raw); });
+    on("cb-cancel", function () {
+      state.callbackForm = null; state.callbackDraft = "";
+      renderDetail();
+    });
+    on("cb-again", function () {
+      state.callbackForm = raw.id; state.callbackDraft = ""; state.callbackFocus = true;
+      renderDetail();
+    });
+    on("cb-reply", function () {
+      // 어르신 질문을 인용해 새 브리핑을 시작한다. 답은 담당자가 쓴다 — AI 가 만들지 않는다.
+      var qs = callerQuestions(raw.id);
+      var quoted = qs.map(function (m) {
+        return "· 물으신 것: " + (m.standard || m.text || "");
+      }).join("\n");
+      state.callbackForm = raw.id;
+      state.callbackDraft = quoted + "\n\n답변: ";
+      state.callbackFocus = true;
+      renderDetail();
+    });
+  }
+
+  function scheduleCallback(raw) {
+    var ta = document.getElementById("cb-text");
+    var text = (ta && ta.value || "").trim();
+    if (!text) { toast("전달할 진행 상황을 입력하세요."); if (ta) ta.focus(); return; }
+    if (state.callbackBusy) return;
+    state.callbackBusy = true;
+
+    cbPost(raw.id, "schedule", {
+      briefing: text,
+      officer_name: state.officer.name || "",
+      department: state.officer.department || deptOf(raw) || ""
+    }).then(function () {
+      state.callbackBusy = false;
+      state.callbackForm = null;
+      state.callbackDraft = "";
+      state.lastChange = Date.now();
+      return refreshCallback(raw.id, { render: true });
+    }).then(function () {
+      render();
+      toast("어르신께 안내 전화를 걸었습니다. 수신 대기 중입니다.");
+      announce("접수번호 " + raw.id + " 진행 안내 전화를 걸었습니다.");
+    }).catch(function (err) {
+      state.callbackBusy = false;
+      toast("안내 전화 실패: " + (err && err.message ? err.message : "다시 시도하세요."));
+    });
+  }
+
+  function closeCallback(raw) {
+    cbPost(raw.id, "close", {}).then(function () {
+      state.lastChange = Date.now();
+      return refreshCallback(raw.id, { render: true });
+    }).then(function () {
+      render();
+      toast("안내를 종료했습니다. 기록은 카드에 남습니다.");
+    }).catch(function (err) {
+      toast("종료 실패: " + (err && err.message ? err.message : "다시 시도하세요."));
+    });
   }
 
   // ---------- 재배정 ----------
@@ -1148,7 +1820,22 @@
     undoReassign: undoReassign,
     setWorkflow: setWorkflow,
     nextDelay: nextDelay,
-    visible: visible
+    visible: visible,
+    // 핸드오프 (계약 5-B)
+    hoGet: hoGet,
+    hoPost: hoPost,
+    handoffStatusOf: handoffStatusOf,
+    refreshHandoff: refreshHandoff,
+    renderHandoff: renderHandoff,
+    renderNotes: renderNotes,
+    cbGet: cbGet,
+    cbPost: cbPost,
+    callbackStatusOf: callbackStatusOf,
+    callerQuestions: callerQuestions,
+    refreshCallback: refreshCallback,
+    renderCallback: renderCallback,
+    callbackLive: callbackLive,
+    handoffLive: handoffLive
   };
 
   /** 스크린리더에 알린다. 화면에는 보이지 않는다. */

@@ -12,24 +12,47 @@
 from __future__ import annotations
 
 import logging
+import base64
+import os
 import time
 import uuid
 from contextlib import contextmanager
+from difflib import SequenceMatcher
 from datetime import datetime, timezone
 from typing import Any
 
 from ..voice import SpeechContext, synthesize, transcribe
+from ..voice.tts import TTSResult, get_tts_provider
 from ..voice.vocabulary import score_transcript
 from . import integrations, prompts
 from .complaint import build_complaint
 from .engine import get_engines
-from .slots import SLOT_ORDER, Slots
+from .slots import SLOT_ORDER, Slots, looks_finished
+from .usage import PROCESS_TOTAL, Usage
 
 log = logging.getLogger("voisso.agent.session")
 
 # 어르신이 말을 못 알아듣고 빙빙 도는 경우를 대비한 상한.
 # 이 턴 수를 넘으면 있는 정보로 접수하고 마무리한다.
-MAX_TURNS = 24
+MAX_TURNS = int(os.getenv("VOISSO_MAX_TURNS") or 24)
+
+# 세션 하나가 쓸 수 있는 대화 토큰 상한. 폭주로 과금이 나는 것을 막는
+# 안전장치다. 넘으면 통화를 끊지 않고 **정리 단계로 넘겨** 접수는 마친다.
+MAX_SESSION_TOKENS = int(os.getenv("VOISSO_MAX_SESSION_TOKENS") or 60000)
+
+# 슬롯이 다 찬 뒤 "더 하실 말씀 있으신가요?" 를 몇 번까지 반복할지.
+# 어르신이 계속 말씀하시면 계속 받되, 무한 루프는 막는다.
+MAX_WRAPUP_ROUNDS = int(os.getenv("VOISSO_MAX_WRAPUP_ROUNDS") or 4)
+
+# 마무리 안내. 처리 결과는 약속하지 않고, 담당자 연결만 알린다.
+HANDOFF_CLOSING = (
+    "말씀하신 내용 잘 접수해 두었습니다. "
+    "담당자에게 연결해 드릴게요. 잠시만 기다려 주세요."
+)
+WRAPUP_QUESTION = "더 얘기하실 사항 있으실까요?"
+
+# 이 이상 비슷하면 같은 메모로 본다. 표현만 바꾼 재작성을 걸러낸다.
+NOTE_SIMILARITY = 0.6
 
 
 @contextmanager
@@ -67,6 +90,14 @@ class ConversationSession:
         self.last_error: str | None = None
         self.last_rescoring: dict[str, Any] | None = None
         self.end_timings: dict[str, float] = {}
+        # 알아들을 수 없는 발화가 연속으로 몇 번 왔는지.
+        self.unclear_streak = 0
+        # 슬롯이 다 찬 뒤 "더 하실 말씀?" 을 몇 번 물었는지.
+        self.wrapup_rounds = 0
+        # 슬롯에 안 맞는 추가 정보. 민원카드 notes 로 나간다.
+        self.notes: list[dict[str, Any]] = []
+        self.usage = Usage()
+        self.budget_exceeded = False
 
     # -- 조회 --------------------------------------------------------------
     @property
@@ -83,6 +114,10 @@ class ConversationSession:
             "complaint_id": self.complaint_id,
             "engine": self.engine_used,
             "slots": self.slots.as_dict(),
+            "notes": list(self.notes),
+            "wrapup_rounds": self.wrapup_rounds,
+            "usage": self.usage.as_dict(),
+            "budget_exceeded": self.budget_exceeded,
         }
 
     # -- 통화 --------------------------------------------------------------
@@ -97,6 +132,7 @@ class ConversationSession:
         text: str | None = None,
         audio_b64: str | None = None,
         alternatives: list[Any] | None = None,
+        want_audio: bool = True,
     ) -> dict[str, Any]:
         """어르신의 한 마디를 받아 응답을 만든다.
 
@@ -105,6 +141,10 @@ class ConversationSession:
 
         `alternatives` 가 오면 브라우저 음성인식의 후보들로 보고 재점수화한다.
         기존 `text` 만 보내는 호출은 그대로 동작한다(하위호환).
+
+        `want_audio=False` 면 TTS 를 건너뛰고 텍스트만 돌려준다. 클라이언트가
+        `/api/tts/stream` 으로 따로 받아 재생하는 경우에 쓴다 — 합성 시간이
+        턴의 임계 경로에서 빠져 응답이 1.5초쯤 빨라진다.
         """
         if self.closed:
             return self._last_agent_response(done=True)
@@ -134,6 +174,7 @@ class ConversationSession:
                     stt_error=stt_error,
                     timings=timings,
                     started=turn_started,
+                    want_audio=want_audio,
                 )
 
         if not caller_dialect:
@@ -150,12 +191,8 @@ class ConversationSession:
         self.last_rescoring = rescored
         with _timed(timings, "llm_ms"):
             decision = self._decide()
-        self.slots.merge(decision.slots)
-        self.engine_used = decision.engine
-
-        done = bool(decision.ready_to_close) or self.slots.is_complete()
-        if self.turn_count >= MAX_TURNS:
-            done = True
+        reply = self._apply_decision(decision)
+        done, reply = self._resolve_done(decision, caller_standard)
 
         if not done:
             # 이번 응답이 어떤 슬롯을 물었는지 기록해 둔다.
@@ -167,13 +204,236 @@ class ConversationSession:
                 done = self.slots.is_complete()
 
         return self._say(
-            decision.reply,
+            reply,
             done=done,
             stt_error=stt_error,
             rescored=rescored,
             timings=timings,
             started=turn_started,
+            want_audio=want_audio,
         )
+
+    def turn_stream(
+        self,
+        text: str | None = None,
+        audio_b64: str | None = None,
+        alternatives: list[Any] | None = None,
+    ):
+        """턴을 **문장 단위로 흘려보낸다.** 첫 소리를 최대한 빨리 내는 경로.
+
+        일괄 경로(`turn`)는 LLM 이 끝나야 TTS 를 시작하므로 첫 소리까지
+        `LLM + TTS` 가 그대로 더해진다. 여기서는 LLM 이 첫 문장을 뱉는 즉시
+        합성을 시작해 두 시간이 겹쳐진다.
+
+        내보내는 이벤트(dict):
+          {"type": "heard",    "dialect", "standard"}         어르신 발화를 받아썼다
+          {"type": "sentence", "index", "standard", "dialect"} 응답 문장 하나
+          {"type": "audio",    "index", "mime", "audio_b64"}   그 문장의 음성
+          {"type": "final",    "reply_text", "reply_dialect", "slots", "done", "meta"}
+          {"type": "error",    "message"}
+
+        어느 단계가 실패해도 일괄 경로로 폴백해 `final` 은 반드시 나간다.
+        """
+        if self.closed:
+            yield {"type": "final", **self._last_agent_response(done=True)}
+            return
+
+        turn_started = time.perf_counter()
+        timings: dict[str, float] = {}
+        caller_dialect = (text or "").strip()
+        stt_error: str | None = None
+        rescored: dict[str, Any] | None = None
+
+        if alternatives:
+            picked, rescored = pick_best_alternative(alternatives, fallback=caller_dialect)
+            if picked:
+                caller_dialect = picked
+
+        if not caller_dialect and audio_b64:
+            with _timed(timings, "stt_ms"):
+                result = transcribe(audio_b64)
+            self._record_stt(result)
+            caller_dialect = result.text.strip()
+            stt_error = result.error
+            if not caller_dialect:
+                self.last_error = stt_error
+                yield {
+                    "type": "final",
+                    **self._say(
+                        "죄송합니다, 잘 안 들렸어요. 한 번만 더 말씀해 주시겠어요?",
+                        done=False,
+                        stt_error=stt_error,
+                        timings=timings,
+                        started=turn_started,
+                    ),
+                }
+                return
+
+        if not caller_dialect:
+            yield {"type": "final", **self.greet()}
+            return
+
+        with _timed(timings, "normalize_ms"):
+            caller_standard = integrations.normalize(caller_dialect)
+        self.transcript.append(
+            {"role": "caller", "dialect": caller_dialect, "standard": caller_standard}
+        )
+        self.turn_count += 1
+        self.last_rescoring = rescored
+        yield {"type": "heard", "dialect": caller_dialect, "standard": caller_standard}
+
+        llm, rule = get_engines()
+        streamer = getattr(llm, "respond_stream", None) if llm is not None else None
+
+        decision = None
+        spoken: list[str] = []
+        index = 0
+        previous = _last_caller_utterance(self.transcript)
+
+        if streamer is not None:
+            try:
+                for kind, payload in streamer(self.transcript, self.slots, usage=self.usage):
+                    if kind == "sentence":
+                        for event in self._speak_sentence(payload, index, previous, timings):
+                            yield event
+                        spoken.append(payload)
+                        index += 1
+                    elif kind == "final":
+                        decision = payload
+                timings["llm_ms"] = round((time.perf_counter() - turn_started) * 1000, 1)
+            except Exception as exc:
+                from .providers import explain_error
+
+                log.warning("%s 스트리밍 실패 — 일괄 경로로 폴백합니다: %s", llm.name, exc)
+                self.last_error = f"{llm.name}_stream: {exc}"
+                llm.last_error = explain_error(exc)
+                decision, spoken = None, []
+
+        if decision is None:
+            # 스트리밍을 못 썼거나 실패했다. 일괄 경로로 결정을 만든다.
+            with _timed(timings, "llm_ms"):
+                decision = self._decide()
+            if not spoken:
+                for sentence in _split_sentences(decision.reply):
+                    for event in self._speak_sentence(sentence, index, previous, timings):
+                        yield event
+                    spoken.append(sentence)
+                    index += 1
+
+        self._apply_decision(decision)
+        done, _ = self._resolve_done(decision, caller_standard)
+        if not done:
+            pending = self.slots.next_slot()
+            if pending:
+                self.slots.record_ask(pending)
+                done = self.slots.is_complete()
+
+        # 실제로 말한 문장을 이어 붙인 것이 이번 턴의 응답이다.
+        reply_standard = " ".join(spoken).strip() or decision.reply
+        reply_dialect = " ".join(
+            integrations.to_dialect(sentence) for sentence in spoken
+        ).strip() or integrations.to_dialect(reply_standard)
+
+        self.transcript.append(
+            {"role": "agent", "standard": reply_standard, "dialect": reply_dialect}
+        )
+        timings["total_ms"] = round((time.perf_counter() - turn_started) * 1000, 1)
+
+        yield {
+            "type": "final",
+            "session_id": self.id,
+            "reply_text": reply_standard,
+            "reply_dialect": reply_dialect,
+            "audio_b64": None,  # 문장별 audio 이벤트로 이미 보냈다
+            "audio_mime": None,
+            "done": bool(done),
+            "slots": self.slots.as_dict(),
+            "meta": {
+                "engine": self.engine_used,
+                "streamed": streamer is not None and bool(spoken),
+                "sentences": len(spoken),
+                "stt_error": stt_error,
+                "turn": self.turn_count,
+                "rescored": rescored,
+                "timings": timings,
+            },
+        }
+
+    def _speak_sentence(
+        self, sentence: str, index: int, previous: str, timings: dict[str, float]
+    ):
+        """문장 하나를 사투리로 바꿔 합성하고 **청크 단위로** 내보낸다.
+
+        통짜 합성을 기다리면 그 시간이 그대로 '첫 소리까지'에 더해진다.
+        스트리밍 합성은 첫 청크가 훨씬 빨리 오므로 그것부터 흘려보낸다.
+
+        프로바이더가 스트리밍을 못 하면(none/elevenlabs) 통짜 결과를
+        청크 하나로 감싸 내보낸다 — **이벤트 모양은 항상 같다.**
+        """
+        dialect = integrations.to_dialect(sentence)
+        yield {
+            "type": "sentence",
+            "index": index,
+            "standard": sentence,
+            "dialect": dialect,
+        }
+
+        provider = get_tts_provider()
+        if provider.name == "none":
+            return
+
+        started = time.perf_counter()
+        first_at: float | None = None
+        sent = 0
+
+        yield {
+            "type": "audio_start",
+            "index": index,
+            # 스트리밍 WAV 는 32kHz 16bit mono PCM 이고 헤더는 첫 청크에만 있다.
+            "mime": "audio/wav",
+            "sample_rate": 32000,
+            "bits": 16,
+            "channels": 1,
+        }
+
+        try:
+            if getattr(provider, "supports_streaming", False):
+                for chunk in provider.stream(
+                    dialect, context=SpeechContext(previous_text=previous)
+                ):
+                    if not chunk:
+                        continue
+                    if first_at is None:
+                        first_at = time.perf_counter()
+                    yield {
+                        "type": "audio_chunk",
+                        "index": index,
+                        "seq": sent,
+                        "b64": base64.b64encode(chunk).decode("ascii"),
+                    }
+                    sent += 1
+            else:
+                speech = synthesize(dialect, context=SpeechContext(previous_text=previous))
+                self._record_tts(dialect, speech.provider)
+                if speech.audio_b64:
+                    first_at = time.perf_counter()
+                    yield {"type": "audio_chunk", "index": index, "seq": 0, "b64": speech.audio_b64}
+                    sent = 1
+        except Exception as exc:
+            # 합성이 깨져도 통화는 계속된다. 텍스트는 이미 나갔다.
+            log.warning("문장 %d 합성 실패: %s", index, exc)
+
+        elapsed = round((time.perf_counter() - started) * 1000, 1)
+        # 실패한 합성은 과금되지 않으므로 사용량에도 세지 않는다.
+        if sent:
+            self._record_tts(dialect, provider.name)
+        if first_at is not None:
+            # '첫 소리까지'를 좌우하는 것은 전체 합성이 아니라 첫 청크다.
+            timings.setdefault(
+                "tts_first_chunk_ms", round((first_at - started) * 1000, 1)
+            )
+        timings["tts_ms"] = round(timings.get("tts_ms", 0.0) + elapsed, 1)
+        yield {"type": "audio_end", "index": index, "chunks": sent}
 
     def end(self, complaint_id: str) -> dict[str, Any]:
         """통화를 닫고 민원카드를 만든다."""
@@ -181,7 +441,9 @@ class ConversationSession:
         self.closed = True
         self.complaint_id = complaint_id
 
-        self.end_timings: dict[str, float] = {}
+        # 원장은 여기서 초기화하지 않는다. 통화 내내 쌓아 온 값에
+        # 요약 호출을 더해야 '이 통화가 쓴 총량'이 된다.
+        self.end_timings = {}
         with _timed(self.end_timings, "summary_ms"):
             summary_data = self._summarize()
         with _timed(self.end_timings, "routing_ms"):
@@ -194,19 +456,131 @@ class ConversationSession:
                 summary=summary_data.get("summary", ""),
                 category=summary_data.get("category", ""),
                 routing_query=summary_data.get("routing_query", ""),
+                notes=self.notes,
             )
+        log.info("통화 %s 사용량 — %s", self.id, self.usage.one_line())
         self.end_timings["total_ms"] = round(
             sum(self.end_timings.get(k, 0.0) for k in ("summary_ms", "routing_ms")), 1
         )
         return card
 
     # -- 내부 --------------------------------------------------------------
+    # 같은 안내를 계속 반복하지 않기 위한 문턱. 이 횟수를 넘으면 말투를 바꾼다.
+    UNCLEAR_GUIDANCE_AFTER = 2
+
+    def _apply_decision(self, decision) -> str:
+        """결정을 슬롯에 반영하고, 실제로 할 말을 정한다.
+
+        못 알아들은 발화는 슬롯에 넣지 않는다. 다만 **되묻기만 반복하면
+        어르신이 지친다.** 두 번 넘게 이어지면 재촉이 아니라 안심시키는
+        말로 바꾼다.
+        """
+        self.engine_used = decision.engine
+
+        if decision.caller_unclear:
+            self.unclear_streak += 1
+        else:
+            self.unclear_streak = 0
+            self.slots.merge(decision.slots)
+
+        # 랜드마크는 못 알아들은 턴이 아니면 항상 살린다.
+        if not decision.caller_unclear and decision.landmark:
+            self.slots.add_landmark(decision.landmark)
+
+        if not decision.caller_unclear and decision.note:
+            self.add_note(decision.note)
+
+        if self.unclear_streak >= self.UNCLEAR_GUIDANCE_AFTER:
+            return (
+                "괜찮습니다, 천천히 말씀하셔도 됩니다. "
+                "어떤 일 때문에 불편하신지 한 가지만 말씀해 주시겠어요?"
+            )
+        return decision.reply
+
+    def add_note(self, text: str, source: str = "caller") -> None:
+        """슬롯에 안 맞는 추가 정보를 쌓는다.
+
+        "아침에만 그래예", "옆집도 같이 그래예" 같은 말이 담당자에게는
+        슬롯보다 유용할 때가 많다. 버리지 않는다.
+        """
+        cleaned = (text or "").strip()
+        if not cleaned:
+            return
+
+        # 모델이 매 턴 '지금까지의 메모'를 표현만 바꿔 다시 보내는 일이 잦다
+        # ("옆집도 함께 그렇군요" / "옆집도 같은 증상이 있다고 함" / …).
+        # 포함 관계로는 안 걸리므로 유사도까지 본다.
+        for existing in list(self.notes):
+            if cleaned == existing["text"] or cleaned in existing["text"]:
+                return
+            if existing["text"] in cleaned:
+                self.notes.remove(existing)  # 새 메모가 더 자세하다
+                continue
+            if SequenceMatcher(None, existing["text"], cleaned).ratio() >= NOTE_SIMILARITY:
+                return  # 같은 내용을 다시 쓴 것
+
+        self.notes.append({"text": cleaned, "at": _utc_now_iso(), "source": source})
+
+    def _resolve_done(self, decision, caller_text: str) -> tuple[bool, str]:
+        """마무리 단계를 처리하고 `(종료 여부, 할 말)` 을 돌려준다.
+
+        슬롯 네 개가 찼다고 바로 끊지 않는다. **"더 하실 말씀 있으신가요?" 를
+        반드시 한 번은 묻는다.** 어르신은 중요한 것을 나중에 말한다.
+        """
+        reply = decision.reply
+
+        if self.turn_count >= MAX_TURNS or self._check_budget():
+            return True, HANDOFF_CLOSING
+        if decision.caller_unclear:
+            # 못 알아들은 턴으로 통화를 끝내지 않는다.
+            return False, reply
+        if not self.slots.is_complete():
+            return False, reply
+
+        finished = bool(decision.caller_finished) or looks_finished(caller_text)
+        if finished or self.wrapup_rounds >= MAX_WRAPUP_ROUNDS:
+            return True, HANDOFF_CLOSING
+
+        # 아직 마무리 확인을 안 했거나, 어르신이 계속 말씀하시는 중이다.
+        self.wrapup_rounds += 1
+        if not decision.ready_to_close and reply:
+            # 모델이 이미 마무리 질문을 하고 있으면 그대로 둔다.
+            if "말씀" in reply and "?" in reply:
+                return False, reply
+        return False, WRAPUP_QUESTION
+
+    def _record_stt(self, result) -> None:
+        if result.provider == "none":
+            return
+        self.usage.add_stt(result.model or result.provider, result.duration_sec, result.usage)
+        PROCESS_TOTAL.add_stt(result.model or result.provider, result.duration_sec, result.usage)
+
+    def _record_tts(self, text: str, provider: str) -> None:
+        if provider in ("none", "skipped"):
+            return
+        self.usage.add_tts(provider, len(text or ""))
+        PROCESS_TOTAL.add_tts(provider, len(text or ""))
+
+    def _check_budget(self) -> bool:
+        """토큰 상한을 넘었으면 True. 넘는 순간 한 번만 로그를 남긴다."""
+        if self.budget_exceeded:
+            return True
+        if self.usage.total_tokens >= MAX_SESSION_TOKENS:
+            self.budget_exceeded = True
+            log.warning(
+                "세션 %s 토큰 상한 초과 (%d >= %d) — 정리 단계로 넘깁니다.",
+                self.id,
+                self.usage.total_tokens,
+                MAX_SESSION_TOKENS,
+            )
+        return self.budget_exceeded
+
     def _decide(self):
         """LLM 으로 한 턴 결정. 실패하면 그 턴만 규칙 엔진이 받는다."""
         llm, rule = get_engines()
         if llm is not None:
             try:
-                return llm.respond(self.transcript, self.slots)
+                return llm.respond(self.transcript, self.slots, usage=self.usage)
             except Exception as exc:
                 from .providers import explain_error
 
@@ -219,7 +593,7 @@ class ConversationSession:
         llm, rule = get_engines()
         if llm is not None:
             try:
-                data = llm.summarize(self.transcript, self.slots)
+                data = llm.summarize(self.transcript, self.slots, usage=self.usage)
                 if data.get("summary"):
                     return data
                 log.warning("요약이 비어 규칙 기반 요약으로 대체합니다.")
@@ -240,6 +614,7 @@ class ConversationSession:
         rescored: dict[str, Any] | None = None,
         timings: dict[str, float] | None = None,
         started: float | None = None,
+        want_audio: bool = True,
     ) -> dict[str, Any]:
         """상담원 발화를 사투리로 바꾸고 음성으로 만들어 기록한다."""
         timings = timings if timings is not None else {}
@@ -248,11 +623,16 @@ class ConversationSession:
         # 어르신이 방금 한 말을 앞 문맥으로 넘긴다. TTS 가 문맥에서 감정을
         # 추론하므로("아이고, 그러셨구나예"를 밝게 읽으면 이상하다) 실제로
         # 톤이 달라진다.
-        with _timed(timings, "tts_ms"):
-            speech = synthesize(
-                reply_dialect,
-                context=SpeechContext(previous_text=_last_caller_utterance(self.transcript)),
-            )
+        if want_audio:
+            with _timed(timings, "tts_ms"):
+                speech = synthesize(
+                    reply_dialect,
+                    context=SpeechContext(previous_text=_last_caller_utterance(self.transcript)),
+                )
+        else:
+            speech = TTSResult(text=reply_dialect, provider="skipped")
+        if speech.audio_b64:
+            self._record_tts(reply_dialect, speech.provider)
         if started is not None:
             timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
 
@@ -343,6 +723,14 @@ def pick_best_alternative(
         "changed": best["rank"] != 0,
         "candidates": scored,
     }
+
+
+def _split_sentences(text: str) -> list[str]:
+    """일괄 경로에서도 문장 단위로 합성하기 위해 나눈다."""
+    import re
+
+    parts = [p.strip() for p in re.split(r"(?<=[.!?…])\s+", text or "") if p.strip()]
+    return parts or ([text.strip()] if text and text.strip() else [])
 
 
 def _last_caller_utterance(transcript: list[dict[str, Any]]) -> str:

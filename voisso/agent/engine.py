@@ -23,7 +23,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import prompts
-from .slots import SLOT_ORDER, Slots, extract_slots
+from .slots import SLOT_ORDER, Slots, extract_slots, is_meaningless
 
 log = logging.getLogger("voisso.agent.engine")
 
@@ -45,6 +45,14 @@ class TurnDecision:
     error: str | None = None
     # 어르신이 되물어서 그 질문에 먼저 답한 턴인지. 규칙 엔진은 항상 False.
     answered_question: bool = False
+    # 이번 발화에 알아들을 내용이 없었는지(잡음·혼잣말·오인식).
+    caller_unclear: bool = False
+    # 어르신이 말한 지형지물. where 와 별개로 담는다.
+    landmark: str = ""
+    # 어르신이 더 할 말이 없다고 했는지.
+    caller_finished: bool = False
+    # 슬롯에 안 맞지만 담당자가 알아야 할 추가 정보.
+    note: str = ""
 
 
 class RuleEngine:
@@ -164,6 +172,8 @@ class RuleEngine:
         # 몇 번째 응답인지 — 맞장구를 순환시키는 기준.
         turn_index = sum(1 for e in transcript if e.get("role") == "caller")
 
+        unclear = bool(last_caller) and is_meaningless(last_caller)
+
         target = preview.next_slot()
         if target is None:
             reply = f"{self.CLOSING_ACK} {self.CLOSING}" if last_caller else self.CLOSING
@@ -182,7 +192,13 @@ class RuleEngine:
         else:
             reply = question
 
-        return TurnDecision(reply=reply, slots=merged, ready_to_close=False, engine=self.name)
+        return TurnDecision(
+            reply=reply,
+            slots=merged,
+            ready_to_close=False,
+            engine=self.name,
+            caller_unclear=unclear,
+        )
 
     def summarize(self, transcript: list[dict[str, Any]], slots: Slots) -> dict[str, str]:
         what = slots.get("what")
@@ -218,11 +234,33 @@ class RuleEngine:
 # --------------------------------------------------------------------------
 
 
-def build_messages(transcript: list[dict[str, Any]]) -> list[dict[str, str]]:
+# 매 턴 전체 이력을 보내면 통화가 길어질수록 입력 토큰이 제곱으로 는다.
+# 슬롯 상태는 별도 메모(build_state_note)로 매번 전달되므로 오래된 발화는
+# 대부분 중복이다. 다만 **최근 몇 턴은 반드시 남겨야 한다** — 되묻기(B)와
+# 정정(C) 처리가 직전 문맥에 의존하기 때문이다.
+DEFAULT_MAX_EXCHANGES = 3
+
+
+def _max_exchanges() -> int:
+    raw = os.getenv("VOISSO_MAX_HISTORY_EXCHANGES")
+    if not raw:
+        return DEFAULT_MAX_EXCHANGES
+    try:
+        return max(1, int(raw))
+    except ValueError:
+        return DEFAULT_MAX_EXCHANGES
+
+
+def build_messages(
+    transcript: list[dict[str, Any]], slots: Any = None
+) -> list[dict[str, str]]:
     """통화 기록을 Messages API 형식으로 바꾼다.
 
     Messages API 는 user 로 시작해야 하는데 우리 통화는 상담원 인사로 시작한다.
     그래서 어르신의 첫 발화 이전 턴은 잘라낸다.
+
+    이력이 길면 **최근 교환만 남긴다.** 잘린 앞부분의 사실관계는 슬롯 메모로
+    이미 전달되므로 정보가 사라지지는 않는다.
     """
     messages: list[dict[str, str]] = []
     for entry in transcript:
@@ -240,6 +278,14 @@ def build_messages(transcript: list[dict[str, Any]]) -> list[dict[str, str]]:
     # 마지막이 assistant 면 모델에게 넘길 새 입력이 없다는 뜻이다.
     while messages and messages[-1]["role"] == "assistant":
         messages.pop()
+
+    # 최근 교환만 남긴다. user 로 시작하도록 경계를 맞춘다.
+    limit = _max_exchanges() * 2
+    if len(messages) > limit:
+        trimmed = messages[-limit:]
+        while trimmed and trimmed[0]["role"] != "user":
+            trimmed.pop(0)
+        messages = trimmed or messages[-1:]
     return messages
 
 

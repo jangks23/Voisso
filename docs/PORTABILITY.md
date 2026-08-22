@@ -338,10 +338,12 @@ parse_staff_rows(page) -> list[{department, position, phone, duty}]
 
 ## 7. 남은 확인 사항 (TODO)
 
-- [ ] **README·SUBMISSION 의 "URL만 바꾸면 된다" 문구 수정** — 0절 권장 문구 참조 (P1/오케스트레이터)
-- [ ] `data/andong_departments.json` · `.csv` · `data/raw/andong/` ·
-      `data/private/andong_phone_map.json` **`.gitignore` 추가 요청** (오케스트레이터)
-      — 본 담당은 `.gitignore` 소유자가 아니라 직접 추가하지 않았다
+- [x] **README·SUBMISSION 의 "URL만 바꾸면 된다" 문구 수정** — 완료. `README.md`(「다른 지자체에
+      이식하기」), `SUBMISSION.md`(Limits / 한계), `GOAL.md` H2 세 곳 모두 0절 문구로 고쳤다
+- [x] `data/andong_departments.json` · `.csv` · `data/raw/andong/` ·
+      `data/private/andong_phone_map.json` **`.gitignore` 추가** — 완료.
+      `git check-ignore` 로 네 경로 모두 차단되는 것을 확인했다 (실번호가 든
+      `andong_phone_map.json` 은 `data/private/` 규칙에 걸린다)
 - [ ] `scrape_gb_departments.py` 의 `fetch()` 에 `IncompleteRead` 재시도 + 응답 완전성 검증 보강 (P3)
 - [ ] 경주·영주·경산·의성의 실제 조직도 URL이 `Disallow: /programs/` 에 걸리는지 확인
 - [ ] 문경시에 TLS 중간 인증서 체인 설정 요청
