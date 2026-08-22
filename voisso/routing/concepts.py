@@ -26,6 +26,8 @@
     province : 도청 소관. 행정 용어를 검색어에 주입한다
     shared   : 도청도 하고 시군도 한다. 배정하되 안내 문구를 붙인다
     municipal: 시군 소관. 부서를 배정하지 않고 시군 민원실로 안내한다
+    external : 지자체 소관이 아예 아니다(가스 누출 등). 부서를 배정하지 않고
+               제 기관으로 안내한다. **안전 사안이라 다른 개념보다 우선한다.**
 
 ## P5 방언 사전(voisso/dialect/lexicon.json)과의 경계
 
@@ -59,7 +61,7 @@ from typing import Literal
 
 from .tokenizer import normalize
 
-Jurisdiction = Literal["province", "shared", "municipal"]
+Jurisdiction = Literal["province", "shared", "municipal", "external"]
 
 # ── 배수 민원에서 되풀이되는 조각들 ─────────────────────────────────
 # 어르신은 같은 상황을 열 가지로 말한다. 조각을 조립해 빠짐없이 잡는다.
@@ -71,7 +73,9 @@ _WET = r"(?:빗?물|우수)"
 _POOL = (
     r"(?:안\s*빠지|안\s*빠져|안\s*빠집|잘\s*안\s*빠|안\s*내려가|안\s*내려갑"
     r"|고이|고여|고인|괴어|괸\b"
-    r"|차오르|차올라|차서|찬다|찹니다|찹디|가득\s*차|그득\s*차"
+    # '차올' 만으로도 잡는다 — STT/정규화가 어미를 망가뜨려도("차올라예"->"차올예요")
+    # 배수 민원임은 알아볼 수 있어야 한다.
+    r"|차오르|차올|차서|찬다|찹니다|찹디|가득\s*차|그득\s*차"
     r"|넘쳐|넘치|넘친|넘칩"
     r"|들어와|들어오|들어옵|들어온|새어\s*들|스며들)"
 )
@@ -112,6 +116,9 @@ class Concept:
     #   "집이 물에 잠겼어요" -> 상시 배수 불량인가, 호우 재난 피해인가?
     needs_context: str = ""
     resolved_by: tuple[str, ...] = ()
+    # 더 구체적인 개념이 걸리면 눌러야 할 개념들.
+    #   "가스 냄새" 는 gas_leak 이지 odor_noise(공장 악취)가 아니다.
+    suppresses: tuple[str, ...] = ()
     _compiled: tuple[re.Pattern, ...] = field(default=(), repr=False, compare=False)
 
 
@@ -124,6 +131,7 @@ def _c(
     note: str = "",
     needs_context: str = "",
     resolved_by: tuple[str, ...] = (),
+    suppresses: tuple[str, ...] = (),
 ) -> Concept:
     return Concept(
         id=cid,
@@ -134,6 +142,7 @@ def _c(
         note=note,
         needs_context=needs_context,
         resolved_by=resolved_by,
+        suppresses=suppresses,
         _compiled=tuple(re.compile(p) for p in patterns),
     )
 
@@ -275,6 +284,18 @@ CONCEPTS: tuple[Concept, ...] = (
         r"분리\s*수거\s*함", r"청소차"),
        jurisdiction="municipal",
        note="생활폐기물 수거와 종량제 봉투 판매는 시군 소관이다"),
+
+    # 도청 96개 부서 사무분장에서 '가스'가 걸리는 건 전부 온실가스·배출가스·
+    # 바이오가스다. 가정 가스 누출을 맡는 부서는 **없다.** 환경관리과의
+    # "배출업소 지도점검"으로 보내면 담당자가 가스 누출임을 놓친다.
+    _c("gas_leak", "가스 냄새 / 가스 누출",
+       (r"가스\s*(?:냄새|새|누출|누설)", r"가스가\s*(?:새|나)", r"엘피지|lpg\s*(?:냄새|새)",
+        r"프로판\s*(?:냄새|새)", r"도시가스\s*(?:냄새|새|누출)"),
+       jurisdiction="external",
+       note="가스 누출은 지자체 소관이 아닙니다. 지금 위험하면 119, "
+            "누출 점검·차단은 고지서에 적힌 도시가스 공급사(또는 LPG 판매점)로 안내하세요. "
+            "창문을 열고 불·전기 스위치는 만지지 마시라고 알려 주세요.",
+       suppresses=("odor_noise",)),
 
     _c("odor_noise", "악취 / 소음",
        (r"악취", r"냄새\s*가?\s*(너무|심|나)", r"소음", r"시끄러", r"공장\s*에서\s*냄새"),
@@ -428,8 +449,10 @@ CONCEPTS: tuple[Concept, ...] = (
         r"불\s*날까"),
        ("산불", "산림", "예방", "산불방지")),
 
-    _c("landslide", "산사태 / 축대 붕괴",
-       (r"산사태", r"축대\s*가?\s*무너", r"옹벽", r"토사\s*가?\s*흘러", r"급경사"),
+    _c("landslide", "산사태 / 축대·옹벽",
+       (r"산사태", r"옹벽", r"토사\s*가?\s*흘러", r"급경사", r"비탈\s*면",
+        # 무너질 조짐이 아니어도 축대·석축은 급경사지 정비 소관이다
+        r"축대", r"석축", r"돌\s*담\s*이?\s*(?:무너|기울)"),
        ("사방", "산림", "재해", "급경사지", "복구")),
 
     _c("storm_damage", "태풍 / 호우 피해",
@@ -513,7 +536,12 @@ def detect(text: str) -> list[ConceptHit]:
             if m:
                 hits.append(ConceptHit(concept=concept, matched=m.group(0).strip()))
                 break
-    return hits
+
+    # 더 구체적인 개념이 걸렸으면 일반 개념은 눌러 없앤다.
+    suppressed: set[str] = set()
+    for hit in hits:
+        suppressed.update(hit.concept.suppresses)
+    return [h for h in hits if h.id not in suppressed]
 
 
 # 같은 개념 안에서도 앞에 적은 용어가 더 대표적이다.
@@ -534,7 +562,7 @@ def admin_terms(hits: list[ConceptHit]) -> dict[str, float]:
     fired = {h.id for h in hits}
     out: dict[str, float] = {}
     for hit in hits:
-        if hit.jurisdiction == "municipal":
+        if hit.jurisdiction in ("municipal", "external"):
             continue
         concept = hit.concept
         if concept.needs_context and fired & set(concept.resolved_by):
@@ -544,6 +572,21 @@ def admin_terms(hits: list[ConceptHit]) -> dict[str, float]:
             if weight > out.get(term, 0.0):
                 out[term] = weight
     return out
+
+
+def external_hits(hits: list[ConceptHit]) -> list[ConceptHit]:
+    """지자체 소관이 아닌 개념(가스 누출 등). 안전 사안이라 하나만 걸려도 알린다."""
+    return [h for h in hits if h.jurisdiction == "external"]
+
+
+def external_only(hits: list[ConceptHit]) -> bool:
+    """걸린 개념이 전부 관할 밖이면 True — 도청 부서를 배정하지 않는다."""
+    return bool(hits) and all(h.jurisdiction == "external" for h in hits)
+
+
+def external_note(hits: list[ConceptHit]) -> str:
+    notes = [h.concept.note for h in external_hits(hits) if h.concept.note]
+    return " ".join(dict.fromkeys(notes))
 
 
 def municipal_only(hits: list[ConceptHit]) -> bool:

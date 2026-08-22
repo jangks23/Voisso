@@ -19,6 +19,8 @@
     chkStdAll: $('chkStandardAll'), pathChip: $('pathChip'),
     transcript: $('transcript'),
     slots: $('slots'), slotsCount: $('slotsCount'),
+    capAgent: $('capAgent'), capCaller: $('capCaller'),
+    capAgentText: $('capAgentText'), capCallerText: $('capCallerText'),
     suggestions: $('suggestions'), textIn: $('textIn'), btnSend: $('btnSend'),
     btnMic: $('btnMic'), micLevel: document.querySelector('.mic-level'),
     hint: $('composerHint'), btnEnd: $('btnEnd'),
@@ -99,6 +101,7 @@
     state.sessionId = null;
     state.ended = true;
     el.callee.classList.remove('is-live');
+    setPhase('통화 끊김');
     say('통화가 끊어졌습니더');
     el.hint.classList.add('alert');
     el.hint.textContent = '통화가 끊어졌습니더. 아래 버튼으로 다시 걸어 주이소.';
@@ -118,6 +121,7 @@
   function handleNetworkDown() {
     if (reconnecting) return;
     el.callee.classList.remove('is-live');
+    setPhase('연결 끊김');
     say('연결이 끊어졌습니더');
     el.hint.classList.add('alert');
     el.hint.textContent = API.baseLabel() + ' 에 연결하지 못했니더. 다시 연결해 보는 중입니더…';
@@ -218,11 +222,13 @@
   }
 
   // 상태는 색이나 아이콘이 아니라 '글자'로 알린다.
+  // 큰 글자는 '지금 무엇을 하면 되는지'(행동), 헤더는 '지금 어떤 상태인지'(단계).
   function say(text, kind) {
     el.elderStatus.textContent = text;
     el.elderStatus.classList.toggle('listening', kind === 'listening');
-    el.callStatus.textContent = text;
   }
+
+  function setPhase(text) { el.callStatus.textContent = text; }
 
   function renderDemoBar() {
     if (!isDemo()) return;
@@ -355,11 +361,13 @@
         // (데모 스크립트의 핵심 컷: STT 원문과 정규화 결과가 동시에 보이는 순간)
         if (isVoice && !same) b.classList.add('show-std');
         syncToggle();
+        showCaption(role, d);            // 어르신 모드 자막
         scrollDown();
       },
       live(text) {                         // 인식 중간 결과
         b.classList.add('listening');
         b.querySelector('.bubble-dialect').textContent = text || '';
+        if (text) showCaption(role, text, { live: true });
         scrollDown();
       },
       // 방언 사전이 1순위가 아닌 후보를 골랐을 때만 '받아쓴 것' 줄을 띄운다.
@@ -413,6 +421,33 @@
     el.transcript.appendChild(n);
     scrollDown();
     return n;
+  }
+
+  /* ── 자막 ────────────────────────────────────────────────
+     어르신 모드에서는 말풍선 목록 대신 이것만 보인다.
+     지금 오간 말 두 개(위=민원실, 아래=나)만 남기고 이전 것은 흐려진다. */
+  const CAP_WHO = { agent: '민원실', officer: '담당자', caller: '나' };
+
+  function showCaption(role, text, opts) {
+    const t = String(text || '').trim();
+    if (!t) return;
+    const mine = role === 'caller';
+    const box = mine ? el.capCaller : el.capAgent;
+    const body = mine ? el.capCallerText : el.capAgentText;
+    const other = mine ? el.capAgent : el.capCaller;
+    body.textContent = t;
+    box.querySelector('.cap-who').textContent =
+      CAP_WHO[role] || (mine ? '나' : '민원실');
+    box.classList.remove('blank', 'stale');
+    other.classList.add('stale');          // 방금 온 말이 아니면 흐려진다
+    // 인식 중간 결과는 계속 바뀌므로 스크린리더가 읽지 않게 둔다
+    box.setAttribute('aria-live', (opts && opts.live) ? 'off' : (mine ? 'off' : 'polite'));
+  }
+
+  function clearCaptions() {
+    [el.capAgent, el.capCaller].forEach((b) => { b.classList.add('blank'); b.classList.remove('stale'); });
+    el.capAgentText.textContent = '';
+    el.capCallerText.textContent = '';
   }
 
   function addTyping() {
@@ -569,7 +604,9 @@
     el.callee.querySelector('.callee-meta strong').textContent = '경상북도 민원실';
     setScreen('call');
     el.transcript.innerHTML = '';
+    clearCaptions();
     el.callee.classList.remove('is-live');
+    setPhase('연결 중');
     say('연결하고 있습니더');
     el.btnEnd.classList.remove('ready');
     el.hint.classList.remove('alert');
@@ -580,6 +617,7 @@
     state.safety = []; state.hurry = 0; state.safetyConfirmed = false;
     el.safetyBar.hidden = true;
     el.safetyBar.classList.remove('again', 'confirmed');
+    document.documentElement.dataset.sos = '';
     el.safetyCalls.innerHTML = '';
     renderSlots({});
     setBusy(true);
@@ -591,6 +629,7 @@
       state.sessionId = r.session_id;
       state.startedAt = Date.now();
       el.callee.classList.add('is-live');
+      setPhase('통화 중');
       say('말씀해 주이소');
       clearInterval(state.timer);
       const paintTimer = (v) => {
@@ -603,6 +642,7 @@
     } catch (e) {
       setBusy(false);
       const addr = API.baseLabel();
+      setPhase('연결 실패');
       say('연결이 안 됩니더');
       toast(addr + ' 에 연결하지 못했습니더.', 6000);
       el.hint.classList.add('alert');
@@ -766,6 +806,7 @@
     if (liveBubble) { liveBubble.remove(); liveBubble = null; }
     state.ended = true;
     clearInterval(state.timer);
+    setPhase('접수 중');
     say('접수하고 있습니더');
     el.callee.classList.remove('is-live');
     setBusy(true);
@@ -867,6 +908,8 @@
 
     el.safetyBar.hidden = false;
     el.safetyBar.classList.toggle('confirmed', confirmed.length > 0);
+    // 화면에 큰 단추가 하나만 보이게 한다(AI 안내와 일치시킨다).
+    document.documentElement.dataset.sos = confirmed.length ? '1' : '';
 
     if (confirmed.length && !state.safetyConfirmed) {
       state.safetyConfirmed = true;
@@ -878,6 +921,7 @@
     if (declined && !confirmed.length) {
       state.safetyConfirmed = false;
       el.safetyBar.classList.remove('confirmed');
+      document.documentElement.dataset.sos = '';
     }
 
     if (added) pulseSafety();
@@ -1100,6 +1144,7 @@
     el.callee.classList.add('is-handoff');
     el.callee.classList.remove('is-live');
     el.callee.querySelector('.callee-meta strong').textContent = title;
+    setPhase('담당자와 통화 중');
     say('담당자와 통화 중입니더');
     el.handoffWait.hidden = true;
     el.btnSimMsg2.hidden = !isDemo();       // 통화 화면에서 담당자 역할을 이어갈 수 있게
@@ -1178,6 +1223,7 @@
     state.handoff.open = false;
     state.handoff.status = 'closed';
     state.handoff.rendered = 0;
+    setPhase('통화 종료');
     say('통화가 끝났습니더');
     el.callee.classList.remove('is-handoff');
     const div = document.createElement('div');
@@ -1206,6 +1252,7 @@
     setScreen('idle');
     el.callTimer.innerHTML = '<span class="sr-only">통화 시간 </span>00:00';
     el.transcript.innerHTML = '';
+    clearCaptions();
     renderSlots({});
   }
 
@@ -1255,6 +1302,7 @@
     setScreen('call');
     el.callee.classList.add('is-handoff');
     el.callee.querySelector('.callee-meta strong').textContent = dept + ' · 진행 안내';
+    setPhase('진행 안내 통화');
     say('안내를 들어 보이소');
     el.transcript.innerHTML = '';
     const div = document.createElement('div');

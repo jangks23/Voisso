@@ -186,6 +186,48 @@ CASES: list[dict[str, Any]] = [
         "tag": "범위밖",
     },
 
+    # ── 응급 민원 — 긴급도 판정과 라우팅이 충돌하면 안 된다 ──────────────
+    #
+    # 119 안내는 P6 의 긴급도 모듈이 한다. 라우팅은 그와 **별개로** 민원 자체를
+    # 담당 부서로 보내야 한다. 단, 도청에 소관이 아예 없는 건은 억지 배정 대신
+    # 제 기관으로 안내한다.
+    {
+        "id": "emg-gas",
+        "text": "집에 가스 냄새가 나예",
+        "expect": "external",
+        "note": "도청 96개 부서에 가스 누출 소관이 없다. '가스'는 전부 온실가스·배출가스다. "
+                "환경관리과 배출업소 점검으로 보내면 담당자가 가스 누출임을 놓친다",
+        "tag": "응급",
+    },
+    {
+        "id": "emg-wall",
+        "text": "축대가 무너질 것 같습니더",
+        "expect": ["자연재난과"],
+        "note": "급경사지정비사업이 안전행정실 자연재난과 소관",
+        "tag": "응급",
+    },
+    {
+        "id": "emg-flood-now",
+        "text": "물이 차올라예",
+        "expect": ["맑은물정책과"],
+        "note": "진행 중 침수. 119 안내와 별개로 배수 소관으로 가야 한다",
+        "tag": "응급",
+    },
+    {
+        "id": "emg-wall-normal",
+        "text": "축대가 오래돼서 정비가 필요합니다",
+        "expect": ["자연재난과"],
+        "note": "응급이 아니어도 같은 부서 — 긴급도가 배정을 바꾸면 안 된다",
+        "tag": "응급",
+    },
+    {
+        "id": "emg-gas-mixed",
+        "text": "가스 냄새도 나고 하수구도 막혔어요",
+        "expect": ["맑은물정책과"],
+        "note": "섞인 민원은 하수구를 배정하되 가스 안내(external_referral)를 함께 실어야 한다",
+        "tag": "응급",
+    },
+
     # ── 홀드아웃 (파라미터 튜닝 후에 추가한 문장들) ────────────────────
     {
         "id": "hold-senior-center",
@@ -525,6 +567,12 @@ def judge(case: dict[str, Any]) -> dict[str, Any]:
     if expect == "no_match":
         ok = not matches and outcome != "municipal_referral"
         got = "매칭 0건" if not matches else f"{top['full_name']} ({top['score']:.2f})"
+    elif expect == "external":
+        # 지자체 소관이 아니다. 부서를 배정하지 않고 제 기관으로 안내해야 한다.
+        action = result.get("next_action", {})
+        ok = outcome == "external_referral" and not matches and bool(action.get("instruction"))
+        got = ("관할밖 안내" if outcome == "external_referral"
+               else (f"{top['full_name']} ({top['score']:.2f})" if top else "매칭 0건"))
     elif expect == "referral":
         # 시군 안내이거나, 최소한 틀린 부서를 1순위로 올리지 않아야 한다
         ok = outcome == "municipal_referral" or not matches
@@ -555,6 +603,9 @@ def judge(case: dict[str, Any]) -> dict[str, Any]:
     else:
         ok = bool(top) and any(k in top["full_name"] for k in expect)
         got = f"{top['full_name']} ({top['score']:.2f})" if top else "매칭 0건"
+        if ok and case.get("id") == "emg-gas-mixed" and not result.get("external_referral"):
+            ok = False
+            got += " (external_referral 누락 — 안전 안내가 빠졌다)"
         if ok and case.get("require_confident") and not result["confident"]:
             ok = False
             got += " (confident=False — 같은 성격 민원은 일관되게 단독 배정돼야 한다)"

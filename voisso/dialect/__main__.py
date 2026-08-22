@@ -400,6 +400,53 @@ def _callback_markdown() -> str:
     return "".join(out)
 
 
+def _short_forms_markdown() -> str:
+    from . import short_forms
+    from .core import short_form_limits
+
+    limits = short_form_limits()
+    forms = short_forms()
+    out = [
+        "# 자막용 짧은 표현\n\n",
+        "> 이 파일은 `python -m voisso.dialect --short-forms` 로 **생성된다.**\n",
+        "> 손으로 고치지 말고 `tools/seed_lexicon.py` 의 `SHORT_FORMS` 를 고친 뒤 다시 생성하라.\n\n",
+        "어르신 화면이 자막 오버레이로 바뀌었다. **자막은 길면 안 읽힌다.**\n"
+        "상황마다 짧은 판과 보통 판을 두고 P6 이 고른다.\n\n",
+        "```python\nfrom voisso.dialect import short_forms, line\n\n"
+        "subtitle = line(\"ask_where\")              # 짧은 판\n"
+        "spoken   = line(\"ask_where\", \"normal\")   # 보통 판\n```\n\n",
+        "## 줄일 때 넘지 말아야 할 선\n\n",
+        "`-이소` 명령형에서 수혜 보조동사 **`주-`가 빠지면 곧바로 명령조**가 된다.\n\n",
+        "| 정중 | 글자 | 명령조 | 글자 | 차이 |\n|---|---|---|---|---|\n",
+        "| 말씀해 주이소 | 8 | 말하이소 | 5 | **3자** |\n",
+        "| 적어 주이소 | 7 | 적으이소 | 5 | **2자** |\n",
+        "| 119 눌러 주이소 | 14 | 119 누르이소 | 12 | **2자** |\n\n",
+        "**아끼는 글자가 2~3자뿐인데 어조가 통째로 바뀐다.** 어르신 대상 공공 서비스에서 "
+        "남는 장사가 아니다. 응급 문장도 마찬가지다 — 짧게 만들되 `주-`는 남긴다.\n\n",
+        f"### 길이 상한\n\n"
+        f"| 구분 | 짧은 판 | 보통 판 |\n|---|---|---|\n"
+        f"| 일반 | {limits.get('short')}자 | {limits.get('normal')}자 |\n"
+        f"| 응급 | {limits.get('emergency_short')}자 | {limits.get('emergency_normal')}자 |\n\n"
+        "응급 문장이 더 짧은 이유는 하나다. **다급한 사람은 긴 문장을 못 듣는다.**\n\n",
+        "---\n\n",
+    ]
+
+    current = None
+    for key, form in forms.items():
+        if form["category"] != current:
+            current = form["category"]
+            out.append(f"\n## {current}\n\n| 용도 | 짧은 판 | 자 | 보통 판 | 자 |\n|---|---|---|---|---|\n")
+        out.append(f"| `{key}` | {form['short']} | {len(form['short'])} "
+                   f"| {form['normal']} | {len(form['normal'])} |\n")
+
+    out.append("\n---\n\n## 표준어 원문\n\n")
+    out.append("문구는 표준어로 관리하고 `to_dialect()` 를 태운다. 사전이 바뀌면 문구도 따라온다.\n\n")
+    out.append("| 용도 | 표준어 (짧은 판) |\n|---|---|\n")
+    for key, form in forms.items():
+        out.append(f"| `{key}` | {form['standard_short']} |\n")
+    return "".join(out)
+
+
 def _demo() -> None:
     print("\n어르신 발화 → 표준어  (normalize · STT 결과 교정)")
     print("=" * 78)
@@ -521,6 +568,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--demo-lines", action="store_true", help="demo_lines.md 내용 생성")
     parser.add_argument("--handoff", action="store_true", help="handoff_samples.md 내용 생성")
     parser.add_argument("--callback", action="store_true", help="callback_samples.md 내용 생성")
+    parser.add_argument("--short-forms", action="store_true", help="short_forms.md 내용 생성")
     parser.add_argument("--roundtrip-report", action="store_true", help="왕복 보존 통과율")
     parser.add_argument("--stats", action="store_true", help="사전 규모·분포")
     parser.add_argument("-v", "--verbose", action="store_true", help="적용된 규칙을 함께 표시")
@@ -538,6 +586,8 @@ def main(argv: list[str] | None = None) -> int:
         print(_handoff_markdown(), end="")
     elif args.callback:
         print(_callback_markdown(), end="")
+    elif args.short_forms:
+        print(_short_forms_markdown(), end="")
     elif args.roundtrip_report:
         return _roundtrip_report()
     elif args.stats:

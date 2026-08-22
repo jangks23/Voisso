@@ -5,8 +5,9 @@
   "register": "정중체 — 어르신 대상 공공 민원 서비스",
   "honesty": "방언 음향 모델을 학습시키지 않았다. 어휘·어미 사전 기반 결정론적 변환이다. AI Hub 방언 코퍼스(dataSetSn=119)에서 가져온 항목은 하나도 없다 (이용정책 제5항 제3자 제공 금지 — docs/DATA_LICENSE.md §1).",
   "entry_count": 382,
-  "rule_count": 70,
+  "rule_count": 71,
   "cue_count": 95,
+  "short_form_count": 23,
   "admin_plain_count": 80,
   "noun_final_count": 22,
   "callback_cue_count": 63,
@@ -3335,6 +3336,16 @@
    "strength": "light"
   },
   {
+   "pattern": "(?<=[시으하되])면(?![가-힣])",
+   "replace": "믄",
+   "desc": "연결어미 -면 → -믄 (위험하시면→위험하시믄, 있으면→있으믄). 앞 음절을 어간으로 제한해 '화면·라면·측면'을 건드리지 않는다",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 62,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
    "pattern": "(?<=[가-힣])믄(?![가-힣])",
    "replace": "면",
    "desc": "연결어미 -믄 → -면 (불나믄→불나면, 하믄→하면)",
@@ -3445,6 +3456,152 @@
    "strength": "light"
   }
  ],
+ "short_forms": [
+  {
+   "id": "greeting",
+   "category": "통화 시작",
+   "short": "경상북도 민원실입니다. 어떤 일이신가요?",
+   "normal": "예, 경상북도청 민원실입니다. 어떤 일로 전화 주셨어요?"
+  },
+  {
+   "id": "ask_what",
+   "category": "통화 시작",
+   "short": "무슨 일이신가요?",
+   "normal": "어떤 일로 전화 주셨어요?"
+  },
+  {
+   "id": "listening",
+   "category": "통화 시작",
+   "short": "예, 말씀해 주세요.",
+   "normal": "예, 천천히 말씀해 주세요."
+  },
+  {
+   "id": "empathy_where",
+   "category": "되묻기",
+   "short": "아이고. 어디신지 말씀해 주세요.",
+   "normal": "아이고, 많이 불편하셨겠습니다. 어디신지 말씀해 주세요."
+  },
+  {
+   "id": "ask_where",
+   "category": "되묻기",
+   "short": "어디신지 말씀해 주세요.",
+   "normal": "어느 마을이신지 말씀해 주세요."
+  },
+  {
+   "id": "ask_when",
+   "category": "되묻기",
+   "short": "언제부터 그랬습니까?",
+   "normal": "언제부터 그랬는지 말씀해 주세요."
+  },
+  {
+   "id": "ask_contact",
+   "category": "되묻기",
+   "short": "연락처 하나만 주세요.",
+   "normal": "연락받으실 번호 하나만 말씀해 주세요."
+  },
+  {
+   "id": "repeat",
+   "category": "되묻기",
+   "short": "한 번만 더 말씀해 주세요.",
+   "normal": "잘 안 들립니다. 한 번만 더 말씀해 주세요."
+  },
+  {
+   "id": "wait",
+   "category": "되묻기",
+   "short": "잠깐만요.",
+   "normal": "잠깐만 기다려 주세요."
+  },
+  {
+   "id": "accepted",
+   "category": "접수",
+   "short": "접수됐습니다.",
+   "normal": "접수됐습니다. 담당자한테 바로 넘겼어요."
+  },
+  {
+   "id": "assigned",
+   "category": "접수",
+   "short": "{부서}로 넘겼습니다.",
+   "normal": "{부서}로 접수했습니다. 담당자가 연락드릴 겁니다."
+  },
+  {
+   "id": "closing_question",
+   "category": "접수",
+   "short": "더 하실 말씀 있으신가요?",
+   "normal": "이 말고 또 불편하신 거 있으십니까?"
+  },
+  {
+   "id": "closing",
+   "category": "접수",
+   "short": "고맙습니다.",
+   "normal": "전화 주셔서 고맙습니다. 건강하세요."
+  },
+  {
+   "id": "handoff_wait",
+   "category": "핸드오프",
+   "short": "연결 중입니다.",
+   "normal": "담당자분 바꿔 드릴게요. 잠깐만 기다려 주세요."
+  },
+  {
+   "id": "handoff_start",
+   "category": "핸드오프",
+   "short": "담당자 바꿨습니다.",
+   "normal": "지금부터 담당자가 직접 말씀드립니다."
+  },
+  {
+   "id": "callback_greeting",
+   "category": "콜백",
+   "short": "경상북도청입니다. 진행 상황 알려 드릴게요.",
+   "normal": "예, 경상북도청입니다. 접수하신 민원 진행 상황 알려 드릴게요."
+  },
+  {
+   "id": "callback_deflection",
+   "category": "콜백",
+   "short": "담당자한테 여쭤보고 연락드릴게요.",
+   "normal": "그건 제가 알 수가 없어요. 담당자한테 여쭤보고 다시 연락드릴게요."
+  },
+  {
+   "id": "emergency_first",
+   "category": "응급",
+   "short": "위험하시면 119 눌러 주세요.",
+   "normal": "위험하시면 119 먼저 눌러 주세요."
+  },
+  {
+   "id": "ask_119",
+   "category": "응급",
+   "short": "119 불러 드릴까요?",
+   "normal": "제가 119 불러 드릴까요?"
+  },
+  {
+   "id": "reask_119",
+   "category": "응급",
+   "short": "119 부를까요? 예, 아니요로요.",
+   "normal": "119 부를까요? 예 아니요로 말씀해 주세요."
+  },
+  {
+   "id": "confirm_119",
+   "category": "응급",
+   "short": "예, 바로 걸겠습니다.",
+   "normal": "예, 바로 연결하겠습니다. 큰 단추 눌러 주세요."
+  },
+  {
+   "id": "button_119",
+   "category": "응급",
+   "short": "큰 단추 눌러 주세요.",
+   "normal": "화면에 뜬 큰 단추 한 번만 눌러 주세요."
+  },
+  {
+   "id": "declined_119",
+   "category": "응급",
+   "short": "예. 위험하시면 119 눌러 주세요.",
+   "normal": "알겠습니다. 위험하시면 바로 119 눌러 주세요."
+  }
+ ],
+ "short_form_limits": {
+  "short": 24,
+  "normal": 40,
+  "emergency_short": 20,
+  "emergency_normal": 30
+ },
  "cues": {
   "closing_negative": [
    "없어예",

@@ -47,6 +47,8 @@ from .core import (
     noun_final,
     restricted_entries,
     rules,
+    short_form_limits,
+    short_form_table,
     soften,
     source_counts,
 )
@@ -73,6 +75,8 @@ __all__ = [
     "detect_consent",
     "detect_pressure",
     "emergency_lines",
+    "short_forms",
+    "line",
     "detect_tense",
     "pressure_data",
     "load_risk_signals",
@@ -337,3 +341,44 @@ def emergency_lines() -> dict[str, list[str]]:
                 "confirmed": ["지금 바로 연결하겠습니더. 끊지 마이소."],
                 "declined": ["알겠습니더. 위험하시믄 바로 119 누르이소."],
                 "button": ["화면에 뜬 큰 단추 한 번만 눌러 주이소."]}
+
+
+def short_forms() -> dict[str, dict[str, str]]:
+    """자막용 문구 모음 — **사투리 변환까지 마친 것**.
+
+    P7 이 어르신 화면을 자막 오버레이로 바꿨다. **자막은 길면 안 읽힌다.**
+    상황마다 짧은 판과 보통 판을 두고 부르는 쪽이 고른다.
+
+    Returns:
+        ``{용도: {"short": "...", "normal": "...", "standard_short": "...",
+                  "standard_normal": "...", "category": "..."}}``
+
+    사용 예::
+
+        forms = short_forms()
+        subtitle = forms["ask_where"]["short"]     # '어데신지 말씀해 주이소.'
+        spoken   = forms["ask_where"]["normal"]    # '어느 마을이신지 말씀해 주이소.'
+    """
+    try:
+        out: dict[str, dict[str, str]] = {}
+        for item in short_form_table():
+            out[item["id"]] = {
+                "category": item["category"],
+                "short": to_dialect(item["short"]),
+                "normal": to_dialect(item["normal"]),
+                "standard_short": item["short"],
+                "standard_normal": item["normal"],
+            }
+        return out
+    except LexiconError:
+        return {}
+
+
+def line(intent: str, style: str = "short") -> str:
+    """자막 문구 하나를 꺼낸다. 없으면 빈 문자열.
+
+    Args:
+        intent: ``short_forms()`` 의 키 (``"ask_where"``, ``"ask_119"`` …).
+        style: ``"short"`` (자막용) 또는 ``"normal"`` (음성·여유 있을 때).
+    """
+    return short_forms().get(intent, {}).get(style, "")

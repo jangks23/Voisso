@@ -103,7 +103,8 @@ def find_department(query: str, top_k: int = 3) -> list[Match]:
 
     # 시군 소관 업무(가로등·주민등록·쓰레기 수거 등)는 도청 사무분장에 없다.
     # 억지로 비슷한 부서를 붙이면 민원인이 두 번 전화하게 된다.
-    if concepts.municipal_only(concepts.detect(query)):
+    _hits = concepts.detect(query)
+    if concepts.municipal_only(_hits) or concepts.external_only(_hits):
         return []
 
     candidates = _index().search(query, limit=top_k * 4)
@@ -145,6 +146,30 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
     """
     hits = concepts.detect(query)
     matches = find_department(query, top_k=top_k)
+
+    if concepts.external_only(hits):
+        labels = ", ".join(dict.fromkeys(h.concept.label for h in hits))
+        return {
+            "query": query,
+            "confident": False,
+            "outcome": "external_referral",
+            "reason": f"'{labels}' 은(는) 지자체 소관이 아닙니다. 도청 부서를 배정하지 않습니다.",
+            "referral": concepts.external_note(hits),
+            "next_action": {
+                "type": "external_agency",
+                "region": "",
+                "instruction": concepts.external_note(hits),
+                "phone": "119",
+                "phone_label": "위험하면 즉시 119",
+            },
+            "concepts": [h.concept.label for h in hits],
+            "grounded": False,
+            "matched_terms": [],
+            "fallback_phone": FALLBACK_PHONE,
+            "matches": [],
+            "data_source": data_source(),
+            "is_sample": is_sample(),
+        }
 
     if concepts.municipal_only(hits):
         labels = ", ".join(dict.fromkeys(h.concept.label for h in hits))
@@ -265,6 +290,9 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
     if notes:
         # 도와 시군이 나눠 맡는 업무라는 사실을 담당자에게 알린다.
         result["jurisdiction_note"] = " ".join(notes)
+    if concepts.external_hits(hits):
+        # 다른 민원과 섞여 들어와도 안전 안내는 절대 빠뜨리지 않는다.
+        result["external_referral"] = concepts.external_note(hits)
     return result
 
 

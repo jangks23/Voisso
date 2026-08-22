@@ -507,6 +507,16 @@ def detect_consent(text: str, *, standard: str | None = None) -> dict[str, Any]:
         negative: list[str] = []
         unclear: list[str] = []
 
+        # ⓪ "못 들었다"는 말은 긍정보다 먼저 본다.
+        #    "다시 말해 주이소" 는 '해 주이소'를 품고 있어 그냥 두면 긍정으로 잡힌다.
+        #    못 들었다는 말이 119 연결을 트리거하면 위험하다.
+        for pattern in data.get("unclear_priority", []):
+            if pattern and (pattern in raw or pattern in standard):
+                return {"verdict": "애매", "confidence": "낮음",
+                        "matched": {"positive": [], "negative": [], "unclear": [pattern]},
+                        "reason": f"못 알아들으셨다는 표현({pattern!r})이다. 다시 여쭤본다.",
+                        "next": "reask"}
+
         # ① 한 글자·짧은 응답 — 발화 전체가 같을 때만
         for cleaned in (cleaned_raw, cleaned_std):
             hit = _short_match(cleaned, data.get("positive_short", []))

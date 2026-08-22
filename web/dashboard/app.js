@@ -148,7 +148,7 @@
 
   function cacheEls() {
     ["source-badge","last-sync","live-region","refresh-btn","theme-btn","stat-today","stat-today-sub",
-     "stat-emergency","stat-urgency-sub","stat-urgency-dist","sort-btn","wait-band",
+     "stat-emergency","stat-urgency-sub","stat-urgency-dist","sort-btn","wait-band","back-btn","back-id",
      "stat-unread","stat-live","stat-live-sub","stat-unassigned",
      "stat-rate","stat-rate-sub","stat-rate-fill","stat-dist",
      "q","f-dept","f-status","reset-btn","export-btn","export-menu",
@@ -157,7 +157,36 @@
     });
   }
 
+  /**
+   * 좁은 폭(발표용 /demo iframe 등)에서는 목록과 상세를 좌우로 못 나눈다.
+   * 한 번에 하나씩 보여 주고, 카드를 고르면 상세로 넘어간다.
+   */
+  var narrowMQ = window.matchMedia ? window.matchMedia("(max-width: 900px)") : null;
+  function isNarrow() { return !!(narrowMQ && narrowMQ.matches); }
+  function setView(v) {
+    document.documentElement.setAttribute("data-view", v);
+    if (v === "detail" && el.backId) {
+      el.backId.textContent = state.selectedId ? "접수번호 " + state.selectedId : "";
+    }
+  }
+
   function bindEvents() {
+    setView("list");
+    if (narrowMQ) {
+      var onChange = function () {
+        // 넓어지면 두 칸이 함께 보이므로 전환 상태는 의미가 없다.
+        setView(isNarrow() && state.selectedId ? "detail" : "list");
+      };
+      if (narrowMQ.addEventListener) narrowMQ.addEventListener("change", onChange);
+      else if (narrowMQ.addListener) narrowMQ.addListener(onChange);
+    }
+    if (el.backBtn) el.backBtn.addEventListener("click", function () {
+      setView("list");
+      var node = el.list.querySelector('.card[data-id="' + cssEsc(state.selectedId || "") + '"]');
+      if (node && node.scrollIntoView) node.scrollIntoView({ block: "nearest" });
+      el.list.focus();
+    });
+
     el.waitBand.addEventListener("click", function () {
       state.filter.status = state.filter.status === "ho:waiting" ? "" : "ho:waiting";
       el.fStatus.value = state.filter.status;
@@ -201,7 +230,11 @@
 
     el.list.addEventListener("click", function (e) {
       var card = e.target.closest(".card");
-      if (card) { markActive(); select(card.dataset.id, { user: true }); }
+      if (card) {
+        markActive();
+        select(card.dataset.id, { user: true });
+        if (isNarrow()) setView("detail");   // 좁은 화면에서는 상세로 넘어간다
+      }
     });
 
     document.addEventListener("keydown", function (e) {
@@ -1151,6 +1184,8 @@
     if (wasFresh || acked) renderStats();
     renderList();
     renderDetail();
+    if (isNarrow() && !(opts && opts.silent)) setView("detail");
+    if (el.backId) el.backId.textContent = "접수번호 " + id;
     if (!(opts && opts.silent)) {
       var node = el.list.querySelector('.card[data-id="' + cssEsc(id) + '"]');
       if (node) node.scrollIntoView({ block: "nearest" });
@@ -2292,6 +2327,8 @@
     hoPost: hoPost,
     handoffStatusOf: handoffStatusOf,
     isAwaitingHandoff: isAwaitingHandoff,
+    isNarrow: isNarrow,
+    setView: setView,
     dedupeMessages: dedupeMessages,
     awaitingList: awaitingList,
     refreshHandoff: refreshHandoff,

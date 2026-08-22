@@ -22,6 +22,20 @@ concepts.py 가 판단한다. 하지만 상담원에게 "시군 소관입니다"
 나중에 실제 번호를 확인해 채우면 ``phone`` 만 넣으면 그대로 쓰인다.
 그때도 출처와 확인 날짜를 함께 남길 것.
 
+## ``url`` 은 왜 넣었나
+
+경상북도청 **시군민원실** 안내 페이지(``page.do?mnu_uid=6666``)에는 22개 시군의
+민원 안내 페이지 링크가 있다. **전화번호는 없다** — 그 페이지의 번호 5개는 전부
+도청 자체 번호(054-880-xxxx)다.
+
+그래서 번호는 포기하고 링크만 가져왔다. 한 페이지에서 22개가 전부 나오고,
+값이 URL 이라 사람이 눈으로 검증할 수 있다. 담당자가 "안동시 민원 안내" 를
+바로 열어 볼 수 있으면 대표번호만 알려 주는 것보다 낫다.
+
+번호를 원한다면 22개 시군 홈페이지를 각각 크롤해야 하는데(구조가 전부 다르다),
+검증·갱신 책임을 질 수 없는 번호를 코드에 박는 것은 대표번호 안내보다 나쁘다.
+수집일: 2026-08-23, 출처: https://www.gb.go.kr/Main/page.do?mnu_uid=6666
+
 ## 군위군
 
 군위군은 2023년 7월 1일 대구광역시로 편입되어 **경상북도 관할이 아니다.**
@@ -45,32 +59,33 @@ class Region:
     name: str          # 공식 명칭 (예: "안동시")
     stem: str          # 접미사 없는 형태 (예: "안동")
     phone: str = ""    # 민원실 직통번호. 확인된 값이 없으면 비워 둔다.
+    url: str = ""      # 시군 민원 안내 페이지 (경북도청 시군민원실 목록에서 수집)
 
 
 # 경상북도 10시 12군 (2023년 군위군 대구 편입 이후 기준)
 REGIONS: tuple[Region, ...] = (
-    Region("포항시", "포항"),
-    Region("경주시", "경주"),
-    Region("김천시", "김천"),
-    Region("안동시", "안동"),
-    Region("구미시", "구미"),
-    Region("영주시", "영주"),
-    Region("영천시", "영천"),
-    Region("상주시", "상주"),
-    Region("문경시", "문경"),
-    Region("경산시", "경산"),
-    Region("의성군", "의성"),
-    Region("청송군", "청송"),
-    Region("영양군", "영양"),
-    Region("영덕군", "영덕"),
-    Region("청도군", "청도"),
-    Region("고령군", "고령"),
-    Region("성주군", "성주"),
-    Region("칠곡군", "칠곡"),
-    Region("예천군", "예천"),
-    Region("봉화군", "봉화"),
-    Region("울진군", "울진"),
-    Region("울릉군", "울릉"),
+    Region("포항시", "포항", url="https://www.pohang.go.kr/portal/contents.do?mid=0105020000"),
+    Region("경주시", "경주", url="https://www.gyeongju.go.kr/open_content/ko/page.do?mnu_uid=198&"),
+    Region("김천시", "김천", url="https://www.gc.go.kr/portal/contents.do?mId=1202070800"),
+    Region("안동시", "안동", url="https://www.andong.go.kr/portal/contents.do?mId=0101000000"),
+    Region("구미시", "구미", url="https://www.gumi.go.kr/portal/contents.do?mid=0101010000"),
+    Region("영주시", "영주", url="https://www.yeongju.go.kr/open_content/main/page.do?mnu_uid=3669&"),
+    Region("영천시", "영천", url="https://www.yc.go.kr/portal/contents.do?mId=0101000000"),
+    Region("상주시", "상주", url="https://www.sangju.go.kr/civil/page/16370/11000.tc"),
+    Region("문경시", "문경", url="https://www.gbmg.go.kr/portal/contents.do?mId=0101010000"),
+    Region("경산시", "경산", url="https://www.gbgs.go.kr/open_content/ko/page.do?mnu_uid=2104&"),
+    Region("의성군", "의성", url="https://www.usc.go.kr/ko/page.do?mnu_uid=141&"),
+    Region("청송군", "청송", url="https://www.cs.go.kr/minwon/00002609/00003135.web"),
+    Region("영양군", "영양", url="https://www.yyg.go.kr/www/civil_complaint/center_guide"),
+    Region("영덕군", "영덕", url="https://www.yd.go.kr/?p=551"),
+    Region("청도군", "청도", url="https://www.cheongdo.go.kr/portal/contents.do?mid=0101000000"),
+    Region("고령군", "고령", url="http://www.goryeong.go.kr/kor/contents.do?IDX=62"),
+    Region("성주군", "성주", url="https://sj.go.kr/page.do?mnu_uid=1064&"),
+    Region("칠곡군", "칠곡", url="https://www.chilgok.go.kr/portal/contents.do?mId=0104020000"),
+    Region("예천군", "예천", url="https://www.ycg.kr/open.content/ko/e.application/civil.information/position/"),
+    Region("봉화군", "봉화", url="https://www.bonghwa.go.kr/open.content/ko/electron.popular/guidance/guidance/"),
+    Region("울진군", "울진", url="http://www.uljin.go.kr/index.uljin?menuCd=DOM_000000101001000000"),
+    Region("울릉군", "울릉", url="https://ulleung.go.kr/ko/page.do?mnu_uid=1911&"),
 )
 
 REGION_COUNT = len(REGIONS)
@@ -176,10 +191,14 @@ def municipal_next_action(text: str) -> dict[str, str]:
         if region.phone
         else f" 직통번호가 없으면 경상북도청 대표번호 {PROVINCE_MAIN_PHONE} 에서 연결을 요청하세요."
     )
-    return {
+    action = {
         "type": "municipal_office",
         "region": region.name,
         "instruction": f"{region.name}청 민원실로 안내하세요.{tail}",
         "phone": phone,
         "phone_label": label,
     }
+    if region.url:
+        action["url"] = region.url
+        action["url_label"] = f"{region.name} 민원 안내"
+    return action

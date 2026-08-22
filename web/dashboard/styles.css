@@ -104,7 +104,11 @@
 /* ---------- 기본 ---------- */
 * { box-sizing: border-box; }
 [hidden] { display: none !important; }
+/* 앱 셸 — 페이지 자체는 스크롤하지 않는다. 넘치는 내용은 목록·상세가 각자 안에서 스크롤한다.
+   (발표용 iframe 처럼 높이가 정해진 상자 안에서 아래가 잘리는 것을 막는다.) */
 html, body { height: 100%; }
+html { overflow: hidden; }
+body { overflow: hidden; }
 body {
   margin: 0;
   background: var(--bg);
@@ -181,6 +185,7 @@ code { font-family: var(--mono); font-size: .92em; }
 
 /* ---------- 상단바 ---------- */
 .topbar {
+  flex: 0 0 auto;
   display: flex; align-items: center; justify-content: space-between; gap: 16px;
   padding: 10px 20px;
   background: var(--bg-elev);
@@ -217,6 +222,7 @@ code { font-family: var(--mono); font-size: .92em; }
 
 /* ---------- 현황 ---------- */
 .stats {
+  flex: 0 0 auto;
   display: grid;
   grid-template-columns: repeat(4, minmax(104px, .8fr)) minmax(150px, 1.15fr) minmax(220px, 1.5fr);
   gap: 1px;
@@ -276,6 +282,7 @@ code { font-family: var(--mono); font-size: .92em; }
 
 /* ---------- 툴바 ---------- */
 .toolbar {
+  flex: 0 0 auto;
   display: flex; align-items: flex-end; gap: 10px; flex-wrap: wrap;
   padding: 10px 20px;
   background: var(--bg-elev);
@@ -313,14 +320,17 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 
 /* ---------- 레이아웃 ---------- */
+/* 가운데가 남는 높이를 전부 먹는다. 목록·상세가 각자 스크롤하므로 여기서 눌려도 내용은 도달 가능하다. */
 .layout {
-  flex: 1; min-height: 0;
+  flex: 1 1 auto; min-height: 0;
   display: grid;
-  grid-template-columns: minmax(330px, 400px) minmax(0, 1fr);
+  grid-template-columns: minmax(300px, 380px) minmax(0, 1fr);
   gap: 1px;
   background: var(--border-soft);
 }
-.pane { background: var(--bg); min-height: 0; display: flex; flex-direction: column; }
+.pane { background: var(--bg); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+.pane-head { flex: 0 0 auto; }
+.list { flex: 1 1 auto; min-height: 0; }
 .pane-head {
   display: flex; align-items: baseline; justify-content: space-between; gap: 8px;
   padding: 9px 16px; border-bottom: 1px solid var(--border);
@@ -968,6 +978,7 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
 .note { margin-top: 8px; font-size: 12px; color: var(--text-3); line-height: 1.5; }
 
 .footer {
+  flex: 0 0 auto;
   display: flex; gap: 18px; flex-wrap: wrap;
   padding: 8px 20px; border-top: 1px solid var(--border);
   background: var(--bg-elev); color: var(--text-3); font-size: 12px;
@@ -981,6 +992,82 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
   animation: toast-in .16s ease-out;
 }
 @keyframes toast-in { from { opacity: 0; transform: translate(-50%, 6px); } }
+
+/* ---------- 좁거나 낮은 상자 (발표용 /demo iframe 등) ---------- */
+/*
+ * /demo 는 대시보드를 화면 폭의 58%, 상단 바를 뺀 높이로 띄운다.
+ * 전체 창에서는 넉넉하던 현황 위젯이 그 안에서는 4~5행으로 늘어나
+ * 머리 영역만 880px 를 먹고 목록·상세가 0px 로 뭉개졌다.
+ * 그래서 좁거나 낮으면 머리 영역을 한 줄짜리 요약 띠로 압축한다.
+ */
+@media (max-width: 1180px), (max-height: 940px) {
+  .stats {
+    display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 0;
+    scrollbar-width: thin;
+  }
+  .stat {
+    flex: 0 0 auto; min-width: 90px; padding: 6px 11px 7px;
+    border-right: 1px solid var(--border-soft);
+  }
+  .stat:last-child { border-right: 0; }
+  .stat-label { font-size: 11.5px; white-space: nowrap; }
+  /* 좁은 띠에서는 라벨의 부연을 접는다(전체 문구는 title 로 남는다). */
+  .lbl-full { display: none; }
+  .stat-value { font-size: 19px; line-height: 1.15; }
+  .stat-sub { font-size: 11.5px; white-space: nowrap; }
+  /* 여러 줄로 늘어나는 분포·게이지는 접는다. 숫자는 그대로 보이고,
+     자세한 분포는 필터와 상세에서 볼 수 있다. */
+  .urg-dist, .gauge { display: none; }
+  /* 부서별 분포는 숫자 없이 목록만 있는 칸이라, 접으면 라벨만 남아 빈 칸처럼 보인다.
+     좁은 화면에서는 칸째로 뺀다(부서별 보기는 '배정 부서' 필터로 대체된다). */
+  .stat--wide { display: none; }
+  .stat--metric { min-width: 112px; }
+
+  /* 필터도 한 줄로. 라벨은 화면에서 감추되 스크린리더에는 남긴다. */
+  .toolbar { flex-wrap: nowrap; overflow-x: auto; padding: 8px 14px; align-items: center; }
+  .field { min-width: 0; }
+  .field label { position: absolute; width: 1px; height: 1px; overflow: hidden; clip: rect(0 0 0 0); }
+  .field--grow { flex: 1 1 140px; min-width: 120px; }
+  .field:not(.field--grow) { flex: 0 0 auto; }
+  .field input, .field select { min-height: 40px; height: 40px; }
+  .toolbar .btn, .export .btn { min-height: 40px; flex: 0 0 auto; }
+
+  /* 안내 푸터는 상시 정보가 아니다. 낮은 화면에서는 자리를 양보한다. */
+  .footer { display: none; }
+}
+
+/* ---------- 아주 좁을 때: 목록 ↔ 상세 전환 ---------- */
+/*
+ * 폭이 900px 아래로 내려가면 2단 배치는 상세가 400px 도 안 남아 읽을 수 없다.
+ * 좌우로 나누는 대신 **한 번에 하나씩** 보여 준다.
+ * 카드를 고르면 상세로 넘어가고, '목록' 버튼으로 돌아온다.
+ */
+.detail-back { display: none; }
+@media (max-width: 900px) {
+  .layout { grid-template-columns: minmax(0, 1fr); }
+  .pane--list { max-height: none; }
+  .detail-back {
+    display: flex; align-items: center; gap: 8px;
+    flex: 0 0 auto; padding: 7px 12px;
+    border-bottom: 1px solid var(--border); background: var(--bg-elev);
+  }
+  .detail-back button {
+    min-height: 40px; padding: 0 12px; font: inherit; font-size: 13.5px; font-weight: 700;
+    border: 1px solid var(--border); border-radius: 6px;
+    background: var(--bg-elev); color: var(--accent); cursor: pointer;
+  }
+  .detail-back button:hover { background: var(--bg-hover); }
+  .detail-back .db-id { font-size: 12.5px; color: var(--text-3); }
+  :root[data-view="detail"] .pane--list { display: none; }
+  :root[data-view="list"] .pane--detail { display: none; }
+  .detail { padding: 14px 14px 32px; }
+}
+
+/* 아주 낮은 창에서는 앱 셸을 포기하고 페이지 스크롤을 허용한다(내용 도달 우선). */
+@media (max-height: 420px) {
+  html, body { overflow: auto; height: auto; }
+  .layout { min-height: 320px; }
+}
 
 /* ---------- 반응형 ---------- */
 @media (max-width: 1400px) {

@@ -56,10 +56,9 @@ MAX_WRAPUP_ROUNDS = int(os.getenv("VOISSO_MAX_WRAPUP_ROUNDS") or 4)
 # 마무리 안내. **처리 결과도, 걸리는 시간도 약속하지 않는다.**
 # 대신 "무엇을 기다리는지"와 "전화를 붙들고 있지 않아도 된다"를 알려 준다.
 # 어르신이 언제 끝나는지 몰라 전화기를 든 채 기다리는 것이 가장 나쁜 상태다.
-HANDOFF_CLOSING = (
-    "말씀하신 내용 접수해 두었습니다. 담당자에게 바로 전달하겠습니다. "
-    "전화를 끊고 계셔도 되고, 담당자가 확인하면 이 화면으로 알려 드리겠습니다."
-)
+# 자막으로 한두 줄에 들어가야 한다. "전화를 끊고 계셔도 된다"는 정보는
+# 다음 턴(대기 안내)에서 next_step 으로 전달되므로 여기서 뺀다.
+HANDOFF_CLOSING = "접수했습니다. 담당자가 확인하면 이 화면으로 알려 드리겠습니다."
 WRAPUP_QUESTION = "더 얘기하실 사항 있으실까요?"
 
 # 정보를 더 받아야 하는 턴인데 선언으로 끝났을 때 붙이는 질문.
@@ -82,22 +81,28 @@ EMERGENCY_CONFIRM = "접수됐습니다. 담당자에게 바로 넘겼습니다.
 # **통보가 아니라 질문이다.** 예전에는 "위험하시면 먼저 119에 전화해 주이소"
 # 라고 통보했고, 어르신이 직접 걸어야 했다. 이제는 우리가 걸어 드리겠다고 묻는다.
 # 어르신은 버튼보다 말이 편하다 — 이 프로젝트의 전제 그 자체다.
-SAFETY_OFFER = "지금 많이 위험하신 것 같습니다. 제가 {number}에 연결해 드릴까요?"
-SAFETY_OFFER_AGAIN = "{number}에 연결해 드릴까요? 예, 아니오만 말씀해 주세요."
+SAFETY_OFFER = "많이 위험해 보입니다. {number}에 연결해 드릴까요?"
+SAFETY_OFFER_AGAIN = "{number}에 연결해 드릴까요? 예, 아니오만요."
 
 # 브라우저는 사용자 조작 없이 tel: 을 실행하지 못한다. 말로 "네" 한 것은
 # 브라우저 입장에서 조작이 아니다. 그래서 확정 뒤에도 화면 버튼이 필요하다.
 # **실제 전화망 연동(H3)에서는 이 제약이 사라지고 바로 전환된다.**
-SAFETY_CONFIRMED = (
-    "예, 지금 {number}로 연결하겠습니다. "
-    "화면에 큰 단추가 나왔습니다. 그거 한 번만 눌러 주세요."
-)
-SAFETY_DECLINED = "예, 알겠습니다. 위험해지시면 언제든 말씀해 주세요."
+SAFETY_CONFIRMED = "예, {number} 연결합니다. 화면 단추를 눌러 주세요."
+SAFETY_DECLINED = "예, 위험해지시면 말씀해 주세요."
 # 두 번 물어도 불분명하면 더 묻지 않는다. 공포를 주면 안 된다.
-SAFETY_FALLBACK = "화면에 {number} 단추를 띄워 뒀습니다. 위험하시면 그거 눌러 주세요."
+SAFETY_FALLBACK = "위험하시면 화면의 {number} 단추를 눌러 주세요."
 
 # 한 통화에 연결 질문은 최대 이만큼. 계속 물으면 공포를 준다.
 MAX_SAFETY_OFFERS = 2
+
+# ── 자막 길이 제한 ──────────────────────────────────────────────────────
+# 어르신 화면은 말풍선 목록이 아니라 **자막 오버레이**다. TV 자막처럼 한두 줄만
+# 크게 뜬다. 길면 읽히지 않는다.
+MAX_REPLY_CHARS = int(os.getenv("VOISSO_MAX_REPLY_CHARS") or 50)
+# 다급한 상황일수록 더 짧게. 긴 문장은 들리지도 읽히지도 않는다.
+MAX_REPLY_CHARS_URGENT = int(os.getenv("VOISSO_MAX_REPLY_CHARS_URGENT") or 30)
+
+_SENTENCE_SPLIT = re.compile(r"(?<=[.!?])\s+")
 
 # 접수가 끝난 뒤에도 어르신이 말을 이어갈 때의 대답.
 #
@@ -135,7 +140,11 @@ PRESSURE_ACKS = (
 )
 # 위치는 출동에 필요하다. 응급에서 유일하게 계속 묻는 항목이고, 한 번에 하나만 묻는다.
 # 상태 문장과 붙여 쓰므로 여기서 "접수"를 또 말하지 않는다.
-EMERGENCY_ASK_WHERE = "어디신지만 알려 주시겠어요?"
+# 두 번 묻게 되므로 표현을 바꿔 둔다. 같은 문장이 연달아 나오면 고장처럼 들린다.
+EMERGENCY_ASK_WHERE = (
+    "어디신지만 알려 주시겠어요?",
+    "동네 이름만 말씀해 주시겠어요?",
+)
 # 슬롯별로 더 자연스러운 되물음.
 SLOT_NUDGE = {
     "what": "어떤 일 때문에 불편하신지 말씀해 주시겠어요?",
@@ -193,6 +202,8 @@ class ConversationSession:
         self.intake_closed = False
         # 접수 확정 뒤에 들어온 발화 수. 폴백 문구를 고르는 데 쓴다.
         self.post_intake_turns = 0
+        # 길이 때문에 줄이기 전의 원문. 시연 화면이 전체를 보여줄 수 있게 남긴다.
+        self.last_reply_full = ""
         # 이미 쓴 대답들. 통화 전체에서 같은 말을 두 번 하지 않기 위해 기억한다.
         # (직전 것만 기억하면 한 칸 건너뛴 중복이 그대로 남는다)
         self.used_acks: set[str] = set()
@@ -203,6 +214,8 @@ class ConversationSession:
         self.safety_pending = False     # 대답을 기다리는 중인가
         self.safety_confirmed = False   # 연결하겠다고 하셨는가
         self.safety_declined = False    # 거절하셨는가
+        # 응급 접수 확정 문구를 이미 말했는가. 매 턴 붙이면 반복된다.
+        self.emergency_status_said = False
         # 모델이 직전 턴에 한 말. 위험 인지 여부를 보는 데 쓴다.
         # (우리가 앞에 붙이는 안전 안내는 제외한 **모델 원문**이다)
         self.last_llm_reply = ""
@@ -587,6 +600,8 @@ class ConversationSession:
                 "stt_error": stt_error,
                 "turn": self.turn_count,
                 "rescored": rescored,
+                # 자막용으로 줄이기 전의 원문. 줄이지 않았으면 빈 값이다.
+                "reply_full": self.last_reply_full,
                 "timings": timings,
             },
         }
@@ -792,11 +807,16 @@ class ConversationSession:
 
         # 위치를 아직 못 받았고 두 번 넘게 묻지 않았으면 그것만 묻는다.
         if not self.slots.is_filled("where") and "where" not in self.slots.given_up:
+            asked = self.slots.ask_counts.get("where", 0)
+            question = EMERGENCY_ASK_WHERE[min(asked, len(EMERGENCY_ASK_WHERE) - 1)]
             self.slots.record_ask("where")
             if has_pressure(caller_text):
                 # 재촉 중이다. 상태를 먼저 알리고 위치만 덧붙인다.
-                return False, f"{status} {EMERGENCY_ASK_WHERE}"
-            return False, EMERGENCY_ASK_WHERE
+                # 상태는 한 번만 붙인다 — 매번 붙이면 같은 문장이 반복된다.
+                if not self.emergency_status_said:
+                    self.emergency_status_said = True
+                    return False, f"{status} {question}"
+            return False, question
 
         # 더 물을 것이 없다. 마무리 질문 루프에 들어가지 않고 즉시 확정한다.
         return True, status
@@ -877,10 +897,7 @@ class ConversationSession:
             self.add_note(decision.note)
 
         if self.unclear_streak >= self.UNCLEAR_GUIDANCE_AFTER:
-            return (
-                "괜찮습니다, 천천히 말씀하셔도 됩니다. "
-                "어떤 일 때문에 불편하신지 한 가지만 말씀해 주시겠어요?"
-            )
+            return "괜찮습니다, 천천히 말씀하셔도 됩니다. 어떤 일이신가요?"
         return decision.reply
 
     def add_note(self, text: str, source: str = "caller") -> None:
@@ -1021,6 +1038,52 @@ class ConversationSession:
         # 준비한 문구를 다 썼다. 통화가 그만큼 길어졌다는 뜻이다.
         return candidates[0]
 
+    def _fit_length(self, reply: str, urgent: bool) -> str:
+        """자막에 들어가도록 응답을 줄인다.
+
+        **빠뜨리는 게 아니라 줄이는 것이다.** 문장 단위로 자르고, 질문이 있으면
+        질문을 반드시 남긴다 — 질문이 사라지면 어르신이 자기 차례인지 모른다.
+        잘라낸 원문은 `meta.reply_full` 로 함께 보내 시연 화면에서 볼 수 있다.
+        """
+        text = (reply or "").strip()
+        limit = MAX_REPLY_CHARS_URGENT if urgent else MAX_REPLY_CHARS
+        if len(text) <= limit:
+            return text
+
+        sentences = [x.strip() for x in _SENTENCE_SPLIT.split(text) if x.strip()]
+        question = next(
+            (x for x in reversed(sentences) if x.rstrip().endswith(("?", "？"))), ""
+        )
+
+        kept: list[str] = []
+        used = 0
+        for sentence in sentences:
+            if sentence == question:
+                continue
+            cost = len(sentence) + (1 if kept else 0)
+            reserve = len(question) + 1 if question else 0
+            if used + cost + reserve > limit:
+                break
+            kept.append(sentence)
+            used += cost
+        if question:
+            kept.append(question)
+
+        shortened = " ".join(kept).strip()
+        if not shortened:
+            # 문장 하나가 통째로 상한을 넘는다. 질문이라도 살린다.
+            shortened = question or sentences[0]
+
+        log.info(
+            "자막 길이 초과 %d자 -> %d자 (상한 %d) | 원문: %s",
+            len(text),
+            len(shortened),
+            limit,
+            text[:80],
+        )
+        self.last_reply_full = text
+        return shortened
+
     def _record_stt(self, result) -> None:
         if result.provider == "none":
             return
@@ -1091,6 +1154,8 @@ class ConversationSession:
     ) -> dict[str, Any]:
         """상담원 발화를 사투리로 바꾸고 음성으로 만들어 기록한다."""
         timings = timings if timings is not None else {}
+        self.last_reply_full = ""
+        reply_standard = self._fit_length(reply_standard, self.urgency.is_emergency)
         with _timed(timings, "dialect_ms"):
             reply_dialect = integrations.to_dialect(reply_standard)
         # 어르신이 방금 한 말을 앞 문맥으로 넘긴다. TTS 가 문맥에서 감정을
@@ -1134,6 +1199,8 @@ class ConversationSession:
                 "stt_error": stt_error,
                 "turn": self.turn_count,
                 "rescored": rescored,
+                # 자막용으로 줄이기 전의 원문. 줄이지 않았으면 빈 값이다.
+                "reply_full": self.last_reply_full,
                 "timings": timings,
             },
         }

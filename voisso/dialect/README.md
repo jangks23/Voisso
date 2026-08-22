@@ -81,6 +81,72 @@ normalize(text, use_llm=True)         # LLM 다듬기 강제 (키 필요)
 | `deflection_line()` | 브리핑에 없는 것을 물었을 때 쓸 문장 |
 | `detect_risk(text, history=[...])` | **긴급도(5-A)** — 위험 신호 탐지 |
 | `detect_pressure(turns)` | 재촉·다급함 **반복** 탐지 |
+| `detect_consent(text)` | 119 연결 물음에 대한 대답 판정 (긍정/부정/애매) |
+| `emergency_lines()` | 119 확인 흐름 문장 — 사투리 변환까지 마친 것 |
+| `short_forms()` / `line(intent, style)` | **자막용** 짧은/보통 문구 |
+
+### 자막용 짧은 표현 (P6·P7 연동)
+
+```python
+from voisso.dialect import line
+
+subtitle = line("ask_where")              # '어데신지 말씀해 주이소.'      (13자)
+spoken   = line("ask_where", "normal")    # '어느 마을이신지 말씀해 주이소.' (17자)
+```
+
+23개 상황에 짧은 판·보통 판을 둔다. 길이 상한 — 일반 24/40자, **응급 20/30자**
+(다급한 사람은 긴 문장을 못 듣는다).
+
+#### 줄일 때 넘지 말아야 할 선
+
+`-이소` 명령형에서 **`주-`가 빠지면 곧바로 명령조**가 된다.
+
+| 정중 | 명령조 | 아끼는 글자 |
+|---|---|---|
+| 말씀해 주이소 (8) | 말하이소 (5) | **3자** |
+| 119 눌러 주이소 (14) | 119 누르이소 (12) | **2자** |
+
+**2~3자 아끼자고 어조를 통째로 잃는다.** 어르신 대상 공공 서비스에서 남는 장사가
+아니다. 응급 문장도 짧게 만들되 `주-`는 남긴다. 이 규칙은 테스트로 강제한다
+(`test_short_forms.py::test_no_bare_imperative`).
+
+### 119 연결 확인 (P6 연동)
+
+```python
+from voisso.dialect import detect_consent, emergency_lines
+
+lines = emergency_lines()
+say(lines["ask"][0])                      # "119 불러 드릴까예?"
+
+verdict = detect_consent(caller_text)
+if verdict["next"] == "connect":
+    say(lines["confirmed"][0])            # "지금 바로 연결하겠습니더. 끊지 마이소."
+elif verdict["next"] == "reask":
+    say(lines["reask"][0])                # 애매하면 한 번 더 묻는다
+else:
+    say(lines["declined"][0])
+```
+
+**애매를 부정으로 처리하면 위험하다.** `next` 가 `"reask"` 면 반드시 다시 물어야 한다.
+침묵·동문서답·"글쎄예"·"모르겠어예" 가 전부 여기로 온다.
+
+#### 한 글자 응답을 놓치면 연결이 안 된다
+
+다급하면 대답이 "어", "야", "예" 한 글자로 온다. 그런데 `"예"` 를 부분 문자열로 찾으면
+**`"괜찮아예"`(부정), `"아니라예"`(부정)까지 긍정이 된다.** 그래서 짧은 응답은
+**발화 전체가 같을 때만** 인정한다. 긴 표현만 부분 문자열로 찾는다.
+
+| 대답 | 판정 |
+|---|---|
+| 예 / 네 / 야 / 어 / 응 / 예예 / 어어 | 긍정 |
+| 그래 주이소 / 해 주이소 / 부탁합니더 / 빨리 해 주이소 | 긍정 |
+| **아니 빨리 해 주이소** | 긍정 (`아니` 는 군말이다) |
+| 아니예 / 괜찮아예 / 됐어예 / 놔두이소 / 내가 할게예 | 부정 |
+| 글쎄예 / 모르겠어예 / 잠깐만예 / (침묵) / 동문서답 | **애매 → 재질문** |
+| **다시 말해 주이소** | **애매** (`해 주이소` 를 품고 있어 그냥 두면 긍정이 된다) |
+
+마지막 줄이 실제로 한 번 물렸던 함정이다. **못 들었다는 말이 119 연결을 트리거하면
+안 되므로**, "다시 말해 / 안 들리 / 뭐라꼬" 같은 표현은 긍정보다 **먼저** 판정한다.
 
 ### 긴급도 — 반복이 신호다 (5-A, P6 연동)
 
@@ -224,6 +290,7 @@ python -m voisso.dialect --samples           # samples.md 내용 생성
 python -m voisso.dialect --demo-lines        # demo_lines.md 내용 생성 (데모 1단계 대사)
 python -m voisso.dialect --handoff           # handoff_samples.md (5-B 핸드오프)
 python -m voisso.dialect --callback          # callback_samples.md (5-C 콜백)
+python -m voisso.dialect --short-forms       # short_forms.md (자막용 문구)
 python -m voisso.dialect -d "접수해 드리겠습니다" -v   # 표준어 → 경북 (적용 규칙 표시)
 python -m voisso.dialect -n "어데서 물이 새노" -v      # 사투리 → 표준어
 ```

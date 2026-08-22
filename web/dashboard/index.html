@@ -46,7 +46,7 @@
     <span class="stat-sub">아직 열어보지 않음</span>
   </div>
   <div class="stat">
-    <span class="stat-label">담당자 통화중</span>
+    <span class="stat-label">통화중<span class="lbl-full"> (담당자)</span></span>
     <span class="stat-value stat-value--live" id="stat-live">–</span>
     <span class="stat-sub" id="stat-live-sub">처리중 – 건</span>
   </div>
@@ -56,7 +56,7 @@
     <span class="stat-sub">담당 부서 확인 필요</span>
   </div>
   <div class="stat stat--metric">
-    <span class="stat-label">AI 배정 대비 재배정 비율</span>
+    <span class="stat-label" title="AI 배정 대비 재배정 비율">재배정 비율<span class="lbl-full"> (AI 배정 대비)</span></span>
     <span class="stat-value" id="stat-rate">–</span>
     <span class="stat-sub" id="stat-rate-sub">라우팅 품질 지표 · 목표 20% 미만</span>
     <div class="gauge"><span class="gauge-fill" id="stat-rate-fill"></span><span class="gauge-target" title="목표 20%"></span></div>
@@ -138,6 +138,10 @@
   </section>
 
   <section class="pane pane--detail" aria-label="민원 상세" id="detail-pane">
+    <div class="detail-back">
+      <button type="button" id="back-btn">← 목록</button>
+      <span class="db-id" id="back-id"></span>
+    </div>
     <div class="empty" id="detail-empty">
       <p class="empty-title">민원을 선택하세요</p>
       <p class="empty-sub">왼쪽 목록에서 카드를 클릭하면 배정 근거와 통화 전문을 확인할 수 있습니다.</p>

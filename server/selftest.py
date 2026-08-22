@@ -15,6 +15,8 @@
   7. 긴급도 판정이 기대 단계와 맞는가 · reason 이 비지 않는가
   8. 응급이면 119/112 안내가 접수보다 먼저 나가는가
   9. 응급에서 마무리 질문 루프에 빠지지 않는가 (실사용 안전 결함)
+ 10. 119 연결을 **말로** 묻고 대답을 알아듣는가
+ 11. 응답이 자막 길이 안에 들어가는가 (일반 50자 / 응급 30자)
 """
 
 from __future__ import annotations
@@ -196,7 +198,8 @@ EMERGENCY_SCRIPT = (
     # 어르신은 "차오른다"보다 "물이 들어온다"를 훨씬 자주 쓴다.
     # 이 표현을 규칙이 못 잡아 긴급도가 '중요' 로 떨어진 적이 있다.
     "집에 물이 들어와요",
-    "지금 들어와요",
+    # 119 연결 제안에 대한 대답. 이 흐름이 생기면서 시나리오가 한 턴 늘었다.
+    "네",
     "010-0000-4755",
     "빨리와요!!!",
     "빨리와요!!!",
@@ -244,12 +247,18 @@ def check_emergency_mode() -> None:
         f"중복 {len(texts) - len(set(texts))}회: {duplicates[:1]}",
     )
 
-    # 119 는 첫 안내 한 번이면 된다. 화면에 버튼이 고정돼 있다.
+    # 119 는 **제안과 확정** 때만 말한다. 그 뒤로는 화면 버튼이 맡는다.
+    # (예전에는 매 턴 통보해서 반복이 됐다)
     spoken_119 = sum(1 for t in texts if "119" in t)
     check("119 를 말로 되풀이하지 않았다", spoken_119 <= 2, f"{spoken_119}회 언급")
+    check(
+        "연결이 정리된 뒤에는 119 를 말하지 않는다",
+        not any("119" in t for t in texts[2:]),
+        str([t[:24] for t in texts[2:] if "119" in t]),
+    )
 
     # 접수가 확정된 뒤의 발화는 버리지 않고 담당자에게 넘긴다.
-    check("접수 확정 후 대화가 종료 상태로 유지된다", all(r["done"] for r in replies[2:]))
+    check("마지막에 접수가 확정됐다", replies[-1]["done"] is True, str(replies[-1]["done"]))
     carried = [n for n in session.notes if n["source"] == "caller_after_intake"]
     check("접수 후 발화가 담당자 메모로 쌓였다", bool(carried), str([n["text"] for n in carried]))
     check("접수 확정 표시가 켜졌다", session.intake_closed is True)
@@ -300,6 +309,99 @@ def check_emergency_mode() -> None:
     check("시점을 묻지 않았다", not asked_when)
 
 
+def check_safety_offer() -> None:
+    """119 연결은 통보가 아니라 **질문**이다. 어르신은 버튼보다 말이 편하다."""
+    print("\n119 연결 확인 (말로)")
+
+    # (a)(b) 물어보고 "네" 를 알아듣는가
+    accept = ConversationSession()
+    accept.greet()
+    first = accept.turn(text="집에 물이 들어와요")
+    check(
+        "연결 여부를 말로 물었다",
+        "연결해 드릴까요" in first["reply_text"],
+        first["reply_text"][:48],
+    )
+    check("통보형 문구를 쓰지 않았다", "전화해 주세요" not in first["reply_text"])
+
+    yes = accept.turn(text="네")
+    referral = (yes.get("urgency") or {}).get("safety_referral") or {}
+    check("'네' 를 수락으로 인식했다", referral.get("confirmed") is True, str(referral))
+    check(
+        "브라우저 제약을 안내했다",
+        "단추" in yes["reply_text"],
+        yes["reply_text"][:52],
+    )
+
+    # (c) 거절하면 강요하지 않는다
+    decline = ConversationSession()
+    decline.greet()
+    decline.turn(text="집에 물이 들어와요")
+    no = decline.turn(text="아니라예 내가 할게예")
+    ref2 = (no.get("urgency") or {}).get("safety_referral") or {}
+    check("거절을 인식했다", ref2.get("declined") is True, str(ref2.get("declined")))
+    check("거절 뒤 강요하지 않았다", "연결해 드릴까요" not in no["reply_text"], no["reply_text"][:44])
+
+    # (d) 한 통화에 질문은 최대 2회
+    pushy = ConversationSession()
+    pushy.greet()
+    asks = []
+    for line in ("집에 물이 들어와요", "됐어예", "빨리와요!!!", "빨리와요!!!", "그냥 빨리!!!!!", "우짜노"):
+        result = pushy.turn(text=line)
+        ref = (result.get("urgency") or {}).get("safety_referral") or {}
+        asks.append(ref.get("asked", 0))
+    check("연결 질문이 2회를 넘지 않았다", max(asks) <= 2, f"최대 {max(asks)}회")
+
+    # 애매한 대답은 부정으로 단정하지 않는다
+    vague = ConversationSession()
+    vague.greet()
+    vague.turn(text="집에 물이 들어와요")
+    again = vague.turn(text="우짜노")
+    check(
+        "애매한 대답에는 한 번 더 물었다",
+        "연결해 드릴까요" in again["reply_text"],
+        again["reply_text"][:44],
+    )
+    vref = (again.get("urgency") or {}).get("safety_referral") or {}
+    check("애매한 대답을 거절로 처리하지 않았다", not vref.get("declined"))
+
+
+def check_reply_length() -> None:
+    """어르신 화면은 자막이다. 길면 읽히지 않는다."""
+    from voisso.agent.session import MAX_REPLY_CHARS, MAX_REPLY_CHARS_URGENT
+
+    print("\n자막 길이")
+
+    normal = ConversationSession()
+    normal.greet()
+    over = []
+    for line in ("집 앞에 물이 안 빠져예", "안동시 옥동입니더", "장마철부터예", "010-1234-5678 이라예", "없어예"):
+        text = normal.turn(text=line)["reply_text"]
+        if len(text) > MAX_REPLY_CHARS:
+            over.append((len(text), text[:34]))
+    check(f"일반 통화 응답이 {MAX_REPLY_CHARS}자 이내다", not over, str(over[:1]))
+
+    urgent = ConversationSession()
+    urgent.greet()
+    over_urgent = []
+    for line in ("집에 물이 들어와요", "네", "안동시 옥동입니더", "빨리와요!!!"):
+        text = urgent.turn(text=line)["reply_text"]
+        if len(text) > MAX_REPLY_CHARS_URGENT:
+            over_urgent.append((len(text), text[:34]))
+    check(f"응급 응답이 {MAX_REPLY_CHARS_URGENT}자 이내다", not over_urgent, str(over_urgent[:1]))
+
+    # 줄였으면 원문을 잃지 않아야 한다.
+    session = ConversationSession()
+    long_text = (
+        "아이고, 그러셨군요. 많이 불편하셨겠습니다. "
+        "물이 안 빠지는 곳이 집 앞인지 마당인지 알려 주시고, "
+        "언제부터 그랬는지도 말씀해 주시겠어요?"
+    )
+    short = session._fit_length(long_text, urgent=False)
+    check("줄여도 질문은 남는다", short.rstrip().endswith("?"), short)
+    check("줄인 원문을 보관한다", session.last_reply_full == long_text)
+
+
 def main() -> int:
     print("Voisso 자체 점검 — 키 0개 텍스트 모드\n")
     engine = engine_status()
@@ -324,6 +426,8 @@ def main() -> int:
     check_urgency()
     check_safety_first()
     check_emergency_mode()
+    check_safety_offer()
+    check_reply_length()
 
     print("\n검증")
 

@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ko" data-theme="light" data-size="m" data-mode="elder">
 <head>
-<!-- ASSET_VERSION = 30 -->
+<!-- ASSET_VERSION = 37 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Voisso — 경상북도 민원 통화</title>
 <meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
-<script>window.VOISSO_ASSET_VERSION = '30';</script>
+<script>window.VOISSO_ASSET_VERSION = '37';</script>
 <script>
 /* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
 (function () {
@@ -24,7 +24,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=30">
+<link rel="stylesheet" href="styles.css?v=37">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
 </head>
 <body>
@@ -107,6 +107,17 @@
       </div>
       <p class="elder-status" id="elderStatus" role="status">말씀해 주이소</p>
 
+      <!-- 어르신 모드: TV 자막처럼 지금 오간 말 두 개만. 스크롤 없다. -->
+      <div class="captions" id="captions">
+        <p class="cap cap-agent blank" id="capAgent" aria-live="polite">
+          <span class="cap-who">민원실</span><span class="cap-text" id="capAgentText"></span>
+        </p>
+        <p class="cap cap-caller blank" id="capCaller" aria-live="off">
+          <span class="cap-who">나</span><span class="cap-text" id="capCallerText"></span>
+        </p>
+      </div>
+
+      <!-- 시연 모드: 전체 기록과 3단 대비는 여기 그대로 남는다. -->
       <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
 
       <div class="slots" id="slots" aria-live="polite">
@@ -204,11 +215,11 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=30"></script>
-<script src="dialect-hints.js?v=30"></script>
-<script src="mock-api.js?v=30"></script>
-<script src="speech.js?v=30"></script>
-<script src="api.js?v=30"></script>
-<script src="app.js?v=30"></script>
+<script src="config.js?v=37"></script>
+<script src="dialect-hints.js?v=37"></script>
+<script src="mock-api.js?v=37"></script>
+<script src="speech.js?v=37"></script>
+<script src="api.js?v=37"></script>
+<script src="app.js?v=37"></script>
 </body>
 </html>

@@ -288,6 +288,42 @@ window.VoissoMockAPI = (function () {
     const r = route(s.turns.filter((t) => t.role === 'caller').map((t) => t.standard).join(' '));
     s.route = r;
 
+    const allText = s.turns.filter((t) => t.role === 'caller').map((t) => t.standard).join(' ');
+    const urgency = judgeUrgency(allText, std, s);
+    s.urgency = urgency;
+
+    // 응급인데 아직 안 물어봤으면, 슬롯보다 이걸 먼저 묻는다.
+    if (urgency.safety_referral && !s.referralAsked) {
+      s.referralAsked = true;
+      const n = urgency.safety_referral.number;
+      const ask119 = {
+        dialect: '지금 마이 위험하신 것 같습니더. 제가 ' + n + '에 연결해 드릴까예?',
+        standard: '지금 많이 위험하신 것 같습니다. 제가 ' + n + '에 연결해 드릴까요?',
+      };
+      s.turns.push({ role: 'agent', dialect: ask119.dialect, standard: ask119.standard });
+      return {
+        urgency: urgency,
+        reply_text: ask119.standard, reply_dialect: ask119.dialect,
+        audio_b64: null, done: false, slots: { ...s.slots },
+        caller_turn: { dialect: raw, standard: std, source: 'text',
+                       stt_raw: raw, stt_provider: 'text' },
+      };
+    }
+    if (urgency.safety_referral && s.referralConfirmed && !s.referralAnswered) {
+      s.referralAnswered = true;
+      const n = urgency.safety_referral.number;
+      const ok = { dialect: '예, 지금 ' + n + '로 연결하겠습니더. 화면에 큰 단추가 나왔습니더. 그거 한 번만 눌러 주이소.',
+                   standard: '예, 지금 ' + n + '로 연결하겠습니다. 화면에 큰 단추가 나왔습니다. 한 번만 눌러 주세요.' };
+      s.turns.push({ role: 'agent', dialect: ok.dialect, standard: ok.standard });
+      return {
+        urgency: urgency,
+        reply_text: ok.standard, reply_dialect: ok.dialect,
+        audio_b64: null, done: false, slots: { ...s.slots },
+        caller_turn: { dialect: raw, standard: std, source: 'text',
+                       stt_raw: raw, stt_provider: 'text' },
+      };
+    }
+
     let line, done = false;
     s.asked = missing || null;
     if (missing) {
@@ -298,10 +334,6 @@ window.VoissoMockAPI = (function () {
       s.done = true;
     }
     s.turns.push({ role: 'agent', dialect: line.dialect, standard: line.standard });
-
-    const allText = s.turns.filter((t) => t.role === 'caller').map((t) => t.standard).join(' ');
-    const urgency = judgeUrgency(allText, std);
-    s.urgency = urgency;
 
     return {
       urgency: urgency,
@@ -368,28 +400,40 @@ window.VoissoMockAPI = (function () {
   const URGENCY_RULES = [
     { level: '응급', refer: { number: '119', label: '소방·구조' },
       kw: ['가스', '불이', '화재', '무너지', '붕괴', '함몰', '갇혔', '고립', '감전', '떠내려',
-           '물이 차오', '차오르', '사람이 다치', '다쳤', '쓰러지'],
+           '물이 차오', '차오르', '차올', '물이 차', '잠기고 있',
+           '사람이 다치', '다쳤', '쓰러지'],
       reason: '사람이 다칠 수 있는 상황으로 판단했습니다.' },
     { level: '중요', refer: null,
       kw: ['단수', '역류', '넘치', '침수', '잠기', '가로등', '누수', '끊겼'],
       reason: '방치하면 피해가 커지는 상황입니다.' },
   ];
 
-  // 어르신이 말로 동의했는가 — "예 / 네 / 그래 주이소 / 연결해 주이소"
-  const YES = ['예', '네', '그래', '해 주이소', '연결', '부탁', '좋습니더', '응'];
-  const NO = ['아니', '됐습니더', '괜찮', '안 해도'];
+  /* 말로 확인받는다. 화면 카운트다운이 아니라 AI 가 묻고 어르신이 답한다.
+       민원실: 제가 119에 연결해 드릴까예?
+       어르신: 네
+       민원실: 예, 지금 119로 연결하겠습니더.
+     "차올라예" 같은 어미의 '예' 와 구분해야 하므로 **묻고 난 다음 턴에만**,
+     그리고 짧은 단독 대답일 때만 동의로 본다. */
+  const YES_RE = /^(예|네|어|응|그래(예|요)?|그리\s*해\s*주이소|연결(해)?\s*주이소|부탁(합니더|해예)?|좋습니더)[.!?]*$/;
+  const NO_RE = /(아니|됐습니더|괜찮|안 해도|필요\s*없)/;
 
-  function judgeUrgency(text, lastCaller) {
+  function judgeUrgency(text, lastCaller, session) {
     for (const r of URGENCY_RULES) {
       const hit = r.kw.filter((k) => text.includes(k));
       if (hit.length) {
         let refer = r.refer;
-        if (refer) {
-          const said = String(lastCaller || '');
-          // 짧은 동의 표현일 때만 확인으로 본다(긴 문장 속 '예' 어미와 구분).
-          const yes = said.length <= 12 && YES.some((y) => said.includes(y));
-          const no = NO.some((n) => said.includes(n));
-          refer = Object.assign({}, refer, { asked: true, confirmed: yes && !no, declined: no });
+        if (refer && session) {
+          const said = String(lastCaller || '').trim();
+          const asked = !!session.referralAsked;
+          const yes = asked && YES_RE.test(said);
+          const no = asked && NO_RE.test(said);
+          if (yes) session.referralConfirmed = true;
+          if (no) session.referralDeclined = true;
+          refer = Object.assign({}, refer, {
+            asked: asked,
+            confirmed: !!session.referralConfirmed,
+            declined: !!session.referralDeclined && !session.referralConfirmed,
+          });
         }
         return { level: r.level, reason: r.reason, signals: hit.slice(0, 3),
                  decided_by: 'rule', safety_referral: refer };

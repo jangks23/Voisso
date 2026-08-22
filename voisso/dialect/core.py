@@ -437,3 +437,13 @@ def expand_noun_final(text: str) -> str:
 def callback_data() -> dict[str, list[str]]:
     """진행 안내 콜백의 질문 분류·회피 문구 (계약서 5-C)."""
     return load_lexicon().get("callback", {})
+
+
+def short_form_table() -> list[dict[str, str]]:
+    """자막용 짧은/보통 표현 표 (표준어 원문)."""
+    return load_lexicon().get("short_forms", [])
+
+
+def short_form_limits() -> dict[str, int]:
+    """자막 길이 상한."""
+    return load_lexicon().get("short_form_limits", {})

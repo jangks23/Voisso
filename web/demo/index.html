@@ -83,7 +83,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 /* ── 좌우 분할 ────────────────────────────────────────── */
 .split { flex: 1 1 auto; display: flex; min-height: 0; }
 .pane { display: flex; flex-direction: column; min-width: 0; min-height: 0; }
-.pane.left { flex: 0 0 var(--left, 42%); }
+.pane.left { flex: 0 0 var(--left, 35%); }
 .pane.right { flex: 1 1 auto; }
 .pane-label {
   flex: 0 0 auto; display: flex; align-items: center; gap: 8px;
@@ -142,7 +142,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
 
   <div class="tools">
     <button class="tool" id="btnLayout" type="button" title="좌우 / 상하 배치">좌우</button>
-    <button class="tool" id="btnRatio" type="button" title="좌우 비율 바꾸기">42 : 58</button>
+    <button class="tool" id="btnRatio" type="button" title="좌우 비율 바꾸기">35 : 65</button>
     <button class="tool" id="btnOfficer" type="button" title="담당자를 연결한다 (시연용)">담당자 연결</button>
     <button class="tool" id="btnDebug" type="button" title="왼쪽 화면에 진단 정보를 켠다">시연 모드</button>
     <button class="tool" id="btnReset" type="button" title="새 통화로 초기화">초기화</button>
@@ -171,7 +171,7 @@ button { font: inherit; color: inherit; cursor: pointer; }
   'use strict';
   var $ = function (id) { return document.getElementById(id); };
   var callFrame = $('callFrame'), dashFrame = $('dashFrame');
-  var RATIOS = [42, 50, 60];
+  var RATIOS = [35, 42, 50];
   var ratioIdx = 0;
 
   /* ── 배치 (좌우 / 상하) ──

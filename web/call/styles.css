@@ -945,3 +945,54 @@ button { cursor: pointer; border: 0; background: none; }
 :root[data-mode="elder"] .safety-bar.confirmed .sb-head { font-size: 1.75rem; }
 :root[data-mode="elder"] .safety-bar.confirmed .sb-call { min-height: 200px; font-size: 2.2rem; }
 .safety-bar.confirmed .sb-call:focus-visible { outline: 5px solid var(--text); outline-offset: 4px; }
+
+/* ═══ 자막 (어르신 모드) ═══════════════════════════════
+   말풍선 목록 대신 지금 오간 말 두 개만 보여준다. 스크롤하지 않는다.
+   누가 말했는지는 색이 아니라 위치(위=민원실 / 아래=나)와 글자로 구분한다. */
+.captions { display: none; }
+:root[data-mode="elder"] .captions {
+  display: flex; flex: 1 1 auto; min-height: 0;
+  flex-direction: column; justify-content: center; gap: 18px;
+  padding: 18px 20px; overflow: hidden;
+}
+:root[data-mode="elder"] .transcript { display: none; }   /* 기록은 시연 모드에 남는다 */
+
+.cap { margin: 0; display: flex; flex-direction: column; gap: 6px; min-height: 0; }
+.cap-who {
+  font-size: .82rem; font-weight: 800; letter-spacing: .04em; color: var(--muted);
+}
+.cap-text {
+  font-size: 1.25rem; line-height: 1.5; font-weight: 700;
+  word-break: keep-all; overflow-wrap: anywhere;
+  display: -webkit-box; -webkit-box-orient: vertical; -webkit-line-clamp: 4; overflow: hidden;
+}
+.cap-agent .cap-text { color: var(--text); }
+.cap-caller { align-items: flex-end; text-align: right; }
+.cap-caller .cap-text { color: var(--brand); }
+.cap:empty, .cap.blank { display: none; }
+/* 방금 온 말이 아니면 흐려진다 */
+.cap.stale .cap-text { opacity: .45; font-weight: 600; }
+.cap.stale .cap-who { opacity: .6; }
+
+/* 119 가 확정되면 화면에 큰 단추는 그것 하나뿐이어야 한다 */
+:root[data-sos="1"] .mic-btn {
+  flex: 0 0 auto !important; width: 64px !important; min-height: 64px !important;
+  order: 0 !important; opacity: .55;
+}
+:root[data-sos="1"] .mic-btn .mic-label { display: none !important; }
+:root[data-sos="1"] .end-btn { opacity: .55; }
+
+/* 어르신 모드에서도 통화 시간은 보여준다 ("통화 중 01:23") */
+:root[data-mode="elder"] .callee-timer { display: block; font-size: 1.05rem; }
+:root[data-mode="elder"] .callee-meta span { display: block; font-size: .95rem; font-weight: 700; }
+
+/* 119 안내바가 떠 있으면 자리가 좁다. 그때는 방금 온 말 하나만 남긴다.
+   (안전 안내 > 자막. 어르신이 놓치면 안 되는 것 순서다.) */
+:root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions { gap: 10px; padding: 12px 16px; }
+:root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions .cap.stale { display: none; }
+:root[data-mode="elder"] .captions { min-height: 96px; }
+:root[data-mode="elder"] .cap-text { -webkit-line-clamp: 5; }
+:root[data-mode="elder"] .cap.stale .cap-text { -webkit-line-clamp: 2; }
+/* 안전바가 자리를 먹을 때는 자막을 기준 하한(22px)까지만 낮춘다. 잘리는 것보다 낫다. */
+:root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions .cap-text { font-size: 1.1rem; }
+:root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions .cap-who { font-size: .76rem; }
