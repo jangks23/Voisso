@@ -1,0 +1,13 @@
+{
+  "complaint_id": "0122",
+  "callback_id": "0a306093ee754014975a90a6b2c9a39c",
+  "status": "pending",
+  "briefing_standard": "현장 확인 완료. 이번 주 내 배수관 준설 예정입니다.",
+  "briefing_dialect": "현장 확인 완료. 이번 주 내 배수관 준설 예정입니더.",
+  "officer_name_masked": "홍○○",
+  "officer_department": "기후환경국 맑은물정책과",
+  "created_at": "2026-08-22T03:51:05Z",
+  "answered_at": null,
+  "closed_at": null,
+  "messages": []
+}

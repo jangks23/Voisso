@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ko" data-theme="light" data-size="m" data-mode="elder">
 <head>
-<!-- ASSET_VERSION = 12 -->
+<!-- ASSET_VERSION = 22 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Voisso — 경상북도 민원 통화</title>
 <meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
-<script>window.VOISSO_ASSET_VERSION = '12';</script>
+<script>window.VOISSO_ASSET_VERSION = '22';</script>
 <script>
 /* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
 (function () {
@@ -24,7 +24,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=12">
+<link rel="stylesheet" href="styles.css?v=22">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
 </head>
 <body>
@@ -94,7 +94,20 @@
         <button class="path-chip" id="pathChip" type="button" title="지금 쓰는 음성 입력 경로"></button>
       </div>
 
-      <p class="demo-bar" id="demoBar" hidden></p>
+      <!-- 응급 판정 시 유일하게 강조하는 요소. 접수가 신고를 대체하지 않는다. -->
+      <div class="safety-bar" id="safetyBar" hidden role="alert">
+        <p class="sb-head" id="safetyHead">지금 위험하시믄 먼저 119에 전화해 주이소</p>
+        <a class="sb-call" id="safetyCall" href="tel:119">
+          <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.7.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11.3 21 3 12.7 3 2.9c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.7.1.4 0 .8-.2 1l-2.3 2.2Z"/></svg>
+          <span id="safetyCallLabel">119 전화 걸기</span>
+        </a>
+        <p class="sb-sub">민원은 제가 접수해 둘게예. 신고는 따로 해 주셔야 합니더.</p>
+      </div>
+
+      <div class="demo-bar" id="demoBar" hidden>
+        <span id="demoBarText"></span>
+        <button class="sim-btn sim-inline" id="btnSimMsg2" type="button" hidden>담당자 메시지 보내기</button>
+      </div>
       <p class="elder-status" id="elderStatus" role="status">말씀해 주이소</p>
 
       <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
@@ -131,6 +144,22 @@
       </div>
     </section>
 
+    <!-- ── 4. 수신 전화 화면 (진행 안내 콜백 · 계약 5-C) ──── -->
+    <section class="screen" id="screenIncoming" aria-label="걸려온 전화">
+      <div class="incoming">
+        <span class="ring-badge" aria-hidden="true">
+          <svg viewBox="0 0 24 24" width="46" height="46" fill="currentColor"><path d="M12 22a2 2 0 0 0 2-2h-4a2 2 0 0 0 2 2Zm6-6v-5a6 6 0 0 0-5-5.9V4a1 1 0 1 0-2 0v1.1A6 6 0 0 0 6 11v5l-2 2v1h16v-1l-2-2Z"/></svg>
+        </span>
+        <p class="incoming-from" id="incomingTitle">경상북도청에서 전화가 왔습니더</p>
+        <p class="incoming-sub" id="incomingSub">민원 진행 상황을 알려드릴게예.</p>
+        <button class="answer-btn" id="btnAnswer" type="button">
+          <svg viewBox="0 0 24 24" width="40" height="40" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.7.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11.3 21 3 12.7 3 2.9c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.7.1.4 0 .8-.2 1l-2.3 2.2Z"/></svg>
+          <span>받기</span>
+        </button>
+        <p class="incoming-note" id="incomingNote"></p>
+      </div>
+    </section>
+
     <!-- ── 3. 결과(민원카드) 화면 ─────────────────────────── -->
     <section class="screen" id="screenResult" aria-label="민원 접수 결과">
       <div class="result-inner">
@@ -142,10 +171,21 @@
         <article class="card" id="card" aria-label="민원카드"></article>
 
         <div class="handoff-wait" id="handoffWait" hidden role="status">
-          <span class="hw-spin" aria-hidden="true"></span>
-          <div class="hw-text">
-            <strong>담당자에게 전달됐습니더.</strong>
-            <span>담당자가 연결되면 바로 알려드릴게예. 화면을 닫지 마이소.</span>
+          <div class="hw-live">
+            <span class="hw-dot" aria-hidden="true"></span>
+            <span>담당자를 기다리는 중입니더</span>
+            <b id="hwElapsed">0초</b>
+          </div>
+          <p class="hw-lead"><strong>담당자에게 전달됐습니더.</strong></p>
+          <div class="hw-no">
+            <span>접수번호</span>
+            <strong id="hwNo">----</strong>
+          </div>
+          <p class="hw-text">담당자가 확인하는 대로 <b>먼저 연락드릴 거라예.</b><br>
+            화면을 닫으셔도 됩니더. 기다리셔도 되고예.</p>
+          <div class="hw-sim">
+            <button class="sim-btn" id="btnSimOfficer" type="button">담당자 연결 시뮬레이션</button>
+            <button class="sim-btn" id="btnSimOfficerMsg" type="button" hidden>담당자 메시지 보내기</button>
           </div>
         </div>
 
@@ -161,11 +201,11 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=12"></script>
-<script src="dialect-hints.js?v=12"></script>
-<script src="mock-api.js?v=12"></script>
-<script src="speech.js?v=12"></script>
-<script src="api.js?v=12"></script>
-<script src="app.js?v=12"></script>
+<script src="config.js?v=22"></script>
+<script src="dialect-hints.js?v=22"></script>
+<script src="mock-api.js?v=22"></script>
+<script src="speech.js?v=22"></script>
+<script src="api.js?v=22"></script>
+<script src="app.js?v=22"></script>
 </body>
 </html>

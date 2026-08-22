@@ -40,6 +40,7 @@ from voisso.agent.handoff import (
     Handoff,
     empty_status,
 )
+from voisso.agent.urgency import revise as revise_urgency_block
 from voisso.agent.usage import PROCESS_TOTAL
 from voisso.voice import SpeechContext, get_tts_provider, stt_status, tts_status
 from voisso.voice import stream as tts_stream
@@ -102,6 +103,9 @@ class TurnRequest(BaseModel):
     # False 면 TTS 를 건너뛰고 텍스트만 돌려준다. 클라이언트가
     # /api/tts/stream 으로 따로 받아 재생할 때 쓴다.
     want_audio: bool = True
+    # 브라우저 음성인식으로 텍스트를 만들어 보낼 때 그 출처를 밝힌다.
+    # 응답 caller_turn.stt_provider 로 그대로 돌아간다.
+    stt_provider: str | None = None
 
 
 class EndRequest(BaseModel):
@@ -120,6 +124,11 @@ class HandoffStartRequest(BaseModel):
 class HandoffMessageRequest(BaseModel):
     role: str = Field(description="officer | caller")
     text: str
+
+
+class UrgencyReviseRequest(BaseModel):
+    level: str = Field(description="응급 | 중요 | 보통 | 낮음")
+    reason: str = Field(default="", description="담당자가 조정한 이유")
 
 
 class CallbackScheduleRequest(BaseModel):
@@ -231,6 +240,7 @@ def call_start(payload: StartRequest | None = None) -> dict:
         "session_id": session.id,
         "reply_text": greeting["reply_text"],
         "reply_dialect": greeting["reply_dialect"],
+        "caller_turn": None,
         "audio_b64": greeting["audio_b64"],
         "audio_mime": greeting.get("audio_mime"),
         "done": False,
@@ -265,6 +275,7 @@ def call_turn(payload: TurnRequest) -> dict:
         audio_b64=payload.audio_b64,
         alternatives=payload.alternatives,
         want_audio=payload.want_audio,
+        stt_provider=payload.stt_provider,
     )
 
 
@@ -308,6 +319,7 @@ def call_turn_stream(payload: TurnStreamRequest):
                 text=payload.text,
                 audio_b64=payload.audio_b64,
                 alternatives=payload.alternatives,
+                stt_provider=payload.stt_provider,
             ):
                 yield json.dumps(event, ensure_ascii=False) + "\n"
         except Exception as exc:  # 스트림 도중 죽어도 클라이언트가 알 수 있게
@@ -348,9 +360,24 @@ def call_end(payload: EndRequest) -> dict:
     )
     # `complaint` 는 계약서 5절 스키마 그대로다. `meta` 는 추가 필드.
     # 사용량은 민원 데이터가 아니므로 카드에 넣지 않고 meta 로만 보낸다.
+    # `complaint` 는 계약서 5절 스키마 그대로. `meta` 는 추가 필드.
     return {
         "complaint": complaint,
-        "meta": {"timings": session.end_timings, "usage": session.usage.as_dict()},
+        "meta": {
+            "timings": session.end_timings,
+            "usage": session.usage.as_dict(),
+            # 통화 화면이 무엇을 기다려야 하는지. 확인 단계 없이 바로 대기로 넘어간다.
+            "next_step": {
+                "action": "handoff_wait",
+                "complaint_id": complaint["id"],
+                "poll": f"/api/handoff/{complaint['id']}",
+                "also_poll": f"/api/callback/{complaint['id']}",
+                "waiting_for": "담당자가 민원을 확인하고 통화를 잇는 것",
+                "message": "담당자에게 전달했습니더. 담당자가 확인하면 이 화면으로 알려드릴게예.",
+                # 처리 시간은 담당 부서가 정한다. 우리가 약속하지 않는다.
+                "eta": None,
+            },
+        },
     }
 
 
@@ -432,6 +459,7 @@ def _handoff_notice(session) -> dict | None:
         "session_id": session.id,
         "reply_text": HANDOFF_NOTICE,
         "reply_dialect": integrations.to_dialect(HANDOFF_NOTICE),
+        "caller_turn": None,
         "audio_b64": None,
         "audio_mime": None,
         "done": True,
@@ -482,15 +510,24 @@ def handoff_message(complaint_id: str, payload: HandoffMessageRequest) -> dict:
     if not (payload.text or "").strip():
         raise HTTPException(status_code=400, detail="text 가 비어 있습니다.")
 
-    handoff = handoffs.get(complaint_id)
+    # 읽기→추가→쓰기를 락 안에서 한 번에 한다. 동시 요청에 메시지가
+    # 유실되거나 재전송이 중복으로 남는 것을 막는다.
+    state: dict = {}
+
+    def append(handoff):
+        if not handoff.is_open:
+            state["error"] = "이미 종료된 상담입니다."
+            return None
+        message = handoff.add_message(payload.role, payload.text)
+        state["message"] = message
+        return message
+
+    handoff, _ = handoffs.mutate(complaint_id, append)
     if handoff is None:
         raise HTTPException(status_code=400, detail="아직 담당자 연결이 시작되지 않았습니다.")
-    if not handoff.is_open:
-        raise HTTPException(status_code=400, detail="이미 종료된 상담입니다.")
-
-    message = handoff.add_message(payload.role, payload.text)
-    handoffs.save(handoff)
-    return {"ok": True, "message": message.as_dict()}
+    if "error" in state:
+        raise HTTPException(status_code=400, detail=state["error"])
+    return {"ok": True, "message": state["message"].as_dict()}
 
 
 @app.get("/api/handoff/{complaint_id}")
@@ -512,6 +549,28 @@ def handoff_close(complaint_id: str) -> dict:
         handoffs.save(handoff)
         log.info("핸드오프 종료 민원=%s (메시지 %d건)", complaint_id, len(handoff.messages))
     return {"status": handoff.status}
+
+
+@app.post("/api/complaints/{complaint_id}/urgency")
+def revise_urgency(complaint_id: str, payload: UrgencyReviseRequest) -> dict:
+    """담당자가 긴급도를 조정한다 (계약 외 추가 엔드포인트).
+
+    **AI 판정은 제안이고 최종 판단은 사람이 한다.** 원래 판정과 근거는
+    `urgency.history` 에 남아 나중에 대조할 수 있다.
+    """
+    complaint = complaints.get(complaint_id)
+    if complaint is None:
+        raise HTTPException(status_code=404, detail=f"민원카드 {complaint_id} 를 찾을 수 없습니다.")
+
+    try:
+        revised = revise_urgency_block(complaint.get("urgency") or {}, payload.level, payload.reason)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    complaint["urgency"] = revised
+    complaints.save(complaint)
+    log.info("긴급도 조정 민원=%s -> %s", complaint_id, revised["level"])
+    return {"complaint_id": complaint_id, "urgency": revised}
 
 
 @app.post("/api/callback/{complaint_id}/schedule")
@@ -570,22 +629,26 @@ def callback_message(complaint_id: str, payload: CallbackMessageRequest) -> dict
     if not (payload.text or "").strip():
         raise HTTPException(status_code=400, detail="text 가 비어 있습니다.")
 
-    callback = callbacks.get(complaint_id)
+    card = complaints.get(complaint_id)
+    state: dict = {}
+
+    def append(cb):
+        if cb.status not in (STATUS_PENDING, STATUS_ANSWERED):
+            state["error"] = "이미 종료된 안내 전화입니다."
+            return None
+        state["message"] = cb.add_message(payload.role, payload.text)
+        if payload.role != ROLE_AGENT:
+            # 확정된 사실이 아니면 DEFER_REPLY 가 돌아온다. 지어내지 않는다.
+            state["reply"] = cb.add_message(ROLE_AGENT, answer_from_facts(payload.text, card))
+        return True
+
+    callback, _ = callbacks.mutate(complaint_id, append)
     if callback is None:
         raise HTTPException(status_code=400, detail="예약된 안내 전화가 없습니다.")
-    if callback.status not in (STATUS_PENDING, STATUS_ANSWERED):
-        raise HTTPException(status_code=400, detail="이미 종료된 안내 전화입니다.")
-
-    message = callback.add_message(payload.role, payload.text)
-
-    reply = None
-    if payload.role != ROLE_AGENT:
-        # 확정된 사실이 아니면 DEFER_REPLY 가 돌아온다. 지어내지 않는다.
-        answer = answer_from_facts(payload.text, complaints.get(complaint_id))
-        reply = callback.add_message(ROLE_AGENT, answer).as_dict()
-
-    callbacks.save(callback)
-    return {"ok": True, "message": message.as_dict(), "reply": reply}
+    if "error" in state:
+        raise HTTPException(status_code=400, detail=state["error"])
+    reply = state["reply"].as_dict() if "reply" in state else None
+    return {"ok": True, "message": state["message"].as_dict(), "reply": reply}
 
 
 @app.post("/api/callback/{complaint_id}/close")

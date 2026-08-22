@@ -28,6 +28,7 @@ from . import integrations, prompts
 from .complaint import build_complaint
 from .engine import get_engines
 from .slots import SLOT_ORDER, Slots, looks_finished
+from .urgency import Urgency, assess, safety_notice
 from .usage import PROCESS_TOTAL, Usage
 
 log = logging.getLogger("voisso.agent.session")
@@ -44,12 +45,25 @@ MAX_SESSION_TOKENS = int(os.getenv("VOISSO_MAX_SESSION_TOKENS") or 60000)
 # 어르신이 계속 말씀하시면 계속 받되, 무한 루프는 막는다.
 MAX_WRAPUP_ROUNDS = int(os.getenv("VOISSO_MAX_WRAPUP_ROUNDS") or 4)
 
-# 마무리 안내. 처리 결과는 약속하지 않고, 담당자 연결만 알린다.
+# 마무리 안내. **처리 결과도, 걸리는 시간도 약속하지 않는다.**
+# 대신 "무엇을 기다리는지"와 "전화를 붙들고 있지 않아도 된다"를 알려 준다.
+# 어르신이 언제 끝나는지 몰라 전화기를 든 채 기다리는 것이 가장 나쁜 상태다.
 HANDOFF_CLOSING = (
-    "말씀하신 내용 잘 접수해 두었습니다. "
-    "담당자에게 연결해 드릴게요. 잠시만 기다려 주세요."
+    "말씀하신 내용 접수해 두었습니다. 담당자에게 바로 전달하겠습니다. "
+    "전화를 끊고 계셔도 되고, 담당자가 확인하면 이 화면으로 알려 드리겠습니다."
 )
 WRAPUP_QUESTION = "더 얘기하실 사항 있으실까요?"
+
+# 정보를 더 받아야 하는 턴인데 선언으로 끝났을 때 붙이는 질문.
+# 프롬프트로 지시해도 모델은 가끔 선언으로 끝낸다. 후처리로 확실히 막는다.
+NUDGE_QUESTION = "혹시 더 말씀해 주실 수 있을까요?"
+# 슬롯별로 더 자연스러운 되물음.
+SLOT_NUDGE = {
+    "what": "어떤 일 때문에 불편하신지 말씀해 주시겠어요?",
+    "where": "어느 시·군, 어느 동네인지 여쭤봐도 될까요?",
+    "when": "언제부터 그랬는지 기억나세요?",
+    "contact": "연락받으실 전화번호를 알려 주시겠어요?",
+}
 
 # 이 이상 비슷하면 같은 메모로 본다. 표현만 바꾼 재작성을 걸러낸다.
 NOTE_SIMILARITY = 0.6
@@ -96,6 +110,10 @@ class ConversationSession:
         self.wrapup_rounds = 0
         # 슬롯에 안 맞는 추가 정보. 민원카드 notes 로 나간다.
         self.notes: list[dict[str, Any]] = []
+        # 긴급도는 통화 전체를 누적해서 판정한다. 뒤늦게 나오는 말이 더 위험할 수 있다.
+        self.urgency = Urgency()
+        # 안전 안내를 이미 했는가. 같은 안내를 매 턴 반복하지 않는다.
+        self.safety_announced = False
         self.usage = Usage()
         self.budget_exceeded = False
 
@@ -115,6 +133,7 @@ class ConversationSession:
             "engine": self.engine_used,
             "slots": self.slots.as_dict(),
             "notes": list(self.notes),
+            "urgency": self.urgency.as_dict(),
             "wrapup_rounds": self.wrapup_rounds,
             "usage": self.usage.as_dict(),
             "budget_exceeded": self.budget_exceeded,
@@ -133,6 +152,7 @@ class ConversationSession:
         audio_b64: str | None = None,
         alternatives: list[Any] | None = None,
         want_audio: bool = True,
+        stt_provider: str | None = None,
     ) -> dict[str, Any]:
         """어르신의 한 마디를 받아 응답을 만든다.
 
@@ -154,17 +174,28 @@ class ConversationSession:
         caller_dialect = (text or "").strip()
         stt_error: str | None = None
         rescored: dict[str, Any] | None = None
+        # 어르신 발화가 어디서 왔는지. 화면에 그대로 보여주기 위해 끝까지 들고 간다.
+        source = "text"
+        stt_raw: str | None = caller_dialect or None
+        provider_name: str | None = stt_provider
 
         if alternatives:
             picked, rescored = pick_best_alternative(alternatives, fallback=caller_dialect)
             if picked:
                 caller_dialect = picked
+                stt_raw = picked
+                source = "stt"
+                provider_name = stt_provider or "web"
 
         if not caller_dialect and audio_b64:
             with _timed(timings, "stt_ms"):
                 result = transcribe(audio_b64)
+            self._record_stt(result)
             caller_dialect = result.text.strip()
             stt_error = result.error
+            source = "stt"
+            stt_raw = caller_dialect or None
+            provider_name = result.provider or provider_name
             if not caller_dialect:
                 # 음성을 못 알아들었다. 통화를 끊지 말고 되물어본다.
                 self.last_error = stt_error
@@ -189,10 +220,22 @@ class ConversationSession:
         self.turn_count += 1
 
         self.last_rescoring = rescored
+        caller_turn = self.build_caller_turn(
+            caller_dialect, caller_standard, source, stt_raw, provider_name
+        )
         with _timed(timings, "llm_ms"):
             decision = self._decide()
         reply = self._apply_decision(decision)
         done, reply = self._resolve_done(decision, caller_standard)
+
+        # 응급이면 안내를 응답 맨 앞에 붙인다. 접수보다 먼저다.
+        notice = self._update_urgency()
+        if notice:
+            reply = f"{notice} {reply}".strip()
+            done = False  # 안전 안내를 한 턴에 통화를 끝내지 않는다
+
+        # 아직 받을 정보가 남았으면 질문으로 끝낸다.
+        reply = self._ensure_question(reply, done=done, safety=bool(notice))
 
         if not done:
             # 이번 응답이 어떤 슬롯을 물었는지 기록해 둔다.
@@ -211,6 +254,7 @@ class ConversationSession:
             timings=timings,
             started=turn_started,
             want_audio=want_audio,
+            caller_turn=caller_turn,
         )
 
     def turn_stream(
@@ -218,6 +262,7 @@ class ConversationSession:
         text: str | None = None,
         audio_b64: str | None = None,
         alternatives: list[Any] | None = None,
+        stt_provider: str | None = None,
     ):
         """턴을 **문장 단위로 흘려보낸다.** 첫 소리를 최대한 빨리 내는 경로.
 
@@ -243,11 +288,18 @@ class ConversationSession:
         caller_dialect = (text or "").strip()
         stt_error: str | None = None
         rescored: dict[str, Any] | None = None
+        # 어르신 발화가 어디서 왔는지. 화면에 그대로 보여주기 위해 끝까지 들고 간다.
+        source = "text"
+        stt_raw: str | None = caller_dialect or None
+        provider_name: str | None = stt_provider
 
         if alternatives:
             picked, rescored = pick_best_alternative(alternatives, fallback=caller_dialect)
             if picked:
                 caller_dialect = picked
+                stt_raw = picked
+                source = "stt"
+                provider_name = stt_provider or "web"
 
         if not caller_dialect and audio_b64:
             with _timed(timings, "stt_ms"):
@@ -255,6 +307,9 @@ class ConversationSession:
             self._record_stt(result)
             caller_dialect = result.text.strip()
             stt_error = result.error
+            source = "stt"
+            stt_raw = caller_dialect or None
+            provider_name = result.provider or provider_name
             if not caller_dialect:
                 self.last_error = stt_error
                 yield {
@@ -280,7 +335,10 @@ class ConversationSession:
         )
         self.turn_count += 1
         self.last_rescoring = rescored
-        yield {"type": "heard", "dialect": caller_dialect, "standard": caller_standard}
+        caller_turn = self.build_caller_turn(
+            caller_dialect, caller_standard, source, stt_raw, provider_name
+        )
+        yield {"type": "heard", "caller_turn": caller_turn, **caller_turn}
 
         llm, rule = get_engines()
         streamer = getattr(llm, "respond_stream", None) if llm is not None else None
@@ -322,6 +380,8 @@ class ConversationSession:
 
         self._apply_decision(decision)
         done, _ = self._resolve_done(decision, caller_standard)
+        if self._update_urgency():
+            done = False
         if not done:
             pending = self.slots.next_slot()
             if pending:
@@ -344,6 +404,7 @@ class ConversationSession:
             "session_id": self.id,
             "reply_text": reply_standard,
             "reply_dialect": reply_dialect,
+            "caller_turn": caller_turn,
             "audio_b64": None,  # 문장별 audio 이벤트로 이미 보냈다
             "audio_mime": None,
             "done": bool(done),
@@ -457,6 +518,7 @@ class ConversationSession:
                 category=summary_data.get("category", ""),
                 routing_query=summary_data.get("routing_query", ""),
                 notes=self.notes,
+                urgency=self.urgency.as_dict(),
             )
         log.info("통화 %s 사용량 — %s", self.id, self.usage.one_line())
         self.end_timings["total_ms"] = round(
@@ -467,6 +529,59 @@ class ConversationSession:
     # -- 내부 --------------------------------------------------------------
     # 같은 안내를 계속 반복하지 않기 위한 문턱. 이 횟수를 넘으면 말투를 바꾼다.
     UNCLEAR_GUIDANCE_AFTER = 2
+
+    @staticmethod
+    def build_caller_turn(
+        dialect: str,
+        standard: str,
+        source: str,
+        stt_raw: str | None,
+        stt_provider: str | None,
+    ) -> dict[str, Any]:
+        """어르신 발화를 화면에 그대로 보여주기 위한 블록.
+
+        **세 값이 같아도 셋 다 채운다.** 프론트가 분기하지 않게 하려는 것이다.
+        예전에는 이 정보를 응답에 안 실어서, STT 가 멀쩡히 돌았는데도 화면에는
+        "(음성 발화)" 만 떴다. 방언 정규화가 일하는 것을 보여줄 수 없었다.
+        """
+        return {
+            "dialect": dialect or "",
+            "standard": standard or dialect or "",
+            "source": source,
+            "stt_raw": stt_raw,
+            "stt_provider": stt_provider,
+        }
+
+    def _caller_text(self) -> str:
+        """어르신이 한 말 전체. 긴급도는 누적 판정한다."""
+        return " ".join(
+            e.get("standard") or e.get("dialect") or ""
+            for e in self.transcript
+            if e.get("role") == "caller"
+        )
+
+    def _update_urgency(self) -> str:
+        """긴급도를 다시 판정하고, 필요하면 안전 안내 문구를 돌려준다.
+
+        **이 안내는 슬롯 채우기보다 우선한다.** 위치·연락처를 다 못 받았어도
+        먼저 안내한다. 사람이 위험한 상황을 접수만 하고 끝내는 것이
+        이 시스템의 가장 큰 위험이기 때문이다.
+        """
+        previous = self.urgency
+        self.urgency = assess(self._caller_text())
+        # 이력은 이어 간다.
+        self.urgency.history = list(previous.history)
+
+        if self.urgency.is_emergency and not self.safety_announced:
+            self.safety_announced = True
+            log.warning(
+                "응급 판정 session=%s 신호=%s 안내=%s",
+                self.id,
+                ", ".join(self.urgency.signals),
+                (self.urgency.safety_referral or {}).get("number"),
+            )
+            return safety_notice(self.urgency)
+        return ""
 
     def _apply_decision(self, decision) -> str:
         """결정을 슬롯에 반영하고, 실제로 할 말을 정한다.
@@ -549,6 +664,30 @@ class ConversationSession:
                 return False, reply
         return False, WRAPUP_QUESTION
 
+    @staticmethod
+    def _ends_with_question(text: str) -> bool:
+        """마지막 문장이 물음표로 끝나는가."""
+        cleaned = (text or "").strip().rstrip(" \"'\u2019\u201d)]\u300b\u300d")
+        return cleaned.endswith(("?", "？"))
+
+    def _ensure_question(self, reply: str, done: bool, safety: bool) -> str:
+        """정보를 더 받아야 하는 턴은 **반드시 질문으로 끝낸다.**
+
+        선언으로 끝나면 어르신은 자기 차례인지 모르고 침묵한다.
+        모델이 규칙을 어길 때를 대비한 후처리다.
+
+        예외는 둘. 안전 안내(지시라서 선언이 맞다)와 통화 종료 인사.
+        """
+        text = (reply or "").strip()
+        if done or safety or self._ends_with_question(text):
+            return text
+
+        pending = self.slots.next_slot()
+        question = SLOT_NUDGE.get(pending or "", NUDGE_QUESTION)
+        if not text:
+            return question
+        return f"{text} {question}"
+
     def _record_stt(self, result) -> None:
         if result.provider == "none":
             return
@@ -615,6 +754,7 @@ class ConversationSession:
         timings: dict[str, float] | None = None,
         started: float | None = None,
         want_audio: bool = True,
+        caller_turn: dict[str, Any] | None = None,
     ) -> dict[str, Any]:
         """상담원 발화를 사투리로 바꾸고 음성으로 만들어 기록한다."""
         timings = timings if timings is not None else {}
@@ -644,6 +784,8 @@ class ConversationSession:
             "session_id": self.id,
             "reply_text": reply_standard,
             "reply_dialect": reply_dialect,
+            # 계약서 5절 — 서버가 무엇을 받아썼는지. 화면에 그대로 보여준다.
+            "caller_turn": caller_turn,
             "audio_b64": speech.audio_b64,
             "audio_mime": speech.mime,
             "done": bool(done),
@@ -668,6 +810,7 @@ class ConversationSession:
                     "session_id": self.id,
                     "reply_text": entry.get("standard", ""),
                     "reply_dialect": entry.get("dialect", ""),
+                    "caller_turn": None,
                     "audio_b64": None,
                     "audio_mime": None,
                     "done": self.closed if done is None else done,

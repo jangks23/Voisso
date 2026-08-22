@@ -20,6 +20,7 @@ from __future__ import annotations
 import argparse
 import json
 import os
+import re
 import socket
 import subprocess
 import sys
@@ -61,6 +62,14 @@ OFFICER_NAME = "홍길동"
 OFFICER_STANDARD = "안녕하세요, 맑은물정책과 담당자입니다. 현장 확인을 나가겠습니다."
 CALLER_DIALECT = "언제쯤 오시능교? 비 오모 또 잠길낀데예"
 
+#: 진행 안내 콜백(계약서 5-C). 담당자가 표준어로 쓴 브리핑을 AI 가 사투리로 읽어준다.
+#: **AI 가 생성하지 않는다.** 그래서 브리핑 원문이 그대로 보존되는지를 검증한다.
+BRIEFING_STANDARD = "현장 확인 완료. 이번 주 내 배수관 준설 예정입니다."
+#: 일정·가능 여부를 묻는 질문. 브리핑에 없는 답을 지어내면 그것은 행정 약속이다.
+PROMISE_QUESTION = "그라모 언제쯤 다 고쳐 주능교? 다음 달까지 되겠능교?"
+#: 이미 확정된 사실. 이건 답해도 된다.
+FACT_QUESTION = "접수번호가 몇 번이라예?"
+
 #: 대시보드(web/dashboard/app.js)의 폴링 주기. 이 안에 안 뜨면 "실시간"이 아니다.
 DASHBOARD_POLL_SEC = 4.0
 
@@ -84,6 +93,7 @@ STEP_NAMES = [
     "민원카드 검증",
     "대시보드 반영 확인",
     "담당자 핸드오프",
+    "진행 안내 콜백",
     "MCP 서버 셀프테스트",
     "서버 정리",
 ]
@@ -622,6 +632,140 @@ def step_verify_handoff(base: str, complaint_id: str, department: str, card: dic
     }
 
 
+def new_numbers(text: str, *sources: str) -> list[str]:
+    """``text`` 에만 있고 출처에는 없는 숫자를 돌려준다.
+
+    AI 가 없는 일정·수치를 지어냈는지 보는 가장 단순하고 확실한 신호다.
+    "다음 달 15일까지" 같은 말이 브리핑에 없는데 생겼다면 그건 행정 약속이다.
+    """
+    haystack = " ".join(sources)
+    return [n for n in re.findall(r"\d+", text or "") if n not in haystack]
+
+
+def step_verify_callback(base: str, complaint_id: str, department: str) -> dict:
+    """⑥ 진행 안내 콜백 — 계약서 5-C.
+
+    **시스템이 먼저 전화를 건다.** 담당자가 쓴 진행 상황을 AI 가 사투리로 읽어준다.
+    여기서 가장 위험한 지점은 "AI 가 브리핑에 없는 답을 지어내는 것"이다.
+    그건 행정 약속이 되고, 공공기관은 그런 시스템을 채택하지 않는다.
+    그래서 이 단계 검증의 절반이 **비생성 확인**이다.
+    """
+    scheduled = request_json(
+        f"{base}/api/callback/{complaint_id}/schedule",
+        {"briefing": BRIEFING_STANDARD, "officer_name": OFFICER_NAME,
+         "department": department},
+    )
+    if scheduled.get("status") != "pending":
+        raise StepFailure(f"안내 전화가 예약되지 않았다: {scheduled}")
+    if not scheduled.get("callback_id"):
+        raise StepFailure(f"callback_id 가 없다: {scheduled}")
+
+    pending = request_json(f"{base}/api/callback/{complaint_id}")
+    if pending.get("status") != "pending":
+        raise StepFailure(f"수신 대기 상태가 아니다: {pending.get('status')!r}")
+
+    # 브리핑 원문과 사투리 변환을 둘 다 보관해야 한다 (계약서 5-C).
+    briefing = pending.get("briefing") or {}
+    standard = str(briefing.get("standard") or "")
+    dialect = str(briefing.get("dialect") or "")
+    if not standard or not dialect:
+        raise StepFailure(
+            f"브리핑에 standard/dialect 가 둘 다 있어야 한다: {briefing}"
+        )
+    if standard != BRIEFING_STANDARD:
+        raise StepFailure(
+            "브리핑 원문이 담당자가 쓴 것과 다르다 — AI 가 다시 썼다는 뜻이다.\n"
+            f"  담당자: {BRIEFING_STANDARD!r}\n  저장됨: {standard!r}"
+        )
+    if dialect == standard:
+        raise StepFailure(f"사투리 변환이 일어나지 않았다: {dialect!r}")
+    invented = new_numbers(dialect, standard)
+    if invented:
+        raise StepFailure(
+            f"사투리 브리핑에 원문에 없는 숫자가 생겼다: {invented} — "
+            f"변환이 아니라 생성이다 (계약서 5-C)\n  {dialect!r}"
+        )
+
+    # PSTN 미연동을 API 가 스스로 밝혀야 한다. 발표에서 숨기면 질문 하나에 무너진다.
+    transport = str(pending.get("transport") or "")
+    if "시뮬레이션" not in transport:
+        raise StepFailure(
+            f"PSTN 미연동 표기가 없다 (transport={transport!r}). "
+            "실제 전화망 연동이 아니라는 사실이 API 응답에 남아야 한다 (계약서 5-C)"
+        )
+
+    answered = request_json(f"{base}/api/callback/{complaint_id}/answer", {})
+    if answered.get("status") != "answered":
+        raise StepFailure(f"수신 처리가 되지 않았다: {answered.get('status')!r}")
+
+    card = (request_json(f"{base}/api/complaints/{complaint_id}") or {}).get("complaint") or {}
+    card_text = json.dumps(card, ensure_ascii=False)
+
+    # 약속형 질문 — AI 가 답하면 안 된다.
+    asked = request_json(
+        f"{base}/api/callback/{complaint_id}/message",
+        {"role": "caller", "text": PROMISE_QUESTION},
+    )
+    reply = asked.get("reply") or {}
+    reply_text = f"{reply.get('standard') or ''} {reply.get('dialect') or ''}"
+    if not reply_text.strip():
+        raise StepFailure(f"추가 문의에 아무 응답이 없다: {asked}")
+    if "담당자" not in reply_text:
+        raise StepFailure(
+            f"일정을 묻는 질문에 AI 가 직접 답했다: {reply_text.strip()!r}\n"
+            "브리핑에 없는 답은 행정 약속이 된다. '담당자에게 여쭤보고' 로 넘겨야 한다 "
+            "(계약서 5-C 절대 규칙)"
+        )
+    promised = new_numbers(reply_text, standard, card_text)
+    if promised:
+        raise StepFailure(
+            f"AI 응답에 브리핑·민원카드에 없는 숫자가 들어갔다: {promised} — "
+            f"일정 약속으로 읽힌다\n  {reply_text.strip()!r}"
+        )
+
+    # 확정된 사실은 답해도 된다. 다만 카드에 있는 값이어야 한다.
+    fact = request_json(
+        f"{base}/api/callback/{complaint_id}/message",
+        {"role": "caller", "text": FACT_QUESTION},
+    )
+    fact_reply = fact.get("reply") or {}
+    fact_text = f"{fact_reply.get('standard') or ''} {fact_reply.get('dialect') or ''}"
+    fabricated = new_numbers(fact_text, card_text)
+    if fabricated:
+        raise StepFailure(
+            f"사실 답변에 민원카드에 없는 숫자가 들어갔다: {fabricated}\n  {fact_text.strip()!r}"
+        )
+
+    channel = request_json(f"{base}/api/callback/{complaint_id}")
+    messages = channel.get("messages") or []
+    if len(messages) < 3:      # 브리핑 + 질문 + 응답
+        raise StepFailure(f"통화 기록이 남지 않았다 (messages={len(messages)}건)")
+    for message in messages:
+        missing = [f for f in ("role", "text", "dialect", "standard") if f not in message]
+        if missing:
+            raise StepFailure(f"콜백 메시지에 {', '.join(missing)} 가 없다: {message}")
+
+    closed = request_json(f"{base}/api/callback/{complaint_id}/close", {})
+    if closed.get("status") != "closed":
+        raise StepFailure(f"안내 전화가 종료되지 않았다: {closed}")
+
+    # 어르신의 추가 문의가 담당자에게 전달되어야 한다 (민원카드 notes).
+    after = (request_json(f"{base}/api/complaints/{complaint_id}") or {}).get("complaint") or {}
+    notes = [n for n in (after.get("notes") or []) if n.get("source") == "callback"]
+    if not notes:
+        raise StepFailure(
+            "어르신의 추가 문의가 민원카드에 전달되지 않았다 — "
+            "담당자가 무엇을 물어봤는지 알 수 없다 (계약서 5-C)"
+        )
+
+    return {
+        "briefing_dialect": dialect[:44],
+        "deferred": reply_text.strip()[:44],
+        "questions_forwarded": len(notes),
+        "transport": transport,
+    }
+
+
 def step_mcp_selftest() -> dict:
     """MCP 서버 셀프테스트 — 별도 트랙(인프라) 산출물의 증거."""
     result = subprocess.run(
@@ -976,16 +1120,26 @@ def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path,
                f"양방향 통역 {handoff['messages']}건 · AI {handoff['ai_state']} · "
                f"담당자→어르신 {handoff['officer_dialect']!r}")
 
-        # 7
+        # 7 — 진행 안내 콜백 (계약서 5-C)
         tick = time.monotonic()
-        mcp = step_mcp_selftest()
-        record(7, time.monotonic() - tick, True, mcp["summary"])
+        callback = step_verify_callback(
+            base, verified["complaint_id"], verified["department"] or ""
+        )
+        facts["callback"] = callback
+        record(7, time.monotonic() - tick, True,
+               f"브리핑 {callback['briefing_dialect']!r} · "
+               f"추가문의 {callback['questions_forwarded']}건 전달 · AI 비생성 확인")
 
         # 8
         tick = time.monotonic()
+        mcp = step_mcp_selftest()
+        record(8, time.monotonic() - tick, True, mcp["summary"])
+
+        # 9
+        tick = time.monotonic()
         step_stop_server(process)
         process = None
-        record(8, time.monotonic() - tick, True)
+        record(9, time.monotonic() - tick, True)
 
         return {"run": run_no, "ok": True, "elapsed": round(time.monotonic() - started_at, 1),
                 "steps": steps, "facts": facts, "failed_step": None, "error": ""}
@@ -1018,10 +1172,12 @@ DOC_HEADER = """# 통합 리허설 기록
 > `python3 scripts/rehearsal.py --runs 3` 이 자동으로 덧붙인다. **손으로 고치지 마라.**
 >
 > GOAL.md H1 성공 기준 — *"데모가 3회 연속 끊김 없이 재현된다."*
-> 데모는 5단계다(사투리 정규화 → 슬롯 채우기 → 사무분장 근거 → 대시보드 반영 →
-> **담당자 핸드오프**). 한 회차는 사전조건 → 서버기동 → 통화 완주 → 민원카드 검증 →
-> 대시보드 반영 → 담당자 핸드오프 → MCP 셀프테스트 → 정리 8단계다.
-> 브라우저는 쓰지 않고 HTTP 로만 확인한다(P7 이 Chrome 을 단독으로 쓴다).
+> 데모는 6단계다(사투리 정규화 → 슬롯 채우기 → 사무분장 근거 → 대시보드 반영 →
+> **담당자 핸드오프** → **진행 안내 콜백**). 한 회차는 사전조건 → 서버기동 → 통화 완주 →
+> 민원카드 검증 → 대시보드 반영 → 담당자 핸드오프 → 진행 안내 콜백 → MCP 셀프테스트 →
+> 정리 9단계다. 브라우저는 쓰지 않고 HTTP 로만 확인한다(P7 이 Chrome 을 단독으로 쓴다).
+>
+> 콜백은 **브라우저 수신 화면 시뮬레이션**이다. 실제 전화망(PSTN) 연동은 H3 다.
 """
 
 
@@ -1059,6 +1215,13 @@ def append_record(results: list[dict], audio: bool, host: str, port: int,
             f"- 핸드오프: 양방향 통역 {handoff['messages']}건 · "
             f"AI {handoff['ai_state']} (계약서 5-B)"
         )
+    cb = next((r["facts"].get("callback") for r in results if r["facts"].get("callback")), None)
+    if cb:
+        lines.append(
+            f"- 진행 안내 콜백: 추가 문의 {cb['questions_forwarded']}건 담당자 전달 · "
+            f"AI 비생성 확인 (계약서 5-C)"
+        )
+        lines.append(f"- 전송 방식: {cb['transport']}")
 
     first = results[0]["facts"].get("preconditions")
     if first:
@@ -1135,6 +1298,19 @@ def append_record(results: list[dict], audio: bool, host: str, port: int,
                 "",
                 f"- 담당자 입력(표준어) → 어르신 화면: `{hand['officer_dialect']}`",
                 f"- 어르신 입력(사투리) → 담당자 화면: `{hand['caller_standard']}`",
+            ]
+        cb1 = results[0]["facts"].get("callback")
+        if cb1:
+            lines += [
+                "",
+                "### 진행 안내 콜백 — AI 비생성 확인 (1회차)",
+                "",
+                f"- 담당자 원문 그대로 보존 후 사투리 변환: `{cb1['briefing_dialect']}`",
+                f"- 일정을 묻는 질문에 AI 응답: `{cb1['deferred']}`",
+                "",
+                "브리핑 원문(`standard`)이 담당자가 쓴 문장과 **정확히 일치**하는지, "
+                "사투리 변환과 AI 응답에 **브리핑·민원카드에 없는 숫자가 생기지 않았는지**를 "
+                "매 회차 검사한다. 없는 일정을 말하는 순간 그것은 행정 약속이 된다.",
             ]
 
     if chaos_results:
@@ -1294,7 +1470,7 @@ def main() -> int:
             print(f"  · {chaos['label']} ({chaos['ref']}) — {chaos['note'][:120]}", file=sys.stderr)
         return 1
     if len(results) >= 3:
-        print("\nGOAL.md H1 충족: 5단계 데모(담당자 핸드오프 포함)가 3회 연속 재현됐다.")
+        print("\nGOAL.md H1 충족: 6단계 데모(핸드오프 + 진행 안내 콜백 포함)가 3회 연속 재현됐다.")
     return 0
 
 

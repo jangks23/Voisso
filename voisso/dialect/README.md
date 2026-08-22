@@ -75,6 +75,41 @@ normalize(text, use_llm=True)         # LLM 다듬기 강제 (키 필요)
 | `closing_cues()` | 통화 마무리 신호 목록 — 종료/계속 판정용 (P6) |
 | `soften(text)` | 행정 문체를 쉬운 말로. **`to_dialect()` 앞에 쓴다** |
 | `admin_plain()` | 행정용어 → 쉬운 말 대응표 |
+| `officer_to_dialect(text)` | **핸드오프(5-B)** — 담당자 채팅을 어르신 말투로 |
+| `briefing_to_dialect(text)` | **진행 안내 콜백(5-C)** — AI 가 읽어 줄 브리핑으로 |
+| `callback_question(text)` | 어르신 추가 질문을 AI 가 답해도 되는지 판정 |
+| `deflection_line()` | 브리핑에 없는 것을 물었을 때 쓸 문장 |
+| `detect_risk(text)` | **긴급도(5-A)** — 위험 신호 탐지 |
+
+### 진행 안내 콜백 (5-C, P6 연동)
+
+```python
+from voisso.dialect import briefing_to_dialect, callback_question
+
+dialect = briefing_to_dialect(briefing_text)   # 어르신이 들을 브리핑
+# standard 는 원문 그대로 저장 (계약서 5-C: 둘 다 보관)
+
+verdict = callback_question(caller_text)
+if verdict["verdict"] == "relay":
+    say(verdict["suggested_reply"])            # AI 가 답하지 않는다
+    relay_to_officer(caller_text)
+```
+
+**핸드오프와 한 단계 다르다.** 브리핑은 **소리 내어 읽는다.** 공문은 "현장 확인 완료."
+처럼 명사로 끝나는데, 그대로 읽으면 전화가 아니라 공문 낭독이 된다.
+
+```
+현장 확인 완료.
+  → officer_to_dialect  : 현장 확인 완료.          (그대로 — 채팅이니 문제없다)
+  → briefing_to_dialect : 현장 확인 다 했습니더.    (낭독용으로 폈다)
+```
+
+**절대 규칙을 코드로 지킨다.** `callback_question()` 은 "언제 됩니꺼?" 처럼 새 정보를
+요구하는 질문을 `relay` 로 판정한다. **애매하면 항상 `relay` 다** — 지어내는 것보다
+넘기는 편이 낫다. 브리핑에 없는 답을 AI 가 만들면 그것은 행정 약속이 된다.
+
+변환 예시는 [`callback_samples.md`](callback_samples.md), 핸드오프는
+[`handoff_samples.md`](handoff_samples.md) 참조. 둘 다 실행 결과에서 생성된다.
 
 ### 통화 마무리 (P6 연동)
 
@@ -138,6 +173,8 @@ python -m voisso.dialect --stats             # 사전 규모·도메인·출처 
 python -m voisso.dialect --roundtrip-report  # 왕복 보존 통과율
 python -m voisso.dialect --samples           # samples.md 내용 생성
 python -m voisso.dialect --demo-lines        # demo_lines.md 내용 생성 (데모 1단계 대사)
+python -m voisso.dialect --handoff           # handoff_samples.md (5-B 핸드오프)
+python -m voisso.dialect --callback          # callback_samples.md (5-C 콜백)
 python -m voisso.dialect -d "접수해 드리겠습니다" -v   # 표준어 → 경북 (적용 규칙 표시)
 python -m voisso.dialect -n "어데서 물이 새노" -v      # 사투리 → 표준어
 ```

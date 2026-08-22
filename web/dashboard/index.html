@@ -34,6 +34,12 @@
     <span class="stat-value" id="stat-today">–</span>
     <span class="stat-sub" id="stat-today-sub">전체 – 건</span>
   </div>
+  <div class="stat stat--urgency">
+    <span class="stat-label">응급</span>
+    <span class="stat-value stat-value--emergency" id="stat-emergency">–</span>
+    <span class="stat-sub" id="stat-urgency-sub">서버 판정 대기</span>
+    <ul class="urg-dist" id="stat-urgency-dist"></ul>
+  </div>
   <div class="stat">
     <span class="stat-label">미확인</span>
     <span class="stat-value stat-value--warn" id="stat-unread">–</span>
@@ -74,6 +80,12 @@
     <label for="f-status">상태</label>
     <select id="f-status">
       <option value="">전체 상태</option>
+      <optgroup label="긴급도">
+        <option value="ug:응급">응급</option>
+        <option value="ug:중요">중요</option>
+        <option value="ug:보통">보통</option>
+        <option value="ug:낮음">낮음</option>
+      </optgroup>
       <optgroup label="처리 상태">
         <option value="wf:received">접수됨(미확인)</option>
         <option value="wf:ack">확인함</option>
@@ -82,6 +94,7 @@
         <option value="wf:rejected">반려</option>
       </optgroup>
       <optgroup label="담당자 통화">
+        <option value="ho:waiting">연결 대기 (어르신이 기다리는 중)</option>
         <option value="ho:none">미연결</option>
         <option value="ho:open">통화중</option>
         <option value="ho:closed">상담종료</option>
@@ -116,8 +129,10 @@
   <section class="pane pane--list" aria-label="접수된 민원 목록">
     <div class="pane-head">
       <h2>접수 민원 <span class="count" id="list-count">0건</span></h2>
-      <span class="pane-hint">최신순 · ↑↓ 이동</span>
+      <button id="sort-btn" class="sort-btn" type="button" title="정렬 방식 전환">최신순</button>
+      <span class="pane-hint">↑↓ 이동</span>
     </div>
+    <button id="wait-band" class="wait-band" type="button" hidden></button>
     <ol class="list" id="list" tabindex="0" role="listbox"
         aria-label="접수 민원 목록 (위/아래 화살표로 이동)"></ol>
   </section>

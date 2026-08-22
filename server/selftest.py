@@ -12,6 +12,8 @@
   4. `assigned.evidence` 가 비어 있지 않은가  (계약서가 명시한 버그 조건)
   5. 원본 전화번호가 카드 어디에도 남지 않는가
   6. 마스킹이 번호를 훼손하지 않는가 (자릿수·뒤 4자리 보존)
+  7. 긴급도 판정이 기대 단계와 맞는가 · reason 이 비지 않는가
+  8. 응급이면 119/112 안내가 접수보다 먼저 나가는가
 """
 
 from __future__ import annotations
@@ -37,6 +39,7 @@ import re  # noqa: E402
 
 from voisso.agent import ConversationSession  # noqa: E402
 from voisso.agent.complaint import mask_phone  # noqa: E402
+from voisso.agent.urgency import assess as assess_urgency  # noqa: E402
 from voisso.agent.engine import engine_status  # noqa: E402
 from voisso.voice import stt_status, tts_status  # noqa: E402
 
@@ -61,6 +64,8 @@ CARD_KEYS = {
     "assigned",
     "alternatives",
     "caller",
+    # 계약서 5-A 확장. 담당자가 무엇을 먼저 볼지 정해 준다.
+    "urgency",
     # 계약서 5절 확장. 슬롯에 안 맞는 추가 정보를 담는다.
     "notes",
     "transcript",
@@ -119,6 +124,65 @@ def check_masking() -> None:
         check(f"마스킹 {raw}", ok, detail)
 
 
+# (발화, 기대 단계, 119/112 안내 필요 여부)
+# 기대가 애매한 항목은 주석에 판단 근거를 적었다.
+URGENCY_CASES = (
+    ("집에 가스 냄새가 나예", "응급", True),
+    ("축대가 무너질 것 같습니더", "응급", True),
+    ("물이 자꾸 차올라예 무릎까지 왔어예", "응급", True),
+    ("상수도가 터져서 물이 안 나와예", "중요", False),
+    # 가로등: 계약서의 중요 예시는 '전면 소등'이라 단일 등은 보통에 가깝다.
+    # 다만 야간 보행 안전이 걸리고 '며칠째' 지속이라 중요로 둔다.
+    # 낮추더라도 안전 쪽으로 치우치는 편이 낫다는 판단이다.
+    ("가로등이 며칠째 안 들어와예", "중요", False),
+    # 포트홀은 보통. '함몰/푹 꺼짐'과 구분해야 해서 '구멍'은 응급 규칙에 넣지 않았다.
+    ("도로에 구멍이 났어예", "보통", False),
+    ("농기계 지원 사업 문의드립니더", "낮음", False),
+)
+
+
+def check_urgency() -> None:
+    print("\n긴급도 판정")
+    for text, expected, needs_referral in URGENCY_CASES:
+        result = assess_urgency(text)
+        level_ok = result.level == expected
+        reason_ok = bool(result.reason.strip())
+        referral_ok = bool(result.safety_referral) == needs_referral
+
+        detail = f"{text} -> {result.level}"
+        if not level_ok:
+            detail += f" (기대 {expected})"
+        if not reason_ok:
+            detail += " · reason 비어 있음"
+        if not referral_ok:
+            detail += f" · 안내 {'필요한데 없음' if needs_referral else '불필요한데 있음'}"
+        check(f"긴급도 {expected}", level_ok and reason_ok and referral_ok, detail)
+
+
+def check_safety_first() -> None:
+    """응급 안내가 슬롯 채우기보다 먼저 나가는가."""
+    print("\n응급 안전 안내")
+    session = ConversationSession()
+    session.greet()
+    result = session.turn(text="집에 가스 냄새가 나예")
+    reply = result["reply_text"]
+
+    check("응급으로 판정됐다", session.urgency.is_emergency, session.urgency.level)
+    check("119 안내가 응답에 포함됐다", "119" in reply, reply[:56])
+    # 접수 이야기보다 안내가 앞에 와야 한다.
+    notice_at = reply.find("119")
+    intake_at = reply.find("접수")
+    check(
+        "안내가 접수 안내보다 앞에 있다",
+        notice_at >= 0 and (intake_at < 0 or notice_at < intake_at),
+        f"119 위치 {notice_at}, 접수 위치 {intake_at}",
+    )
+    check("안전 안내 턴에 통화를 끝내지 않았다", result["done"] is False)
+
+    again = session.turn(text="안동시 옥동입니더")
+    check("같은 안내를 반복하지 않았다", "119" not in again["reply_text"], again["reply_text"][:44])
+
+
 def main() -> int:
     print("Voisso 자체 점검 — 키 0개 텍스트 모드\n")
     engine = engine_status()
@@ -140,6 +204,8 @@ def main() -> int:
     card = session.end("selftest")
 
     check_masking()
+    check_urgency()
+    check_safety_first()
 
     print("\n검증")
 
@@ -155,6 +221,16 @@ def main() -> int:
         last["reply_text"][:44],
     )
     check("notes 가 배열이다", isinstance(card["notes"], list))
+    check(
+        "urgency.reason 이 비어 있지 않다",
+        bool(str(card["urgency"].get("reason") or "").strip()),
+        card["urgency"].get("reason", "")[:50],
+    )
+    check(
+        "urgency.level 이 유효하다",
+        card["urgency"].get("level") in ("응급", "중요", "보통", "낮음"),
+        str(card["urgency"].get("level")),
+    )
     check(
         "슬롯 4개가 모두 채워졌다",
         not card and False or all(session.slots.is_filled(s) for s in ("what", "where", "when", "contact")),

@@ -20,6 +20,7 @@
   var POLL_IDLE_MS = CFG.POLL_IDLE_MS || 15000;
   var POLL_IDLE_AFTER_MS = CFG.POLL_IDLE_AFTER_MS || 120000;
   var NEW_TTL = CFG.NEW_BADGE_TTL_MS || 300000;
+  var WAIT_WINDOW = CFG.HANDOFF_WAIT_WINDOW_MS || 900000;
 
   // 담당자가 화면에서 만든 값(처리 상태·재배정·이력)을 모아 두는 단일 저장소.
   // TODO(P6): 서버에 쓰기 API(PATCH /api/complaints/{id})가 생기면 이 자리를 서버로 옮긴다.
@@ -29,6 +30,7 @@
   // 이름은 이 탭의 메모리에만 두고(새로고침하면 사라진다) 어디에도 기록하지 않는다.
   // 부서는 개인정보가 아니므로 다음 연결 때 자동으로 채워지도록 브라우저에 남긴다.
   var LS_OFFICER_DEPT = "voisso.dashboard.officer.department.v1";
+  var LS_SORT = "voisso.dashboard.sort.v1";
   var LS_REASSIGN_V1 = "voisso.dashboard.reassign.v1"; // 이전 버전 마이그레이션용
   var LS_THEME = "voisso.dashboard.theme";
   var LS_TRMODE = "voisso.dashboard.trmode";
@@ -55,6 +57,30 @@
   var WF = {};
   WORKFLOW.forEach(function (w) { WF[w.key] = w; });
 
+  /**
+   * 긴급도 (계약 5-A).
+   *
+   * 색만으로 구분하지 않는다 — 색각 이상 담당자가 있다.
+   * 모든 표시에 **라벨 글자**를 함께 쓰고, 응급은 테두리 두께·목록 상단 고정 같은
+   * 색 아닌 단서를 겹쳐 준다. 깜빡이는 애니메이션은 넣지 않는다(하루 종일 보는 화면이다).
+   */
+  var URGENCY = [
+    { key: "응급", rank: 0, cls: "urg--emergency", hint: "사람이 다칠 수 있다. 지금." },
+    { key: "중요", rank: 1, cls: "urg--high",      hint: "방치하면 피해가 커진다. 오늘~내일" },
+    { key: "보통", rank: 2, cls: "urg--normal",    hint: "정상 처리 일정" },
+    { key: "낮음", rank: 3, cls: "urg--low",       hint: "급하지 않다" }
+  ];
+  var URG = {};
+  URGENCY.forEach(function (u) { URG[u.key] = u; });
+
+  // notes 출처 라벨. 서버가 영문 키를 주므로 화면에는 우리말로 바꿔 쓴다.
+  var NOTE_SOURCE = {
+    caller: "신고자",
+    callback: "안내 전화 문의",
+    handoff: "담당자 통화",
+    agent: "AI 상담"
+  };
+
   // 진행 안내 콜백 상태 (계약 5-C)
   var CALLBACK = {
     none:     { label: "안내 없음", cls: "cb--none" },
@@ -79,6 +105,8 @@
     book: loadBook(),     // id -> { workflow, assignment, history }
     trMode: localStorage.getItem(LS_TRMODE) || "both",
     filter: { q: "", dept: "", status: "" },
+    // 기본은 최신순 + 응급 상단 고정. 이유는 README '정렬을 이렇게 정한 이유' 참고.
+    sortMode: localStorage.getItem(LS_SORT) || "recent",
     seen: null,          // 최초 로드 이후에 들어온 건만 NEW 로 본다
     fresh: {},           // id -> 도착 시각(ms)
     animated: {},        // 하이라이트를 이미 재생한 id
@@ -116,6 +144,7 @@
 
   function cacheEls() {
     ["source-badge","last-sync","live-region","refresh-btn","theme-btn","stat-today","stat-today-sub",
+     "stat-emergency","stat-urgency-sub","stat-urgency-dist","sort-btn","wait-band",
      "stat-unread","stat-live","stat-live-sub","stat-unassigned",
      "stat-rate","stat-rate-sub","stat-rate-fill","stat-dist",
      "q","f-dept","f-status","reset-btn","export-btn","export-menu",
@@ -125,6 +154,24 @@
   }
 
   function bindEvents() {
+    el.waitBand.addEventListener("click", function () {
+      state.filter.status = state.filter.status === "ho:waiting" ? "" : "ho:waiting";
+      el.fStatus.value = state.filter.status;
+      markActive();
+      render();
+    });
+
+    el.sortBtn.addEventListener("click", function () {
+      state.sortMode = state.sortMode === "recent" ? "urgency" : "recent";
+      try { localStorage.setItem(LS_SORT, state.sortMode); } catch (e) {}
+      renderSortBtn();
+      render();
+      toast(state.sortMode === "urgency"
+        ? "긴급도순으로 정렬합니다."
+        : "최신순으로 정렬합니다. 응급은 계속 위에 고정됩니다.");
+    });
+    renderSortBtn();
+
     el.refreshBtn.addEventListener("click", function () { loadComplaints({ manual: true }); });
     el.themeBtn.addEventListener("click", cycleTheme);
     el.q.addEventListener("input", function () { state.filter.q = this.value.trim(); render(); });
@@ -332,7 +379,7 @@
         ? "새 민원 접수 — #" + arrived[0].id + " " + truncate(arrived[0].summary, 26)
         : "새 민원 " + arrived.length + "건 접수";
       toast(msg);
-      announce(msg + ". 목록 " + state.complaints.length + "건.");
+      announce(msg + ". 어르신이 담당자 연결을 기다리고 있을 수 있습니다.");
     }
     if (opts && opts.manual && !arrived.length) toast("최신 상태입니다.");
   }
@@ -389,6 +436,16 @@
       b.textContent = "연결 확인 중…";
       b.title = "";
     }
+  }
+
+  function renderSortBtn() {
+    if (!el.sortBtn) return;
+    var urg = state.sortMode === "urgency";
+    el.sortBtn.textContent = urg ? "긴급도순" : "최신순";
+    el.sortBtn.title = urg
+      ? "긴급도순 — 응급 → 중요 → 보통 → 낮음 (누르면 최신순)"
+      : "최신순 · 응급은 상단 고정 (누르면 긴급도순)";
+    el.sortBtn.className = "sort-btn" + (urg ? " is-urgency" : "");
   }
 
   function renderLastSync() {
@@ -510,6 +567,27 @@
     return CBMOCK().get(id).status;
   }
 
+  /**
+   * 연결 대기 — **지금 나를 기다리는 사람이 있는가.**
+   *
+   * 어르신은 통화를 끝낸 뒤 화면 앞에서 담당자 연결을 기다린다.
+   * 그런데 '미연결' 은 과거 민원 전부의 기본값이라 그것만으로는 신호가 되지 않는다.
+   * 그래서 **접수된 지 얼마 안 됐고 아직 아무도 연결하지 않은 건**만 골라낸다.
+   * (이미 완료·반려한 건은 기다릴 사람이 없으므로 뺀다.)
+   */
+  function isAwaitingHandoff(c) {
+    if (handoffStatusOf(c.id) !== "none") return false;
+    var wf = workflowOf(c);
+    if (wf === "done" || wf === "rejected") return false;
+    var t = new Date(c.created_at).getTime();
+    if (isNaN(t)) return false;
+    return (Date.now() - t) <= WAIT_WINDOW;
+  }
+
+  function awaitingList() {
+    return state.complaints.filter(isAwaitingHandoff);
+  }
+
   /** 어르신이 추가로 물은 것 — 담당자가 답해야 할 목록 */
   function callerQuestions(id) {
     var c = state.callback[id];
@@ -561,6 +639,109 @@
     var name = a && String(a.full_name || "").trim();
     if (!a || !name || name === "미배정") return "unassigned";
     return "assigned";
+  }
+
+  /**
+   * 긴급도. 담당자가 고쳤으면 그 값이 우선한다.
+   * AI 판정 원본은 카드에 그대로 남아 있고 이력에서 확인된다.
+   */
+  function urgencyOf(c) {
+    var e = state.book[c.id];
+    if (e && e.urgency && URG[e.urgency.level]) {
+      return {
+        level: e.urgency.level,
+        reason: e.urgency.reason || "담당자가 직접 조정했습니다.",
+        signals: (c.urgency && c.urgency.signals) || [],
+        decided_by: "officer",
+        safety_referral: (c.urgency && c.urgency.safety_referral) || null,
+        overridden: true,
+        ai: c.urgency || null,
+        history: (c.urgency && c.urgency.history) || []
+      };
+    }
+    var u = c.urgency;
+    if (!u || !URG[u.level]) return null;   // 서버가 아직 안 주는 카드
+    // 서버에서 담당자가 이미 조정한 카드는 urgency.history 에 원래 판정이 들어 있다.
+    var hist = Array.isArray(u.history) ? u.history : [];
+    var byOfficer = u.decided_by === "officer";
+    return {
+      level: u.level,
+      reason: u.reason || "",
+      signals: Array.isArray(u.signals) ? u.signals : [],
+      decided_by: u.decided_by || "rule",
+      safety_referral: u.safety_referral || null,
+      overridden: byOfficer,
+      // 조정됐다면 이력의 첫 항목이 AI 최초 판정이다.
+      ai: byOfficer && hist.length ? hist[0] : u,
+      history: hist
+    };
+  }
+
+  function urgencyRank(c) {
+    var u = urgencyOf(c);
+    return u ? URG[u.level].rank : 2.5;   // 판정 없는 카드는 보통과 낮음 사이
+  }
+
+  function isEmergency(c) {
+    var u = urgencyOf(c);
+    return !!u && u.level === "응급";
+  }
+
+  /**
+   * 담당자가 긴급도를 조정한다. AI 판정과 그 근거는 이력에 남는다.
+   *
+   * 서버에 조정 엔드포인트가 있으면 그쪽에 쓴다(모두에게 반영된다).
+   * 없으면 브라우저 casebook 에만 남긴다 — README 에 그 한계를 밝혀 두었다.
+   */
+  function setUrgency(id, level, reason) {
+    if (!URG[level]) return;
+    var card = byId(id);
+    var cur = card ? urgencyOf(card) : null;
+    if (cur && cur.level === level) return;
+    var at = new Date().toISOString();
+    var note = (reason || "").trim();
+
+    // 이력은 어느 경로로 조정하든 대시보드 쪽에도 남긴다(처리 이력 한 곳에서 보이게).
+    pushHistory(id, {
+      type: "urgency", at: at, by: "담당자",
+      from: cur ? cur.level : "판정 없음",
+      to: level,
+      from_reason: cur ? cur.reason : "",
+      to_reason: note,
+      ai_level: card && card.urgency ? card.urgency.level : null
+    });
+
+    var done = function () {
+      saveBook();
+      toast("긴급도를 '" + level + "' 로 조정했습니다. 이력에 남습니다.");
+      announce("접수번호 " + id + " 긴급도 " + level + ".");
+      render();
+    };
+
+    if (state.apiBase !== null) {
+      fetch(state.apiBase + "/api/complaints/" + encodeURIComponent(id) + "/urgency", {
+        method: "POST",
+        headers: { "Content-Type": "application/json", Accept: "application/json" },
+        body: JSON.stringify({ level: level, reason: note })
+      }).then(function (r) {
+        return r.json().then(function (data) {
+          if (!r.ok) throw new Error(data && data.detail ? data.detail : "HTTP " + r.status);
+          if (card && data.urgency) card.urgency = data.urgency;   // 서버 판정으로 갱신
+          delete (entry(id)).urgency;                              // 로컬 사본은 두지 않는다
+          if (card) delete card._hay;
+          done();
+        });
+      }).catch(function () {
+        // 서버가 못 받으면 브라우저에만 남긴다. 화면이 멈추는 것보다 낫다.
+        entry(id).urgency = { level: level, reason: note, at: at, by: "담당자" };
+        done();
+        toast("서버에 저장하지 못해 이 브라우저에만 반영했습니다.");
+      });
+      return;
+    }
+
+    entry(id).urgency = { level: level, reason: note, at: at, by: "담당자" };
+    done();
   }
 
   /** 처리 상태 — 담당자가 옮기는 값. 기본은 접수됨(미확인). */
@@ -615,20 +796,52 @@
     return !!t && (Date.now() - t) < NEW_TTL;
   }
 
+  /**
+   * 목록 정렬.
+   *
+   * 기본은 **최신순 + 응급 상단 고정**이다. 긴급도 전체 정렬을 기본으로 하지 않은 이유:
+   *  - 담당자에게 목록은 작업 큐다. "위가 최신" 은 1초면 익히는 규칙이고,
+   *    통화가 끝나자마자 새 민원이 맨 위에 뜨는 동작이 이 화면의 실시간성 그 자체다.
+   *  - 긴급도로 전부 정렬하면 방금 들어온 '보통' 이 목록 중간에 끼어 보이지 않는다.
+   *  - 그래서 예외는 하나만 둔다 — **응급**. "사람이 다칠 수 있다. 지금" 은
+   *    스크롤해서 찾게 두면 안 되므로 무조건 위로 올린다.
+   *  - 밀린 건을 훑을 때는 '긴급도순' 토글로 바꾸면 된다. 중요 건만 보려면 필터가 더 빠르다.
+   */
+  function sortRows(rows) {
+    var byRecent = function (a, b) {
+      return String(b.created_at || "").localeCompare(String(a.created_at || ""));
+    };
+    if (state.sortMode === "urgency") {
+      return rows.slice().sort(function (a, b) {
+        var d = urgencyRank(a) - urgencyRank(b);
+        return d !== 0 ? d : byRecent(a, b);
+      });
+    }
+    return rows.slice().sort(function (a, b) {
+      var ea = isEmergency(a) ? 0 : 1, eb = isEmergency(b) ? 0 : 1;
+      return ea !== eb ? ea - eb : byRecent(a, b);
+    });
+  }
+
   function visible() {
     var q = state.filter.q.toLowerCase();
-    return state.complaints.filter(function (c) {
+    return sortRows(state.complaints.filter(function (c) {
       if (state.filter.dept && deptOf(c) !== state.filter.dept) return false;
       if (state.filter.status) {
         var f = state.filter.status;
         if (f.indexOf("wf:") === 0) { if (workflowOf(c) !== f.slice(3)) return false; }
         else if (f.indexOf("as:") === 0) { if (statusOf(c) !== f.slice(3)) return false; }
+        else if (f === "ho:waiting") { if (!isAwaitingHandoff(c)) return false; }
         else if (f.indexOf("ho:") === 0) { if (handoffStatusOf(c.id) !== f.slice(3)) return false; }
         else if (f.indexOf("cb:") === 0) { if (callbackStatusOf(c.id) !== f.slice(3)) return false; }
+        else if (f.indexOf("ug:") === 0) {
+          var u = urgencyOf(c);
+          if (!u || u.level !== f.slice(3)) return false;
+        }
       }
       if (!q) return true;
       return haystack(c).indexOf(q) !== -1;
-    });
+    }));
   }
 
   function haystack(c) {
@@ -642,6 +855,8 @@
     (c.notes || []).forEach(function (n) { parts.push(n && (n.text || n.standard)); });
     var cb = state.callback[c.id];
     if (cb && cb.briefing) parts.push(cb.briefing.standard);
+    var u = urgencyOf(c);
+    if (u) { parts.push(u.level, u.reason); (u.signals || []).forEach(function (x) { parts.push(x); }); }
     var s = parts.filter(Boolean).join(" ").toLowerCase();
     c._hay = s;
     return s;
@@ -717,12 +932,46 @@
       var s = callbackStatusOf(c.id);
       return s === "pending" || s === "answered";
     }).length;
-    el.statLiveSub.textContent = "처리중 " + (wfCount.progress || 0) + "건" +
-      (cbWaiting ? " · 안내 " + cbWaiting + "건 진행" : " · 완료 " + (wfCount.done || 0) + "건");
+    var awaiting = awaitingList().length;
+    el.statLiveSub.textContent = (awaiting ? "연결 대기 " + awaiting + "건 · " : "") +
+      "처리중 " + (wfCount.progress || 0) + "건" +
+      (cbWaiting ? " · 안내 " + cbWaiting + "건" : "");
     el.statUnassigned.textContent = all.filter(function (c) { return statusOf(c) === "unassigned"; }).length;
 
+    renderUrgencyStats(all);
     renderReassignRate(all);
     renderDist(all);
+  }
+
+  /** 긴급도 분포 — 담당자에게 가장 중요한 숫자는 "오늘 응급 몇 건인가" 다. */
+  function renderUrgencyStats(all) {
+    var counts = { 응급: 0, 중요: 0, 보통: 0, 낮음: 0 };
+    var judged = 0, overridden = 0;
+    all.forEach(function (c) {
+      var u = urgencyOf(c);
+      if (!u) return;
+      judged++;
+      counts[u.level] = (counts[u.level] || 0) + 1;
+      if (u.overridden) overridden++;
+    });
+
+    if (!judged) {
+      el.statEmergency.textContent = "–";
+      el.statEmergency.className = "stat-value";
+      el.statUrgencySub.textContent = "서버 판정 대기";
+      el.statUrgencyDist.innerHTML = "";
+      return;
+    }
+
+    el.statEmergency.textContent = counts["응급"];
+    el.statEmergency.className = "stat-value" + (counts["응급"] ? " stat-value--emergency" : "");
+    el.statUrgencySub.textContent = "판정 " + judged + "건" +
+      (overridden ? " · 담당자 조정 " + overridden + "건" : "");
+    el.statUrgencyDist.innerHTML = URGENCY.map(function (u) {
+      var n = counts[u.key] || 0;
+      return '<li class="' + u.cls + '"><span class="urg-dist-k">' + esc(u.key) + "</span>" +
+        '<span class="urg-dist-n">' + n + "</span></li>";
+    }).join("");
   }
 
   /**
@@ -788,7 +1037,22 @@
     state.filter.dept = el.fDept.value;
   }
 
+  function renderWaitBand() {
+    if (!el.waitBand) return;
+    var n = awaitingList().length;
+    if (!n) { el.waitBand.hidden = true; return; }
+    el.waitBand.hidden = false;
+    var filtered = state.filter.status === "ho:waiting";
+    el.waitBand.innerHTML =
+      '<span class="wait-n">연결 대기 ' + n + "건</span>" +
+      '<span class="wait-msg">어르신이 화면 앞에서 담당자 연결을 기다리고 있을 수 있습니다.</span>' +
+      '<span class="wait-act">' + (filtered ? "전체 보기" : "이 건만 보기") + "</span>";
+    el.waitBand.setAttribute("aria-label",
+      "연결 대기 " + n + "건. 눌러서 " + (filtered ? "전체 목록으로 돌아갑니다." : "대기 건만 봅니다."));
+  }
+
   function renderList() {
+    renderWaitBand();
     var rows = visible();
     el.listCount.textContent = rows.length + "건";
 
@@ -805,6 +1069,7 @@
       var wf = workflowOf(c);
       var ho = handoffStatusOf(c.id);
       var cb = callbackStatusOf(c.id);
+      var urg = urgencyOf(c);
       var dept = deptOf(c);
       var fresh = isFresh(c.id);
       // 하이라이트는 도착 직후 한 번만 재생한다. 폴링·필터로 다시 튀지 않게.
@@ -812,7 +1077,9 @@
       if (animate) state.animated[c.id] = 1;
       var selected = c.id === state.selectedId;
       return '<li class="card' + (selected ? " is-selected" : "") +
+          (urg ? " urg-" + URG[urg.level].cls.replace("urg--", "") : "") +
           (ho === "open" ? " is-live" : "") +
+          (ho === "none" && isAwaitingHandoff(c) ? " is-waiting" : "") +
           (animate ? " is-arriving" : "") + '" data-id="' + esc(c.id) + '"' +
           ' id="card-' + esc(c.id) + '" role="option" aria-selected="' + (selected ? "true" : "false") + '">' +
         '<div class="card-top">' +
@@ -823,9 +1090,17 @@
         "</div>" +
         '<p class="card-summary">' + esc(c.summary || "(요약 없음)") + "</p>" +
         '<div class="card-bottom">' +
+          (urg ? '<span class="badge urg-badge ' + URG[urg.level].cls + '" title="' +
+              esc(urg.reason) + '">' + (urg.level === "응급" ? "❗" : "") + esc(urg.level) +
+              (urg.overridden ? " (조정)" : "") + "</span>" : "") +
+          (urg && urg.safety_referral
+            ? '<span class="badge urg-safety">' + esc(urg.safety_referral.number) + " 안내함</span>" : "") +
           '<span class="badge ' + WF[wf].cls + '">' + WF[wf].label + "</span>" +
-          (ho !== "none" ? '<span class="badge ' + HANDOFF[ho].cls + '">' +
-              (ho === "open" ? "● " : "") + HANDOFF[ho].label + "</span>" : "") +
+          (ho !== "none"
+            ? '<span class="badge ' + HANDOFF[ho].cls + '">' +
+              (ho === "open" ? "● " : "") + HANDOFF[ho].label + "</span>"
+            : isAwaitingHandoff(c)
+            ? '<span class="badge ho--waiting">☎ 연결 대기</span>' : "") +
           (cb === "pending" || cb === "answered"
             ? '<span class="badge ' + CALLBACK[cb].cls + '">☎ ' + CALLBACK[cb].label + "</span>" : "") +
           (st !== "assigned" ? '<span class="badge ' + ASSIGN_STATE[st].cls + '">' + ASSIGN_STATE[st].label + "</span>" : "") +
@@ -917,6 +1192,9 @@
         (c.category ? "<span>분류 <b>" + esc(c.category) + "</b></span>" : "") +
         "<span>발화 <b>" + ((c.transcript || []).length) + "턴</b></span>" +
       "</div></div></div>";
+
+    // 긴급도 — 무엇을 먼저 볼지. 안전 안내가 있으면 그것이 화면 최상단이다.
+    html += renderUrgency(raw);
 
     // 처리 상태 — 담당자가 실제로 일을 굴리는 줄
     var wfEntry = state.book[c.id] && state.book[c.id].workflow;
@@ -1056,7 +1334,12 @@
         '<span class="hist-when">' + esc(fmtDateTime(raw.created_at)) + "</span>" +
         '<span class="hist-who">AI</span>' +
         '<div class="hist-what"><b>최초 배정 — ' + esc(aiName) + "</b>" +
-          '<div class="hist-ev">근거: ' + esc(truncate(String(ai.evidence || "근거 없음"), 90)) + "</div></div></li>"
+          '<div class="hist-ev">근거: ' + esc(truncate(String(ai.evidence || "근거 없음"), 90)) + "</div>" +
+          (raw.urgency && raw.urgency.level
+            ? '<div class="hist-ev">긴급도 판정: <b>' + esc(raw.urgency.level) + "</b> — " +
+              esc(truncate(String(raw.urgency.reason || "근거 없음"), 70)) + "</div>"
+            : "") +
+        "</div></li>"
     ];
 
     events.forEach(function (ev) {
@@ -1068,15 +1351,88 @@
           (isAssign
             ? "<b>재배정 — " + esc(ev.from || "미배정") + " → " + esc(ev.to || "") + "</b>" +
               (ev.to_evidence ? '<div class="hist-ev">새 근거: ' + esc(truncate(String(ev.to_evidence), 90)) + "</div>" : "")
+            : ev.type === "urgency"
+            ? "<b>긴급도 " + esc(ev.from || "") + " → " + esc(ev.to || "") + "</b>" +
+              (ev.from_reason ? '<div class="hist-ev">AI 판정 근거: ' + esc(truncate(String(ev.from_reason), 80)) + "</div>" : "") +
+              (ev.to_reason ? '<div class="hist-ev">담당자 사유: ' + esc(ev.to_reason) + "</div>" : "")
             : "처리 상태 " + esc(ev.from || "") + " → <b>" + esc(ev.to || "") + "</b>") +
         "</div></li>");
     });
 
     var flips = events.filter(function (e) { return e.type === "assign"; }).length;
+    var urgFlips = events.filter(function (e) { return e.type === "urgency"; }).length;
     return '<div class="section"><h3>처리 이력' +
-      (flips ? ' <span class="hist-flag">담당자 재배정 ' + flips + "회</span>" : "") + "</h3>" +
+      (flips ? ' <span class="hist-flag">담당자 재배정 ' + flips + "회</span>" : "") +
+      (urgFlips ? ' <span class="hist-flag">긴급도 조정 ' + urgFlips + "회</span>" : "") + "</h3>" +
       '<div class="scroll-x"><ol class="hist">' + rows.reverse().join("") + "</ol></div>" +
       '<p class="note">담당자가 AI 배정을 뒤집은 기록은 라우팅 품질 측정에 쓰입니다(목표: 재배정 20% 미만).</p></div>';
+  }
+
+  /**
+   * 긴급도 블록 (계약 5-A).
+   *
+   * 배정 근거와 같은 원칙 — **왜 이 판정인지(reason)를 반드시 보여 준다.**
+   * 담당자가 납득하지 못하는 표시는 무시되고, 무시되는 순간 이 기능은 없는 것과 같다.
+   * 색만으로 구분하지 않는다: 라벨 글자 + 테두리 + 목록 상단 고정을 겹쳐 쓴다.
+   */
+  function renderUrgency(raw) {
+    var u = urgencyOf(raw);
+    var html = "";
+
+    // 안전 안내가 있으면 무엇보다 먼저 보여 준다.
+    // 담당자가 "이 민원인은 이미 119 안내를 받았다" 를 모르면 중복 안내하거나, 더 나쁘게는
+    // 아무도 신고하지 않았다고 착각한다.
+    if (u && u.safety_referral) {
+      var ref = u.safety_referral;
+      html += '<div class="safety"><span class="safety-mark">안전 안내</span>' +
+        '<div class="safety-body"><b>통화 중 ' + esc(ref.number) + " 안내를 이미 드렸습니다" +
+          (ref.label ? " (" + esc(ref.label) + ")" : "") + ".</b>" +
+          '<span>민원 접수가 신고를 대체하지 않습니다. 필요하면 담당자가 직접 확인해 주세요.</span>' +
+        "</div></div>";
+    }
+
+    if (!u) return html;   // 서버가 아직 판정을 안 주는 카드 — 자리만 비워 둔다
+
+    var meta = URG[u.level];
+    var open = state.urgencyForm === raw.id;
+
+    html += '<div class="urg ' + meta.cls + (u.level === "응급" ? " is-emergency" : "") + '">' +
+      '<div class="urg-top">' +
+        '<span class="urg-label">' + (u.level === "응급" ? "❗ " : "") + esc(u.level) + "</span>" +
+        '<span class="urg-hint">' + esc(meta.hint) + "</span>" +
+        '<span class="urg-by">' +
+          (u.overridden ? "담당자 조정" : u.decided_by === "llm" ? "AI 문맥 판정" : "규칙 판정") + "</span>" +
+        '<button class="btn btn-ghost urg-edit" data-act="urg-edit">긴급도 조정</button>' +
+      "</div>" +
+      '<div class="urg-body">' +
+        '<div class="urg-why">▍이 판정의 근거</div>' +
+        '<p class="urg-reason">' + esc(u.reason || "근거가 기록되지 않았습니다 — 담당자 확인이 필요합니다.") + "</p>" +
+        (u.signals && u.signals.length
+          ? '<ul class="urg-signals">' + u.signals.map(function (x) {
+              return '<li><span class="urg-sig-label">감지 신호</span>' + esc(x) + "</li>";
+            }).join("") + "</ul>"
+          : "") +
+        (u.overridden && u.ai
+          ? '<p class="urg-orig">AI 최초 판정: <b>' + esc(u.ai.level) + "</b> — " +
+            esc(truncate(String(u.ai.reason || "근거 없음"), 70)) + " (처리 이력에 남아 있습니다)</p>"
+          : "") +
+      "</div>";
+
+    if (open) {
+      html += '<div class="urg-form">' +
+        '<span class="urg-form-label">긴급도를 다시 정합니다 — AI 판정은 제안이고 최종 판단은 담당자가 합니다.</span>' +
+        '<div class="urg-choices">' + URGENCY.map(function (x) {
+          return '<button type="button" class="urg-choice ' + x.cls +
+            (x.key === u.level ? " is-on" : "") + '" data-act="urg-set" data-level="' +
+            esc(x.key) + '">' + esc(x.key) + "</button>";
+        }).join("") + "</div>" +
+        '<label class="sr-only" for="urg-reason">조정 사유</label>' +
+        '<input id="urg-reason" type="text" maxlength="120" placeholder="조정 사유 (선택) — 이력에 함께 남습니다">' +
+        '<button class="btn btn-ghost" data-act="urg-cancel">닫기</button>' +
+      "</div>";
+    }
+
+    return html + "</div>";
   }
 
   /**
@@ -1103,7 +1459,11 @@
     return head + '<ul class="notes">' + notes.map(function (n) {
       var text = String((n && (n.text || n.standard)) || "").trim();
       if (!text) return "";
-      var src = (n && n.source) === "caller" ? "신고자" : (n && n.source) || "신고자";
+      var src = NOTE_SOURCE[(n && n.source) || "caller"] || "신고자";
+      // 서버가 본문 앞에 붙여 주는 "[안내 전화 문의] " 같은 접두어는 출처 라벨과 겹친다.
+      // 라벨이 이미 같은 말을 하고 있으니 본문에서는 걷어낸다.
+      var dupe = new RegExp("^\\[\\s*" + src.replace(/[.*+?^${}()|[\]\\]/g, "\\$&") + "\\s*\\]\\s*");
+      text = text.replace(dupe, "");
       return '<li class="note-item">' +
         '<p class="note-text">' + esc(text) + "</p>" +
         '<div class="note-meta"><span class="note-src">' + esc(src) + "</span>" +
@@ -1183,6 +1543,10 @@
     }
 
     // ── 대화
+    // P6 쪽에서 메시지가 중복 저장되는 버그를 고치는 중이다.
+    // 화면에 같은 말이 두 번 뜨면 담당자가 "내가 두 번 보냈나" 를 의심하게 되므로
+    // 완전히 같은 (역할·본문·시각) 메시지는 하나로 접는다. 서버가 고쳐진 뒤에도 무해하다.
+    msgs = dedupeMessages(msgs);
     out += '<ol class="ho-log" id="ho-log">';
     if (!msgs.length) {
       out += '<li class="ho-empty">아직 대화가 없습니다. 아래에 첫 인사를 표준어로 입력하세요.</li>';
@@ -1291,7 +1655,7 @@
     }
 
     // ── 어르신 추가 질문 — 담당자가 답해야 할 것
-    var qs = callerQuestions(raw.id);
+    var qs = dedupeMessages(callerQuestions(raw.id));
     if (qs.length) {
       out += '<div class="cb-questions"><div class="cb-q-head">' +
         '<b>어르신이 추가로 물으신 것</b> <span class="badge cb--pending">' + qs.length + "건</span>" +
@@ -1336,6 +1700,18 @@
     return out + pstn + "</div></div>";
   }
 
+  /** 완전히 동일한 메시지(역할·본문·시각)를 하나로 접는다. */
+  function dedupeMessages(list) {
+    var seen = {}, out = [];
+    (list || []).forEach(function (m) {
+      var k = [m.role, m.standard || m.text || "", m.dialect || "", m.at || ""].join("\u0000");
+      if (seen[k]) return;
+      seen[k] = 1;
+      out.push(m);
+    });
+    return out;
+  }
+
   function fmtClock(iso) {
     var d = new Date(iso);
     if (isNaN(d)) return "";
@@ -1374,6 +1750,7 @@
     var undo = el.detail.querySelector('[data-act="undo"]');
     if (undo) undo.addEventListener("click", function () { undoReassign(raw); });
 
+    bindUrgency(raw);
     bindHandoff(raw);
     bindCallback(raw);
   }
@@ -1485,6 +1862,28 @@
       announce("접수번호 " + raw.id + " 통화를 종료했습니다.");
     }).catch(function (err) {
       toast("종료 실패: " + (err && err.message ? err.message : "다시 시도하세요."));
+    });
+  }
+
+  // ---------- 긴급도 조정 ----------
+  function bindUrgency(raw) {
+    var edit = el.detail.querySelector('[data-act="urg-edit"]');
+    if (edit) edit.addEventListener("click", function () {
+      state.urgencyForm = state.urgencyForm === raw.id ? null : raw.id;
+      renderDetail();
+    });
+    var cancel = el.detail.querySelector('[data-act="urg-cancel"]');
+    if (cancel) cancel.addEventListener("click", function () {
+      state.urgencyForm = null; renderDetail();
+    });
+    el.detail.querySelectorAll('[data-act="urg-set"]').forEach(function (b) {
+      b.addEventListener("click", function () {
+        var input = document.getElementById("urg-reason");
+        setUrgency(raw.id, b.dataset.level, input ? input.value : "");
+        state.urgencyForm = null;
+        delete raw._hay;
+        render();
+      });
     });
   }
 
@@ -1825,9 +2224,17 @@
     hoGet: hoGet,
     hoPost: hoPost,
     handoffStatusOf: handoffStatusOf,
+    isAwaitingHandoff: isAwaitingHandoff,
+    dedupeMessages: dedupeMessages,
+    awaitingList: awaitingList,
     refreshHandoff: refreshHandoff,
     renderHandoff: renderHandoff,
     renderNotes: renderNotes,
+    render: render,
+    urgencyOf: urgencyOf,
+    setUrgency: setUrgency,
+    renderUrgency: renderUrgency,
+    sortRows: sortRows,
     cbGet: cbGet,
     cbPost: cbPost,
     callbackStatusOf: callbackStatusOf,

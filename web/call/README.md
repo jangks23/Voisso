@@ -202,8 +202,33 @@ POST /api/call/turn
 | `slots` | 하단 슬롯 4칸 (`what/where/when/contact` 권장, 별칭도 매핑) |
 | `audio_b64` | 있으면 재생, 없으면 텍스트만 (= 텍스트 모드 정상 동작) |
 | `done` | true 면 "통화 끝내고 민원 접수" 버튼이 강조된다 |
-| **`caller_turn`** | **`{"dialect": "<발신자 원문/STT>", "standard": "<normalize 결과>"}`** |
-| `caller_text` / `caller_standard` | 위와 같은 값을 평평하게 줘도 된다 |
+| **`caller_turn`** | **발신자 발화. 계약 5절의 정본이며 이 UI 의 1순위 소비 대상이다.** 아래 참조 |
+| `caller_text` / `caller_standard` | 하위호환. 새 서버는 `caller_turn` 만 채우면 된다 |
+
+### `caller_turn` — 전사 표시의 정본
+
+```jsonc
+"caller_turn": {
+  "dialect":      "비만 오모 물이 안 빠지가…",   // 어르신이 말한 그대로 (화면 본문)
+  "standard":     "비만 오면 물이 안 빠져서…",   // normalize() 결과 (정규화 후 줄)
+  "source":       "stt" | "text",
+  "stt_raw":      "비만 오면 물이 안 빠졌다…",   // 받아쓴 원본 (받아쓴 것 줄)
+  "stt_provider": "openai" | "web" | "text"      // 머리말에 표시: Whisper / 브라우저 음성인식
+}
+```
+
+**이 필드가 없으면 화면은 그 사실을 감추지 않는다.**
+음성 입력인데 `caller_turn` 이 없으면 프론트에는 표시할 텍스트가 아예 없다.
+- 시연 모드: 빨간 점선 말풍선 + `⚠ 서버가 caller_turn 을 주지 않음`
+- 어르신 모드: "잘 못 알아들었습니더. 다시 말씀해 주이소."
+- 두 모드 모두 콘솔에 `[Voisso] 서버가 caller_turn 을 주지 않았습니다. 응답 필드: …` 경고
+
+**요청에 함께 보내는 추가 필드** (계약 필드는 그대로, 모르면 무시해도 된다)
+
+| 필드 | 언제 | 뜻 |
+|---|---|---|
+| `stt_provider` | 브라우저 음성인식으로 받아쓴 경우 `"web"` | 서버가 `caller_turn.stt_provider` 를 그대로 채우면 된다 |
+| `alternatives` | 후보가 2개 이상일 때 | `[{transcript, confidence}]` — 서버가 방언 사전으로 다시 고를 수 있다 |
 
 > **P6에게 — 지금 비어 있는 한 칸.**
 > `voisso/agent/session.py` 의 `turn()` 은 이미 `caller_dialect` 와
@@ -226,5 +251,5 @@ POST /api/call/turn
 ## 목(mock)의 한계
 
 `mock-api.js` 의 부서·근거는 **데모용 픽스처**다. 방언 정규화는 `dialect-hints.js` 를 통해
-P5 사전(367 표제어)을 실제로 쓰지만, 서버의 `voisso.dialect` 가 언제나 정본이다.
+P5 사전(382 표제어)을 실제로 쓰지만, 서버의 `voisso.dialect` 가 언제나 정본이다.
 실제 라우팅은 P4(`voisso/routing`) + `data/gb_departments.json` 이 한다.

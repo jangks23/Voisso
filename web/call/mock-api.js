@@ -299,13 +299,26 @@ window.VoissoMockAPI = (function () {
     }
     s.turns.push({ role: 'agent', dialect: line.dialect, standard: line.standard });
 
+    const allText = s.turns.filter((t) => t.role === 'caller').map((t) => t.standard).join(' ');
+    const urgency = judgeUrgency(allText);
+    s.urgency = urgency;
+
     return {
+      urgency: urgency,
       reply_text: line.standard,
       reply_dialect: line.dialect,
       audio_b64: null,                 // 목은 TTS 없음 → UI 는 텍스트만 표시해야 한다
       done,
       slots: { ...s.slots },
-      // 아래 두 필드는 목의 편의 필드다. UI 는 없으면 없는 대로 동작한다.
+      // 계약 5절 — 발신자 발화. 이게 정본이다.
+      caller_turn: {
+        dialect: raw,
+        standard: std,
+        source: body.audio_b64 ? 'stt' : (body.stt_provider ? 'stt' : 'text'),
+        stt_raw: body.alternatives && body.alternatives.length ? body.alternatives[0].transcript : raw,
+        stt_provider: body.stt_provider || (body.audio_b64 ? 'openai' : 'text'),
+      },
+      // 아래 두 필드는 하위호환용이다.
       caller_text: raw,
       caller_standard: std,
     };
@@ -332,6 +345,7 @@ window.VoissoMockAPI = (function () {
         phone_token: r.phone_token,
         evidence: r.evidence,
       },
+      urgency: s.urgency || judgeUrgency(s.turns.map((t) => t.standard || '').join(' ')),
       alternatives: (r.alts || []).map((a) => ({ full_name: a[0], score: a[1], evidence: a[2] })),
       caller: {
         name_masked: '김○○',
@@ -346,6 +360,31 @@ window.VoissoMockAPI = (function () {
     };
     sessions.delete(body.session_id);
     return { complaint };
+  }
+
+  /* ── 계약 5-A. 긴급도 (목) ──────────────────────────────────────────
+     규칙이 우선한다. 명백한 위험 신호는 결정적으로 잡고, 응급이면 119 안내를 붙인다.
+     실제 판정은 서버(P6)가 한다. 여기서는 서버 없이도 안전 안내를 시연하기 위한 픽스처다. */
+  const URGENCY_RULES = [
+    { level: '응급', refer: { number: '119', label: '소방·구조' },
+      kw: ['가스', '불이', '화재', '무너지', '붕괴', '함몰', '갇혔', '고립', '감전', '떠내려',
+           '물이 차오', '차오르', '사람이 다치', '다쳤', '쓰러지'],
+      reason: '사람이 다칠 수 있는 상황으로 판단했습니다.' },
+    { level: '중요', refer: null,
+      kw: ['단수', '역류', '넘치', '침수', '잠기', '가로등', '누수', '끊겼'],
+      reason: '방치하면 피해가 커지는 상황입니다.' },
+  ];
+
+  function judgeUrgency(text) {
+    for (const r of URGENCY_RULES) {
+      const hit = r.kw.filter((k) => text.includes(k));
+      if (hit.length) {
+        return { level: r.level, reason: r.reason, signals: hit.slice(0, 3),
+                 decided_by: 'rule', safety_referral: r.refer };
+      }
+    }
+    return { level: '보통', reason: '정상 처리 일정으로 판단했습니다.',
+             signals: [], decided_by: 'rule', safety_referral: null };
   }
 
   /* ── 계약 5-B. 담당자 핸드오프 (목) ──────────────────────────────────
@@ -378,6 +417,17 @@ window.VoissoMockAPI = (function () {
   function ensureHandoff(id) {
     if (!handoffs.has(id)) handoffs.set(id, { id, status: 'none', started: Date.now(), messages: [] });
     return handoffs.get(id);
+  }
+
+  // 시연 트리거용 — 대시보드 대신 담당자를 연결한다.
+  async function handoffStart(id, body) {
+    await sleep(200);
+    const h = ensureHandoff(id);
+    h.status = 'open';
+    h.openedAt = Date.now();
+    h.officer = { name: (body && body.officer_name) ? '홍○○' : '홍○○',
+                  department: (body && body.department) || '기후환경국 맑은물정책과' };
+    return { channel_id: 'mock-' + id, status: 'open', started_at: new Date().toISOString() };
   }
 
   async function handoffGet(id) {
@@ -429,5 +479,67 @@ window.VoissoMockAPI = (function () {
     return { status: 'closed' };
   }
 
-  return { start, turn, end, normalize, handoffGet, handoffSay, handoffClose };
+  /* ── 계약 5-C. 진행 안내 콜백 (목) ───────────────────────────────────
+     서버 없이도 "담당자 처리 → 시스템이 먼저 전화 → AI 사투리 브리핑" 을 보여준다.
+     AI 는 담당자가 쓴 내용만 전달한다. 브리핑에 없는 답은 지어내지 않는다. */
+  const CALLBACK_DELAY_MS = 22000;      // 통화 종료 후 이만큼 뒤에 안내 전화가 온다
+  const BRIEFING_STANDARD = '현장 확인을 마쳤습니다. 이번 주 안에 배수관 준설 작업을 하겠습니다.';
+  const callbacks = new Map();
+
+  function ensureCallback(id) {
+    if (!callbacks.has(id)) {
+      callbacks.set(id, { id: id, status: 'none', created: Date.now(), messages: [] });
+    }
+    return callbacks.get(id);
+  }
+
+  async function callbackGet(id) {
+    await sleep(150);
+    const c = ensureCallback(id);
+    if (c.status === 'none' && Date.now() - c.created >= CALLBACK_DELAY_MS) c.status = 'pending';
+    return {
+      status: c.status,
+      callback_id: 'mock-cb-' + id,
+      complaint_id: id,
+      briefing: { standard: BRIEFING_STANDARD, dialect: toDialect(BRIEFING_STANDARD) },
+      officer: { name: '홍○○', department: '기후환경국 맑은물정책과' },
+      incoming_title: '경상북도청에서 전화가 왔습니더',
+      transport: '브라우저 수신 화면 시뮬레이션 (실제 전화망 연동 아님)',
+      messages: c.messages.slice(),
+    };
+  }
+
+  async function callbackAnswer(id) {
+    await sleep(200);
+    const c = ensureCallback(id);
+    c.status = 'answered';
+    if (!c.messages.length) {
+      c.messages.push({ role: 'agent', text: BRIEFING_STANDARD,
+                        dialect: toDialect(BRIEFING_STANDARD), standard: BRIEFING_STANDARD,
+                        at: new Date().toISOString() });
+    }
+    return await callbackGet(id);
+  }
+
+  async function callbackSay(id, body) {
+    await sleep(260);
+    const c = ensureCallback(id);
+    const raw = (body && body.text) || '';
+    c.messages.push({ role: 'caller', text: raw, dialect: raw, standard: normalize(raw),
+                      at: new Date().toISOString() });
+    // AI 는 브리핑에 없는 답을 만들지 않는다. 담당자에게 넘긴다.
+    const reply = '그건 담당자에게 여쭤보고 다시 연락드릴게예. 말씀하신 내용은 담당자한테 그대로 전할게예.';
+    c.messages.push({ role: 'agent', text: reply, dialect: toDialect(reply), standard: reply,
+                      at: new Date().toISOString() });
+    return { ok: true };
+  }
+
+  async function callbackClose(id) {
+    await sleep(180);
+    ensureCallback(id).status = 'closed';
+    return { status: 'closed' };
+  }
+
+  return { start, turn, end, normalize, handoffStart, handoffGet, handoffSay, handoffClose,
+           callbackGet, callbackAnswer, callbackSay, callbackClose };
 })();

@@ -154,7 +154,7 @@ class HandoffStore:
         safe = "".join(ch for ch in str(complaint_id) if ch.isalnum() or ch in "-_")
         return self.directory / f"{safe}.json" if safe else None
 
-    def get(self, complaint_id: str) -> Handoff | None:
+    def _load_unlocked(self, complaint_id: str) -> Handoff | None:
         path = self._path(complaint_id)
         if path is None or not path.is_file():
             return None
@@ -164,18 +164,46 @@ class HandoffStore:
             log.exception("핸드오프 읽기 실패: %s", path.name)
             return None
 
-    def save(self, handoff: Handoff) -> Path:
+    def _write_unlocked(self, handoff: Handoff) -> Path:
         path = self._path(handoff.complaint_id)
         if path is None:
             raise ValueError("complaint_id 가 비어 있습니다.")
         tmp = path.with_suffix(".json.tmp")
-        with self._lock:
-            tmp.write_text(
-                json.dumps(handoff.to_json(), ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            tmp.replace(path)
+        tmp.write_text(
+            json.dumps(handoff.to_json(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
         return path
+
+    def get(self, complaint_id: str) -> Handoff | None:
+        with self._lock:
+            return self._load_unlocked(complaint_id)
+
+    def save(self, handoff: Handoff) -> Path:
+        with self._lock:
+            return self._write_unlocked(handoff)
+
+    def mutate(self, complaint_id: str, change):
+        """읽기→수정→쓰기를 **락 안에서** 한 번에 한다.
+
+        예전에는 엔드포인트가 `get()` 으로 읽고, 수정하고, `save()` 로 썼다.
+        그 사이에 다른 요청이 끼어들면 한쪽 변경이 통째로 사라진다
+        (동시 호출 2건에 메시지가 1건만 남는 것을 실측했다).
+        클라이언트가 타임아웃으로 재전송하면 반대로 중복처럼 보인다.
+
+        `change(obj)` 는 읽어 온 객체를 받아 수정하고 결과를 돌려준다.
+        `None` 을 돌려주면 저장하지 않는다.
+        """
+        with self._lock:
+            obj = self._load_unlocked(complaint_id)
+            if obj is None:
+                return None, None
+            result = change(obj)
+            if result is not None:
+                self._write_unlocked(obj)
+            return obj, result
+
 
     def statuses(self) -> dict[str, str]:
         """{민원번호: 상태} — 대시보드가 목록에서 한눈에 보도록."""
@@ -204,7 +232,7 @@ class CallbackStore:
         safe = "".join(ch for ch in str(complaint_id) if ch.isalnum() or ch in "-_")
         return self.directory / f"{safe}.json" if safe else None
 
-    def get(self, complaint_id: str) -> Callback | None:
+    def _load_unlocked(self, complaint_id: str) -> Callback | None:
         path = self._path(complaint_id)
         if path is None or not path.is_file():
             return None
@@ -214,18 +242,46 @@ class CallbackStore:
             log.exception("콜백 읽기 실패: %s", path.name)
             return None
 
-    def save(self, callback: Callback) -> Path:
+    def _write_unlocked(self, callback: Callback) -> Path:
         path = self._path(callback.complaint_id)
         if path is None:
             raise ValueError("complaint_id 가 비어 있습니다.")
         tmp = path.with_suffix(".json.tmp")
-        with self._lock:
-            tmp.write_text(
-                json.dumps(callback.to_json(), ensure_ascii=False, indent=2) + "\n",
-                encoding="utf-8",
-            )
-            tmp.replace(path)
+        tmp.write_text(
+            json.dumps(callback.to_json(), ensure_ascii=False, indent=2) + "\n",
+            encoding="utf-8",
+        )
+        tmp.replace(path)
         return path
+
+    def get(self, complaint_id: str) -> Callback | None:
+        with self._lock:
+            return self._load_unlocked(complaint_id)
+
+    def save(self, callback: Callback) -> Path:
+        with self._lock:
+            return self._write_unlocked(callback)
+
+    def mutate(self, complaint_id: str, change):
+        """읽기→수정→쓰기를 **락 안에서** 한 번에 한다.
+
+        예전에는 엔드포인트가 `get()` 으로 읽고, 수정하고, `save()` 로 썼다.
+        그 사이에 다른 요청이 끼어들면 한쪽 변경이 통째로 사라진다
+        (동시 호출 2건에 메시지가 1건만 남는 것을 실측했다).
+        클라이언트가 타임아웃으로 재전송하면 반대로 중복처럼 보인다.
+
+        `change(obj)` 는 읽어 온 객체를 받아 수정하고 결과를 돌려준다.
+        `None` 을 돌려주면 저장하지 않는다.
+        """
+        with self._lock:
+            obj = self._load_unlocked(complaint_id)
+            if obj is None:
+                return None, None
+            result = change(obj)
+            if result is not None:
+                self._write_unlocked(obj)
+            return obj, result
+
 
     def statuses(self) -> dict[str, str]:
         out: dict[str, str] = {}

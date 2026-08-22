@@ -309,6 +309,97 @@ def _handoff_markdown() -> str:
     return "".join(out)
 
 
+#: 담당자가 대시보드에 쓸 법한 진행 상황. callback_samples.md 는 여기서 생성된다.
+BRIEFING_SAMPLES = [
+    ("현장 확인 후", "현장 확인 완료. 이번 주 내 배수관 준설 예정입니다."),
+    ("현장 확인 후", "어제 현장에 나가 확인했고, 배수관 교체가 필요한 것으로 판단됩니다."),
+    ("현장 확인 후", "현장 점검 결과 이상 없음."),
+    ("일정 안내", "8월 25일 오전에 굴착 작업 예정입니다."),
+    ("일정 안내", "예산 확보되어 다음 달 착공합니다."),
+    ("일정 안내", "임시 조치 완료. 본 공사는 우기 종료 후 진행 예정."),
+    ("진행 중", "업체 선정 중입니다. 선정되는 대로 다시 안내드리겠습니다."),
+    ("진행 중", "추가 확인이 필요하여 처리가 지연되고 있습니다."),
+    ("진행 중", "신청하신 지원금은 심사 중이며 결과는 9월 초 통보 예정입니다."),
+    ("완료·이관", "민원 처리 완료되었습니다. 확인 부탁드립니다."),
+    ("완료·이관", "관할 시청으로 이관 완료했습니다."),
+    ("완료·이관", "담당 부서 변경되었습니다. 건설도시국 도로과에서 처리합니다."),
+    ("보완 요청", "서류 보완 요망."),
+    ("보완 요청", "보완 서류를 제출해 주셔야 심사가 진행됩니다."),
+]
+
+#: 어르신이 브리핑을 듣고 물을 법한 것들.
+CALLBACK_QUESTIONS = [
+    "그라믄 언제 됩니꺼?",
+    "얼매나 걸리노?",
+    "돈은 얼마나 드노?",
+    "진짜 되는 거 맞나예?",
+    "누가 오노?",
+    "접수번호가 몇 번이라예?",
+    "어느 부서에서 맡아 하노?",
+    "누가 담당이라예?",
+    "알겠심더. 고맙습니더.",
+]
+
+
+def _callback_markdown() -> str:
+    from . import briefing_to_dialect, callback_question, deflection_line, officer_to_dialect
+
+    out = [
+        "# 진행 안내 콜백 — 브리핑 사투리 변환 검수\n\n",
+        "> 이 파일은 `python -m voisso.dialect --callback` 로 **생성된다.**\n",
+        "> 손으로 고치지 말고 사전이나 표본을 고친 뒤 다시 생성하라.\n\n",
+        "계약서 5-C. 담당자가 진행 상황을 표준어로 쓰면 **AI 가 어르신에게 전화를 걸어 "
+        "사투리로 읽어 준다.**\n\n",
+        "> ⚠️ **실제 전화망(PSTN) 연동은 H3 다.** 지금은 브라우저에서 수신 화면을 띄우는 "
+        "시뮬레이션이다.\n\n",
+        "## P6 이 부를 함수\n\n```python\n"
+        "from voisso.dialect import briefing_to_dialect, callback_question\n\n"
+        "dialect = briefing_to_dialect(briefing_text)   # 어르신이 들을 브리핑\n"
+        "# standard 는 원문 그대로 저장한다 (계약서 5-C: 둘 다 보관)\n\n"
+        "verdict = callback_question(caller_text)       # 추가 질문 처리\n"
+        "if verdict[\"verdict\"] == \"relay\":\n"
+        "    say(verdict[\"suggested_reply\"])          # AI 가 답하지 않는다\n"
+        "    relay_to_officer(caller_text)\n```\n\n",
+        "### 핸드오프(5-B)와 한 단계 다르다\n\n",
+        "**브리핑은 소리 내어 읽는다.** 공문은 \"현장 확인 완료.\" 처럼 명사로 끝나는데, "
+        "그대로 읽으면 전화가 아니라 공문 낭독이 된다. 그래서 브리핑 경로에서만 "
+        "문장 종결형으로 먼저 편다.\n\n",
+        "| 입력 | `officer_to_dialect` (5-B 채팅) | `briefing_to_dialect` (5-C 낭독) |\n|---|---|---|\n",
+        f"| 현장 확인 완료. | {officer_to_dialect('현장 확인 완료.')} (그대로) "
+        f"| {briefing_to_dialect('현장 확인 완료.')} |\n\n",
+        "---\n\n## 브리핑 변환 결과\n\n",
+    ]
+
+    current = None
+    for label, text in BRIEFING_SAMPLES:
+        if label != current:
+            out.append(f"\n### {label}\n\n| 담당자 입력 (표준어) | 어르신이 듣는 말 (경북) |\n|---|---|\n")
+            current = label
+        out.append(f"| {text} | {briefing_to_dialect(text)} |\n")
+
+    out.append("\n---\n\n## 추가 질문 처리 — 절대 규칙\n\n")
+    out.append(
+        "**AI 는 담당자가 쓴 내용만 전달한다.** \"언제 됩니꺼?\" 에 브리핑에 없는 답을 "
+        "지어내면 그것은 **행정 약속**이 된다. 공공기관이 이걸 보면 채택하지 않는다.\n\n"
+        "그래서 질문을 두 갈래로 가른다. **애매하면 넘기는 쪽이다.**\n\n"
+        "| 어르신 질문 | 판정 | 근거 |\n|---|---|---|\n"
+    )
+    for question in CALLBACK_QUESTIONS:
+        verdict = callback_question(question)
+        mark = "🚫 담당자에게 넘김" if verdict["verdict"] == "relay" else "✅ 답해도 됨"
+        matched = ", ".join(f"`{m}`" for m in verdict["matched"][:2]) or "—"
+        out.append(f"| {question} | {mark} | {matched} |\n")
+
+    out.append("\n### 넘길 때 쓰는 문장\n\n")
+    for index in range(3):
+        out.append(f"- {deflection_line(index)}\n")
+    out.append(
+        "\n일정·가능 여부를 단정하는 말이 들어가지 않는지 테스트로 고정해 뒀다 "
+        "(`tests/test_callback.py`).\n"
+    )
+    return "".join(out)
+
+
 def _demo() -> None:
     print("\n어르신 발화 → 표준어  (normalize · STT 결과 교정)")
     print("=" * 78)
@@ -429,6 +520,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--samples", action="store_true", help="samples.md 내용 생성")
     parser.add_argument("--demo-lines", action="store_true", help="demo_lines.md 내용 생성")
     parser.add_argument("--handoff", action="store_true", help="handoff_samples.md 내용 생성")
+    parser.add_argument("--callback", action="store_true", help="callback_samples.md 내용 생성")
     parser.add_argument("--roundtrip-report", action="store_true", help="왕복 보존 통과율")
     parser.add_argument("--stats", action="store_true", help="사전 규모·분포")
     parser.add_argument("-v", "--verbose", action="store_true", help="적용된 규칙을 함께 표시")
@@ -444,6 +536,8 @@ def main(argv: list[str] | None = None) -> int:
         print(_demo_lines_markdown(), end="")
     elif args.handoff:
         print(_handoff_markdown(), end="")
+    elif args.callback:
+        print(_callback_markdown(), end="")
     elif args.roundtrip_report:
         return _roundtrip_report()
     elif args.stats:

@@ -37,17 +37,21 @@ from .core import (
     STRENGTHS,
     LexiconError,
     admin_plain,
+    callback_data,
     convert,
     cues,
     entries,
+    expand_noun_final,
     explain,
     load_lexicon,
+    noun_final,
     restricted_entries,
     rules,
     soften,
     source_counts,
 )
 from .llm import refine
+from .risk import RISK_PATH, detect_risk, load_risk_signals
 
 __all__ = [
     "normalize",
@@ -56,7 +60,13 @@ __all__ = [
     "rule_count",
     "explain",
     "closing_cues",
+    "detect_risk",
+    "load_risk_signals",
     "officer_to_dialect",
+    "briefing_to_dialect",
+    "callback_question",
+    "deflection_line",
+    "expand_noun_final",
     "soften",
     "admin_plain",
     "source_counts",
@@ -68,6 +78,7 @@ __all__ = [
     "refine",
     "LexiconError",
     "LEXICON_PATH",
+    "RISK_PATH",
     "STRENGTHS",
 ]
 
@@ -186,3 +197,99 @@ def officer_to_dialect(text: str) -> str:
         '많이 불편하셨겠습니더. 최대한 빨리 처리하겠습니더.'
     """
     return to_dialect(soften(text), strength="light")
+
+
+def briefing_to_dialect(text: str) -> str:
+    """담당자가 쓴 진행 상황을 **AI 가 읽어 줄** 경북 말투로. (계약서 5-C)
+
+    핸드오프(:func:`officer_to_dialect`)와 한 단계 다르다. 브리핑은 **소리 내어 읽는다.**
+    공문은 "현장 확인 완료." 처럼 명사로 끝나는데, 이걸 그대로 읽으면 전화가 아니라
+    공문 낭독이 된다. 그래서 문장 종결형으로 먼저 편다.
+
+    1. :func:`expand_noun_final` — "확인 완료." → "확인 다 했습니다."
+    2. :func:`soften` — "준설"→"바닥 흙 파내는 작업", "착공"→"공사 시작"
+    3. :func:`to_dialect` ``strength="light"`` — 종결어미만 경북으로
+
+    **이 함수는 내용을 만들지 않는다.** 담당자가 쓴 말을 바꿔 말할 뿐, 처리 결과·일정·
+    가능 여부를 생성하지 않는다 (계약서 5-C 절대 규칙). 브리핑에 없는 답은 여기서도 안 나온다.
+
+    호출한 쪽은 원문(``standard``)과 이 결과(``dialect``)를 **둘 다** 저장해야 한다.
+    담당자가 "내가 쓴 대로 전달됐는가" 를 확인할 수 있어야 하기 때문이다.
+
+    사용 예::
+
+        >>> briefing_to_dialect("현장 확인 완료. 이번 주 내 배수관 준설 예정입니다.")
+        '현장 확인 다 했습니더. 이번 주 내 배수관 바닥 흙 파내는 작업 예정입니더.'
+    """
+    return to_dialect(soften(expand_noun_final(text)), strength="light")
+
+
+def callback_question(text: str) -> dict[str, object]:
+    """어르신의 추가 질문을 AI 가 답해도 되는지 가른다. (계약서 5-C 절대 규칙)
+
+    **AI 는 담당자가 쓴 내용만 전달한다.** 브리핑에 없는 답을 지어내면 그것은
+    행정 약속이 된다. 그래서 질문을 두 갈래로 나눈다.
+
+    - ``"relay"``      — 새 정보를 요구한다. **AI 가 답하면 안 된다.** 받아 적어 넘긴다.
+    - ``"answerable"`` — 이미 확정된 사실 확인(접수번호·부서명). 답해도 된다.
+
+    **애매하면 ``"relay"`` 다.** 지어내는 것보다 넘기는 편이 언제나 낫다.
+
+    Returns:
+        ``{"verdict": "relay"|"answerable", "matched": [...], "reason": "...",
+           "suggested_reply": "..."}``
+        ``suggested_reply`` 는 ``relay`` 일 때만 채워진다 (사투리 변환까지 마친 문장).
+
+    사용 예::
+
+        >>> callback_question("그라믄 언제 됩니꺼?")["verdict"]
+        'relay'
+        >>> callback_question("접수번호가 몇 번이라예?")["verdict"]
+        'answerable'
+    """
+    try:
+        data = callback_data()
+        standard = normalize(text or "")
+        def hits(key: str) -> list[str]:
+            return [p for p in data.get(key, []) if p and (p in (text or "") or p in standard)]
+
+        relay, answer = hits("must_relay"), hits("answerable")
+        # 새 정보 요구가 하나라도 있으면 넘긴다. 확인 질문과 겹쳐도 마찬가지다.
+        if relay:
+            return {
+                "verdict": "relay",
+                "matched": relay,
+                "reason": f"새 정보를 요구하는 표현({', '.join(repr(m) for m in relay[:3])})이 있다. "
+                          "브리핑에 없는 답을 지어내면 행정 약속이 된다.",
+                "suggested_reply": deflection_line(),
+            }
+        if answer:
+            return {
+                "verdict": "answerable",
+                "matched": answer,
+                "reason": "이미 확정된 사실 확인이라 답해도 된다.",
+                "suggested_reply": "",
+            }
+        return {
+            "verdict": "relay",
+            "matched": [],
+            "reason": "확정된 사실 확인으로 보이지 않는다. 애매하면 넘기는 쪽이 안전하다.",
+            "suggested_reply": deflection_line(),
+        }
+    except LexiconError:
+        return {"verdict": "relay", "matched": [], "reason": "사전을 읽지 못했다 — 안전 쪽으로 넘긴다",
+                "suggested_reply": ""}
+
+
+def deflection_line(index: int = 0) -> str:
+    """브리핑에 없는 것을 물었을 때 쓸 문장 (사투리 변환까지 마친 것).
+
+    계약서 5-C: "모르는 것은 '담당자에게 여쭤보고 다시 연락드릴게예' 로 넘긴다."
+    """
+    try:
+        lines = callback_data().get("deflection", [])
+        if not lines:
+            return "담당자에게 여쭤보고 다시 연락드릴게예."
+        return briefing_to_dialect(lines[index % len(lines)])
+    except LexiconError:
+        return "담당자에게 여쭤보고 다시 연락드릴게예."

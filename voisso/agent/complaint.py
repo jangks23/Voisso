@@ -258,6 +258,7 @@ def build_complaint(
     category: str,
     routing_query: str = "",
     notes: list[dict[str, Any]] | None = None,
+    urgency: dict[str, Any] | None = None,
 ) -> dict[str, Any]:
     """계약서 5절 민원카드를 만든다. 키 구성은 계약서와 정확히 같다."""
     assigned, alternatives = build_assignment(routing_query, slots)
@@ -279,6 +280,15 @@ def build_complaint(
         "duration_sec": int(duration_sec),
         "summary": redact_phones(resolved_summary),
         "category": (category or "").strip() or "기타 민원",
+        # 계약서 5-A. 담당자가 무엇을 먼저 볼지 정해 준다.
+        "urgency": urgency or {
+            "level": "보통",
+            "reason": "위험 신호가 없어 정상 처리 일정으로 분류했습니다.",
+            "signals": [],
+            "decided_by": "rule",
+            "safety_referral": None,
+            "history": [],
+        },
         "assigned": assigned,
         "alternatives": alternatives,
         "caller": {

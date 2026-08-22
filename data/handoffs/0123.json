@@ -1,0 +1,10 @@
+{
+  "complaint_id": "0123",
+  "channel_id": "737c3664c3554995ad37d3b50934283a",
+  "status": "closed",
+  "officer_name_masked": "이○○",
+  "officer_department": "기후환경국 기후환경정책과",
+  "started_at": "2026-08-22T03:51:34Z",
+  "closed_at": "2026-08-22T03:51:34Z",
+  "messages": []
+}

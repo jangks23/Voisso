@@ -34,7 +34,11 @@ window.VOISSO_DASHBOARD_CONFIG = {
   POLL_IDLE_AFTER_MS: 120000,
 
   // 새 민원 NEW 뱃지 유지 시간(ms). 카드를 열어보면 그 전에 사라진다.
-  NEW_BADGE_TTL_MS: 300000
+  NEW_BADGE_TTL_MS: 300000,
+
+  // 접수 직후 이 시간 안에 담당자 연결이 없으면 "연결 대기" 로 본다.
+  // 어르신이 통화를 끝내고 화면 앞에서 기다리고 있을 수 있는 구간이다.
+  HANDOFF_WAIT_WINDOW_MS: 900000
 };
 
 // URL 로도 덮어쓸 수 있다 (데모 중 손이 빠른 쪽이 이긴다).

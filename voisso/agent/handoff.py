@@ -103,7 +103,30 @@ class Handoff:
             officer_department=(department or "").strip(),
         )
 
+    # 같은 말이 이 시간 안에 다시 오면 재전송으로 본다.
+    # (브라우저 더블클릭, 타임아웃 후 재시도 — 담당자 대화가 두 번씩 보이면
+    #  시연에서 바로 눈에 띈다)
+    DUPLICATE_WINDOW_SEC = 10
+
+    def find_recent_duplicate(self, role: str, text: str) -> HandoffMessage | None:
+        cleaned = (text or "").strip()
+        if not cleaned or not self.messages:
+            return None
+        last = self.messages[-1]
+        if last.role != role or last.text != cleaned:
+            return None
+        try:
+            when = datetime.fromisoformat(last.at.replace("Z", "+00:00"))
+        except ValueError:
+            return None
+        age = (datetime.now(timezone.utc) - when).total_seconds()
+        return last if age <= self.DUPLICATE_WINDOW_SEC else None
+
     def add_message(self, role: str, text: str) -> HandoffMessage:
+        existing = self.find_recent_duplicate(role, text)
+        if existing is not None:
+            return existing
+
         dialect, standard = translate(role, text)
         message = HandoffMessage(
             role=role,

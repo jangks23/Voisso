@@ -11,7 +11,10 @@
     phone: $('phone'),
     btnTheme: $('btnTheme'), btnSize: $('btnTextSize'), btnMode: $('btnMode'),
     demoBar: $('demoBar'), elderStatus: $('elderStatus'), micLabel: $('micLabel'),
-    screens: { idle: $('screenIdle'), call: $('screenCall'), result: $('screenResult') },
+    safetyBar: $('safetyBar'), safetyHead: $('safetyHead'),
+    safetyCall: $('safetyCall'), safetyCallLabel: $('safetyCallLabel'),
+    screens: { idle: $('screenIdle'), call: $('screenCall'), result: $('screenResult'),
+               incoming: $('screenIncoming') },
     btnCall: $('btnCall'), modeChip: $('modeChip'),
     callee: document.querySelector('.callee'), callStatus: $('callStatus'), callTimer: $('callTimer'),
     chkStdAll: $('chkStandardAll'), pathChip: $('pathChip'),
@@ -21,7 +24,11 @@
     btnMic: $('btnMic'), micLevel: document.querySelector('.mic-level'),
     hint: $('composerHint'), btnEnd: $('btnEnd'),
     delivery: $('delivery'), card: $('card'), btnAgain: $('btnAgain'),
-    handoffWait: $('handoffWait'),
+    handoffWait: $('handoffWait'), btnAnswer: $('btnAnswer'),
+    hwElapsed: $('hwElapsed'), hwNo: $('hwNo'),
+    btnSimOfficer: $('btnSimOfficer'), btnSimOfficerMsg: $('btnSimOfficerMsg'),
+    demoBarText: $('demoBarText'), btnSimMsg2: $('btnSimMsg2'),
+    incomingTitle: $('incomingTitle'), incomingSub: $('incomingSub'), incomingNote: $('incomingNote'),
     audio: $('replyAudio'), toast: $('toast'),
   };
 
@@ -31,6 +38,7 @@
     showStdAll: false, recording: false, recognizing: false, inputPath: 'text', lastMs: 0,
     serverStt: null,          // /api/health 가 알려주는 서버 STT 가용 여부 (null = 아직 모름)
     handoff: { id: null, status: 'none', open: false, rendered: 0, timer: 0, officer: null },
+    callback: { status: 'none', open: false, rendered: 0, officer: null },
     callerBubbles: [],        // 통화 중 만든 내 말풍선들 (종료 후 서버 전사로 채운다)
     sttForced: null,          // 사용자가 화면에서 직접 고른 경로
   };
@@ -226,7 +234,7 @@
       state.lastMs ? '응답 <b>' + (state.lastMs / 1000).toFixed(1) + '초</b>' : '',
       state.handoff.open ? '<b>담당자 연결됨</b>' : '',
     ].filter(Boolean);
-    el.demoBar.innerHTML = bits.join(' · ');
+    el.demoBarText.innerHTML = bits.join(' · ');
   }
 
   /* ── 화면 전환 ─────────────────────────────────────────── */
@@ -307,7 +315,10 @@
       '<div class="bubble-dialect"></div>' +
       '<div class="bubble-std">' +
         '<div class="std-row alt-row" hidden>' +
-          '<span class="lbl">받아쓴 것 (STT 1순위)</span><span class="alt-body"></span>' +
+          '<span class="lbl">받아쓴 것 (STT 원본)</span><span class="alt-body"></span>' +
+        '</div>' +
+        '<div class="std-row sent-row" hidden>' +
+          '<span class="lbl">보낸 것</span><span class="sent-body"></span>' +
         '</div>' +
         '<div class="std-row">' +
           '<span class="lbl">' + esc(L.std) + '</span><span class="std-body"></span>' +
@@ -370,6 +381,23 @@
         scrollDown();
       },
       remove() { b.remove(); },
+      // 서버가 알려준 STT 출처를 머리말에 반영한다 (Whisper / 브라우저 음성인식)
+      setSource(provider) {
+        if (!provider) return;
+        const name = provider === 'web' ? '브라우저 음성인식'
+                   : /openai|whisper/i.test(provider) ? 'Whisper 음성인식'
+                   : provider === 'text' ? '직접 입력' : provider;
+        const w = b.querySelector('.who-text');
+        if (w && role === 'caller') w.textContent = '나 · 받아쓴 것 (' + name + ')';
+      },
+      // 실제로 서버에 보낸 텍스트가 표시된 것과 다르면 그대로 드러낸다
+      setSent(text) {
+        const row = b.querySelector('.sent-row');
+        const chosen = (b.querySelector('.bubble-dialect').textContent || '').trim();
+        const t = (text || '').trim();
+        row.hidden = !(t && t !== chosen);
+        if (!row.hidden) b.querySelector('.sent-body').textContent = t;
+      },
     };
     api.set(dialect, standard);
     if (o.listening) api.live(dialect);
@@ -548,6 +576,7 @@
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
     state.callerBubbles = []; state.slotRevisions = [];
+    state.safety = null; el.safetyBar.hidden = true;
     renderSlots({});
     setBusy(true);
 
@@ -623,24 +652,39 @@
       const r = await API.turn(state.sessionId, payload) || {};
       state.lastMs = Date.now() - t0;
 
-      // 발신자 발화: 서버가 STT/정규화 결과를 주면 그것으로 교체한다.
-      const callerRaw = r.caller_text || r.stt_text || r.user_text ||
-        (typeof r.transcript === 'string' ? r.transcript : null);
-      let callerStd = r.caller_standard || r.text_standard || r.normalized_text || null;
-      // 계약서 5절 transcript 항목 형태로 오는 경우도 받는다: {"caller_turn": {"dialect","standard"}}
-      const ct = r.caller_turn || (r.caller && (r.caller.dialect || r.caller.standard) ? r.caller : null);
-      if (ct) { callerStd = ct.standard || callerStd; }
-      const ctDia = ct && ct.dialect ? ct.dialect : null;
+      // ── 발신자 발화 (계약 5절) ──────────────────────────────
+      // caller_turn 이 정본이다. 나머지 필드는 구버전 서버용 하위호환일 뿐이다.
+      const ct = readCallerTurn(r);
+      const sent = payload.text || '';                 // 우리가 실제로 서버에 보낸 텍스트
+      const dia = ct.dialect || sent || '';
+      const callerStd = ct.standard || null;
+
       if (callerBubble) {
-        const dia = ctDia || callerRaw || payload.text || '(음성 발화)';
-        callerBubble.set(dia, callerStd || dia);
-        if (o.top1 && callerBubble.setTop1) callerBubble.setTop1(o.top1);
-        state.turns.push({ role: 'caller', dialect: dia, standard: callerStd || dia });
+        if (dia) {
+          callerBubble.set(dia, callerStd || dia);
+          // 시연 모드 3단 표시: [받아쓴 것] stt_raw → [정규화 후] standard → [보낸 것] sent
+          const rawTop = ct.stt_raw && ct.stt_raw !== dia ? ct.stt_raw : (o.top1 || null);
+          if (rawTop && callerBubble.setTop1) callerBubble.setTop1(rawTop);
+          if (callerBubble.setSource) callerBubble.setSource(ct.stt_provider || o.sttProvider || null);
+          if (callerBubble.setSent) callerBubble.setSent(sent);
+          state.turns.push({ role: 'caller', dialect: dia, standard: callerStd || dia });
+        } else {
+          // 서버가 caller_turn 을 주지 않았다. 조용히 감추지 않는다 — 그건 버그다.
+          console.warn('[Voisso] 서버가 caller_turn 을 주지 않았습니다. 발화 텍스트를 표시할 수 없습니다. ' +
+                       '응답 필드: ' + Object.keys(r).join(', '));
+          state.callerTurnMissing = true;
+          if (isDemo()) {
+            callerBubble.set('⚠ 서버가 caller_turn 을 주지 않음 (전사 텍스트 없음)', '');
+            callerBubble.node.classList.add('missing');
+          } else {
+            callerBubble.set('잘 못 알아들었습니더. 다시 말씀해 주이소.', '');
+          }
+        }
       }
 
       // 음성 발화에서 정규화가 실제로 일어났다면, 그 결과를 잠깐 보여주고 답변을 띄운다.
       // (데모 스크립트의 핵심 컷 — STT 원문과 정규화 결과가 같이 보이는 프레임)
-      if (o.source === 'voice' && callerStd && callerStd !== (ctDia || callerRaw || payload.text)) {
+      if (o.source === 'voice' && callerStd && callerStd !== dia) {
         await new Promise((res) => setTimeout(res, CFG.VOICE_REVEAL_MS == null ? 700 : CFG.VOICE_REVEAL_MS));
       }
 
@@ -654,6 +698,7 @@
       }
 
       renderSlots(normalizeSlots(r.slots));
+      if (r.urgency) applySafety(r.urgency);      // 응급이면 통화 중에 바로 안내한다
       renderDemoBar();
       playAudio(r.audio_b64, r.audio_mime);
       if (!state.handoff.open) say('말씀해 주이소');
@@ -679,6 +724,7 @@
     if (!t) { el.textIn.focus(); return; }
     el.textIn.value = '';
     // 핸드오프가 열리면 AI 를 부르지 않는다. 담당자에게 바로 간다.
+    if (state.callback.open) { sendCallback(t); return; }
     if (state.handoff.open) { sendHandoff(t); return; }
     sendTurn({ text: t });
   }
@@ -726,6 +772,76 @@
     }
   }
 
+  /* 발신자 발화 읽기 — 계약 5절 caller_turn 이 1순위다.
+       {"dialect","standard","source":"stt"|"text","stt_raw","stt_provider"}
+     아래 나머지는 caller_turn 이전 서버를 위한 하위호환이며, 새 코드에서는 쓰지 마라. */
+  function readCallerTurn(r) {
+    const ct = r && r.caller_turn;
+    if (ct && (ct.dialect || ct.standard)) {
+      return {
+        dialect: ct.dialect || ct.standard || '',
+        standard: ct.standard || null,
+        stt_raw: ct.stt_raw || null,
+        stt_provider: ct.stt_provider || null,
+        source: ct.source || null,
+      };
+    }
+    // ── 하위호환 (구버전 서버) ──
+    const legacyDia = (r && (r.caller_text || r.stt_text || r.user_text)) ||
+      (r && typeof r.transcript === 'string' ? r.transcript : null) ||
+      (r && r.caller && r.caller.dialect) || null;
+    const legacyStd = (r && (r.caller_standard || r.text_standard || r.normalized_text)) ||
+      (r && r.caller && r.caller.standard) || null;
+    return { dialect: legacyDia || '', standard: legacyStd, stt_raw: null,
+             stt_provider: null, source: null, legacy: !!(legacyDia || legacyStd) };
+  }
+
+  /* ── 계약 5-A. 안전 안내 ───────────────────────────────────
+     긴급도 자체는 담당자용이라 어르신에게 보여주지 않는다("응급입니다"는 불안만 준다).
+     단 하나의 예외가 이것 — 응급 판정 시 서버가 safety_referral 을 내려보내면
+     크고 명확하게, 그리고 **접수가 신고를 대체하지 않는다**는 것을 함께 알린다. */
+  function applySafety(urgency) {
+    const sr = urgency && urgency.safety_referral;
+    if (!sr || !sr.number) return false;
+    const num = String(sr.number).replace(/[^0-9*#+]/g, '');
+    if (!num) return false;
+    el.safetyHead.textContent = '지금 위험하시믄 먼저 ' + num + '에 전화해 주이소';
+    el.safetyCall.href = 'tel:' + num;
+    el.safetyCallLabel.textContent = num + (sr.label ? ' (' + sr.label + ')' : '') + ' 전화 걸기';
+    el.safetyCall.setAttribute('aria-label', num + '에 전화 걸기');
+    el.safetyBar.hidden = false;
+    state.safety = { number: num, label: sr.label || '' };
+    return true;
+  }
+
+  function safetyHTML() {
+    if (!state.safety) return '';
+    const n = esc(state.safety.number);
+    return '<div class="safety-bar" role="alert">' +
+      '<p class="sb-head">지금 위험하시믄 먼저 ' + n + '에 전화해 주이소</p>' +
+      '<a class="sb-call" href="tel:' + n + '" aria-label="' + n + '에 전화 걸기">' + n +
+      (state.safety.label ? ' (' + esc(state.safety.label) + ')' : '') + ' 전화 걸기</a>' +
+      '<p class="sb-sub">민원은 접수해 뒀습니더. 신고는 따로 해 주셔야 합니더.</p></div>';
+  }
+
+  // 긴급도 상세는 시연 모드에서만 (CSS 로 숨긴다. 데이터는 항상 들어 있다)
+  function urgencyHTML(u) {
+    if (!u || !u.level) return '';
+    const sig = (u.signals || []).map((x) => '<span class="tag">' + esc(x) + '</span>').join('');
+    return '<div class="urgency-box"><div class="field-key">AI 긴급도 판정</div>' +
+      '<span class="urgency-badge" data-level="' + esc(u.level) + '">' + esc(u.level) + '</span>' +
+      (u.decided_by ? ' <span class="tag">' + esc(u.decided_by) + '</span>' : '') +
+      (u.reason ? '<div class="evidence" style="margin-top:8px"><b>판정 근거</b>' + esc(u.reason) + '</div>' : '') +
+      (sig ? '<div class="urgency-signals">' + sig + '</div>' : '') +
+      // 담당자가 AI 판정을 고치면 이력이 남는다. "AI 판정은 제안, 최종 판단은 사람"을 보여주는 자리다.
+      ((u.history && u.history.length)
+        ? '<div class="alts" style="margin-top:8px">' + u.history.map((h) =>
+            '<div class="alt"><span>이전 판정 <b>' + esc(h.level || '') + '</b>' +
+            (h.decided_by ? ' (' + esc(h.decided_by) + ')' : '') +
+            (h.reason ? ' · ' + esc(h.reason) : '') + '</span></div>').join('') + '</div>'
+        : '') + '</div>';
+  }
+
   /* ── 계약 5-B. 담당자 핸드오프 ─────────────────────────────
      AI 가 접수하고 사람이 이어받는다. 핸드오프가 열리면 AI 는 발화를 멈추고,
      어르신 입력은 /api/handoff/{id}/message 로 간다.
@@ -737,17 +853,44 @@
 
   function resetHandoff() {
     stopHandoffPoll();
+    stopWaitClock();
     state.handoff = { id: null, status: 'none', open: false, rendered: 0, timer: 0, officer: null };
+    state.callback = { status: 'none', open: false, rendered: 0, officer: null };
     el.handoffWait.hidden = true;
     el.handoffWait.classList.remove('done');
   }
 
   // 민원카드를 보여준 뒤에도 화면을 닫지 않고 담당자 연결을 기다린다.
-  function watchHandoff(complaintId) {
+  function stopWaitClock() {
+    if (state.waitTimer) { clearInterval(state.waitTimer); state.waitTimer = 0; }
+  }
+
+  // "멈춘 것처럼" 보이지 않게 경과 시간을 센다. 어르신 모드에서도 과하지 않은 한 줄이다.
+  function startWaitClock() {
+    stopWaitClock();
+    const t0 = Date.now();
+    const paint = () => {
+      const sec = Math.floor((Date.now() - t0) / 1000);
+      el.hwElapsed.textContent = sec < 60 ? sec + '초'
+        : Math.floor(sec / 60) + '분 ' + (sec % 60) + '초';
+    };
+    paint();
+    state.waitTimer = setInterval(paint, 1000);
+  }
+
+  function watchHandoff(complaintId, silent) {
     if (!complaintId) return;
     state.handoff.id = complaintId;
-    el.handoffWait.hidden = false;
-    el.handoffWait.classList.remove('done');
+    if (!silent) {
+      el.handoffWait.hidden = false;
+      el.handoffWait.classList.remove('done');
+      el.hwNo.textContent = complaintId;
+      el.btnSimOfficer.hidden = false;
+      el.btnSimOfficer.disabled = false;
+      el.btnSimOfficer.textContent = '담당자 연결 시뮬레이션';
+      el.btnSimOfficerMsg.hidden = true;
+      startWaitClock();
+    }
 
     const tick = async () => {
       if (!state.handoff.id) return;
@@ -758,7 +901,17 @@
         enterHandoff(h);
       } else if (h && state.handoff.open) {
         renderHandoff(h);
-        if (h.status === 'closed') { exitHandoff(h); return; }
+        if (h.status === 'closed') exitHandoff(h);
+      }
+      // 담당자 통화가 끝난 뒤에도 계속 기다린다 — 시스템이 먼저 전화를 걸 수 있다(5-C).
+      if (!state.handoff.open) {
+        let c = null;
+        try { c = await API.callbackGet(state.handoff.id); } catch (e) {}
+        if (c && c.status === 'pending' && !state.callback.open) showIncoming(c);
+        else if (c && state.callback.open) {
+          renderCallback(c);
+          if (c.status === 'closed') { exitCallback(); return; }
+        }
       }
       state.handoff.timer = setTimeout(tick, CFG.HANDOFF_POLL_MS || 3000);
     };
@@ -767,6 +920,7 @@
   }
 
   function enterHandoff(h) {
+    stopWaitClock();
     state.handoff.open = true;
     state.handoff.status = 'open';
     state.handoff.officer = h.officer || null;
@@ -781,6 +935,7 @@
     el.callee.querySelector('.callee-meta strong').textContent = title;
     say('담당자와 통화 중입니더');
     el.handoffWait.hidden = true;
+    el.btnSimMsg2.hidden = !isDemo();       // 통화 화면에서 담당자 역할을 이어갈 수 있게
 
     // 대화 흐름이 바뀌는 지점을 화면에 남긴다.
     const div = document.createElement('div');
@@ -844,8 +999,10 @@
 
   function exitHandoff(h) {
     stopHandoffPoll();
+    el.btnSimMsg2.hidden = true;
     state.handoff.open = false;
     state.handoff.status = 'closed';
+    state.handoff.rendered = 0;
     say('통화가 끝났습니더');
     el.callee.classList.remove('is-handoff');
     const div = document.createElement('div');
@@ -861,6 +1018,8 @@
     el.textIn.disabled = true;
     el.btnSend.disabled = true;
     el.btnMic.disabled = true;
+    // 담당자 통화가 끝난 뒤에도 계속 기다린다. 처리가 끝나면 시스템이 먼저 전화를 건다(5-C).
+    if (state.handoff.id) watchHandoff(state.handoff.id, true);
   }
 
   function goIdle() {
@@ -890,9 +1049,115 @@
     });
   }
 
+  /* ── 계약 5-C. 진행 안내 콜백 ──────────────────────────────
+     시스템이 먼저 전화를 건다. 어르신 화면은 '벨 + 받기 버튼 하나'다.
+     AI 는 담당자가 쓴 브리핑만 사투리로 전한다 — 없는 답을 지어내지 않는다. */
+  function showIncoming(c) {
+    state.callback.status = 'pending';
+    state.callback.officer = c.officer || null;
+    el.incomingTitle.textContent = c.incoming_title || '경상북도청에서 전화가 왔습니더';
+    const dept = (c.officer && c.officer.department) || '';
+    el.incomingSub.textContent = dept ? dept + '에서 진행 상황을 알려드릴게예.'
+                                      : '민원 진행 상황을 알려드릴게예.';
+    // 실제 전화망 연동이 아니라는 사실은 숨기지 않는다(시연 모드에만 표시).
+    el.incomingNote.textContent = c.transport || '';
+    setScreen('incoming');
+    toast('경상북도청에서 전화가 왔습니더.', 5000);
+  }
+
+  async function answerCallback() {
+    el.btnAnswer.disabled = true;
+    let c = null;
+    try { c = await API.callbackAnswer(state.handoff.id); } catch (e) {}
+    el.btnAnswer.disabled = false;
+    if (!c) { toast('전화를 받지 못했습니더. 다시 눌러 주이소.', 4000); return; }
+
+    state.callback.open = true;
+    state.callback.status = 'answered';
+    state.callback.rendered = 0;
+    const dept = (c.officer && c.officer.department) || '경상북도청';
+
+    setScreen('call');
+    el.callee.classList.add('is-handoff');
+    el.callee.querySelector('.callee-meta strong').textContent = dept + ' · 진행 안내';
+    say('안내를 들어 보이소');
+    el.transcript.innerHTML = '';
+    const div = document.createElement('div');
+    div.className = 'thread-divider';
+    div.innerHTML = '<span>담당자가 남긴 진행 상황을 전해 드릴게예</span>';
+    el.transcript.appendChild(div);
+
+    if (state.inputPath === 'server') {           // 콜백 메시지도 text 만 받는다
+      state.sttForced = (window.VoissoSpeech && window.VoissoSpeech.supported()) ? 'web' : 'text';
+      applyInputPath();
+    }
+    resetEndButton();
+    el.btnEnd.textContent = '통화 끝내기';
+    btnEndAction = () => closeCallback();
+    el.hint.classList.remove('alert');
+    el.hint.textContent = '더 궁금한 것이 있으시믄 말씀해 주이소.';
+    setBusy(false);
+    renderCallback(c);
+  }
+
+  function renderCallback(c) {
+    const msgs = Array.isArray(c.messages) ? c.messages : [];
+    for (let i = state.callback.rendered; i < msgs.length; i++) {
+      const m = msgs[i] || {};
+      if (m.role === 'caller') {
+        addBubble('caller', m.dialect || m.text || '', m.standard || m.text || '', { source: 'handoff' });
+      } else {
+        // 담당자가 쓴 글을 AI 가 사투리로 읽어 준다. 표준어 원문은 토글로 확인한다.
+        addBubble('agent', m.dialect || m.text || '', m.standard || m.text || '');
+      }
+    }
+    state.callback.rendered = msgs.length;
+  }
+
+  async function sendCallback(text) {
+    if (!state.callback.open || !text) return;
+    setBusy(true);
+    say('잠시만예');
+    try {
+      await API.callbackSay(state.handoff.id, text);
+      const c = await API.callbackGet(state.handoff.id);
+      renderCallback(c);
+      if (c.status === 'closed') { exitCallback(); return; }
+    } catch (e) {
+      toast('전하지 못했습니더. 다시 해 보이소.', 4000);
+    }
+    say('말씀해 주이소');
+    setBusy(false);
+  }
+
+  async function closeCallback() {
+    stopHandoffPoll();
+    try { await API.callbackClose(state.handoff.id); } catch (e) {}
+    exitCallback();
+  }
+
+  function exitCallback() {
+    stopHandoffPoll();
+    state.callback.open = false;
+    state.callback.status = 'closed';
+    say('통화가 끝났습니더');
+    const div = document.createElement('div');
+    div.className = 'thread-divider';
+    div.innerHTML = '<span>안내 전화가 끝났습니더. 고생하셨습니더.</span>';
+    el.transcript.appendChild(div);
+    scrollDown();
+    el.hint.textContent = '아래 버튼을 누르면 처음으로 돌아갑니더.';
+    resetEndButton();
+    el.btnEnd.textContent = '처음으로';
+    btnEndAction = () => { resetHandoff(); goIdle(); };
+    setBusy(true);
+    el.textIn.disabled = true; el.btnSend.disabled = true; el.btnMic.disabled = true;
+  }
+
   /* ── 민원카드 ──────────────────────────────────────────── */
   function renderCard(c) {
     c = c || {};
+    if (c.urgency) applySafety(c.urgency);
     const a = c.assigned || {};
     const caller = c.caller || {};
     const alts = Array.isArray(c.alternatives) ? c.alternatives : [];
@@ -911,6 +1176,8 @@
         '</div>' +
       '</div>' +
       '<div class="card-body">' +
+        safetyHTML() +
+        urgencyHTML(c.urgency) +
         '<div class="assigned">' +
           '<div class="field-key">담당 부서</div>' +
           '<div class="field-val">' + esc(a.full_name || '배정 대기') + '</div>' +
@@ -1145,13 +1412,14 @@
           b.set(picked.text, picked.text);        // 우선 고른 후보 그대로 고정
           if (picked.changed) b.setTop1(picked.top1);
         }
-        if (state.handoff.open) {                 // 담당자와 통화 중이면 AI 를 거치지 않는다
+        if (state.callback.open || state.handoff.open) {
           if (b) b.remove();                      // 서버 목록으로 다시 그린다
-          sendHandoff(picked.text);
+          (state.callback.open ? sendCallback : sendHandoff)(picked.text);
           return;
         }
-        sendTurn({ text: picked.text, alternatives: alts },
-                 { callerBubble: b, source: 'voice', top1: picked.changed ? picked.top1 : null });
+        sendTurn({ text: picked.text, alternatives: alts, stt_provider: 'web' },
+                 { callerBubble: b, source: 'voice', sttProvider: 'web',
+                   top1: picked.changed ? picked.top1 : null });
       },
       onError: (msg, code) => {
         resetMicUI();
@@ -1298,6 +1566,48 @@
     toast('음성 입력: ' + P.chip.replace(/^\S+\s/, ''), 2600);
   });
   el.btnEnd.addEventListener('click', () => (btnEndAction ? btnEndAction() : endCall()));
+  el.btnAnswer.addEventListener('click', answerCallback);
+
+  /* 시연 트리거 — 대시보드를 따로 열지 않고 한 화면에서 6단계를 흐르게 한다.
+     어르신 모드에서는 CSS 로 숨겨져 있고, 시연 모드에서만 보인다. */
+  el.btnSimOfficer.addEventListener('click', async () => {
+    if (!state.handoff.id) return;
+    el.btnSimOfficer.disabled = true;
+    el.btnSimOfficer.textContent = '연결하는 중…';
+    try {
+      await API.handoffStartAsOfficer(state.handoff.id);
+      el.btnSimOfficer.textContent = '담당자 연결됨';
+      el.btnSimOfficerMsg.hidden = false;
+      toast('담당자를 연결했습니더. (시연 트리거)', 3000);
+    } catch (e) {
+      el.btnSimOfficer.disabled = false;
+      el.btnSimOfficer.textContent = '담당자 연결 시뮬레이션';
+      toast('연결 실패: ' + (e.message || e), 4000);
+    }
+  });
+
+  const OFFICER_LINES = [
+    '안녕하세요. 담당자입니다. 접수 내용 확인했습니다. 오늘 오후에 현장 확인 나가겠습니다.',
+    '현장을 보니 배수로가 막혀 있습니다. 이번 주 안에 준설하겠습니다.',
+    '다른 불편한 점은 없으신가요?',
+  ];
+  let officerLineIdx = 0;
+
+  async function simOfficerMessage(btn) {
+    if (!state.handoff.id) return;
+    btn.disabled = true;
+    try {
+      await API.handoffSayAsOfficer(state.handoff.id, OFFICER_LINES[officerLineIdx % OFFICER_LINES.length]);
+      officerLineIdx++;
+      toast('담당자 메시지를 보냈습니더. (시연 트리거)', 2600);
+    } catch (e) {
+      toast('전송 실패: ' + (e.message || e), 4000);
+    }
+    btn.disabled = false;
+  }
+
+  el.btnSimOfficerMsg.addEventListener('click', () => simOfficerMessage(el.btnSimOfficerMsg));
+  el.btnSimMsg2.addEventListener('click', () => simOfficerMessage(el.btnSimMsg2));
   el.btnAgain.addEventListener('click', goIdle);
 
   /* ── 초기화 ───────────────────────────────────────────── */

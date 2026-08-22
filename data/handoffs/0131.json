@@ -1,0 +1,18 @@
+{
+  "complaint_id": "0131",
+  "channel_id": "40f2db4ee92045dfae1cb157ddbbcea0",
+  "status": "open",
+  "officer_name_masked": "김○○",
+  "officer_department": "x",
+  "started_at": "2026-08-22T03:55:04Z",
+  "closed_at": null,
+  "messages": [
+    {
+      "role": "officer",
+      "text": "start 두 번 후",
+      "dialect": "start 두 번 후",
+      "standard": "start 두 번 후",
+      "at": "2026-08-22T03:55:04Z"
+    }
+  ]
+}

@@ -65,10 +65,20 @@ window.VoissoAPI = (function () {
   }
 
   // text 와 audio_b64 는 둘 중 하나만 보낸다.
+  // text 와 audio_b64 는 둘 중 하나만 보낸다(계약 5절).
+  // stt_provider / alternatives 는 **추가 필드**다. 서버가 모르면 무시되고,
+  // 아는 서버는 caller_turn.stt_provider 를 채우거나 후보를 다시 고를 수 있다.
   async function turn(sessionId, payload) {
     const body = { session_id: sessionId };
     if (payload.audio_b64) body.audio_b64 = payload.audio_b64;
     else body.text = payload.text || '';
+    if (payload.stt_provider) body.stt_provider = payload.stt_provider;
+    if (CFG.SEND_ALTERNATIVES !== false && payload.alternatives && payload.alternatives.length > 1) {
+      body.alternatives = payload.alternatives.map((a) => ({
+        transcript: String(a.transcript || ''),
+        confidence: typeof a.confidence === 'number' ? a.confidence : null,
+      }));
+    }
     return useMock ? mock.turn(body) : post('/api/call/turn', body);
   }
 
@@ -102,9 +112,45 @@ window.VoissoAPI = (function () {
     return useMock ? mock.handoffSay(id, body) : post('/api/handoff/' + id + '/message', body);
   }
 
+  /* 시연 전용 — 담당자 역할을 대신한다. 어르신 화면에는 노출되지 않는다(시연 모드 버튼).
+     실제로는 대시보드(P8)가 이 두 호출을 한다. */
+  async function handoffStartAsOfficer(complaintId, officer) {
+    const id = encodeURIComponent(complaintId);
+    const body = { officer_name: (officer && officer.name) || '홍길동',
+                   department: (officer && officer.department) || '기후환경국 맑은물정책과' };
+    return useMock ? mock.handoffStart(id, body) : post('/api/handoff/' + id + '/start', body);
+  }
+
+  async function handoffSayAsOfficer(complaintId, text) {
+    const id = encodeURIComponent(complaintId);
+    const body = { role: 'officer', text: text };
+    return useMock ? mock.handoffSay(id, body) : post('/api/handoff/' + id + '/message', body);
+  }
+
   async function handoffClose(complaintId) {
     const id = encodeURIComponent(complaintId);
     return useMock ? mock.handoffClose(id) : post('/api/handoff/' + id + '/close', {});
+  }
+
+  /* ── 계약 5-C. 진행 안내 콜백 ──────────────────────────
+     시스템이 먼저 전화를 건다. 어르신 화면은 '조회 / 받기 / 말하기 / 끊기'만 쓴다.
+     schedule 은 대시보드(담당자)가 호출한다. */
+  async function callbackGet(complaintId) {
+    const id = encodeURIComponent(complaintId);
+    return useMock ? mock.callbackGet(id) : get('/api/callback/' + id);
+  }
+  async function callbackAnswer(complaintId) {
+    const id = encodeURIComponent(complaintId);
+    return useMock ? mock.callbackAnswer(id) : post('/api/callback/' + id + '/answer', {});
+  }
+  async function callbackSay(complaintId, text) {
+    const id = encodeURIComponent(complaintId);
+    const body = { role: 'caller', text: text };
+    return useMock ? mock.callbackSay(id, body) : post('/api/callback/' + id + '/message', body);
+  }
+  async function callbackClose(complaintId) {
+    const id = encodeURIComponent(complaintId);
+    return useMock ? mock.callbackClose(id) : post('/api/callback/' + id + '/close', {});
   }
 
   /* ── 실서버 상태 확인 ──────────────────────────────────
@@ -135,5 +181,7 @@ window.VoissoAPI = (function () {
   }
 
   return { start, turn, end, probe, handoffGet, handoffSay, handoffClose,
+           handoffStartAsOfficer, handoffSayAsOfficer,
+           callbackGet, callbackAnswer, callbackSay, callbackClose,
            isMock: () => useMock, base: () => base, baseLabel };
 })();

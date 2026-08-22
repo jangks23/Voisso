@@ -1,0 +1,32 @@
+{
+  "complaint_id": "0135",
+  "channel_id": "bf2203465ed641938d759280098fbc87",
+  "status": "open",
+  "officer_name_masked": "홍○○",
+  "officer_department": "기후환경국 맑은물정책과",
+  "started_at": "2026-08-22T03:55:30Z",
+  "closed_at": null,
+  "messages": [
+    {
+      "role": "officer",
+      "text": "안녕하세요. 접수 확인했습니다. 오늘 중으로 현장에 나가겠습니다.",
+      "dialect": "안녕하이소. 접수 확인했습니더. 오늘 중으로 현장에 나가겠습니더.",
+      "standard": "안녕하세요. 접수 확인했습니다. 오늘 중으로 현장에 나가겠습니다.",
+      "at": "2026-08-22T03:55:30Z"
+    },
+    {
+      "role": "caller",
+      "text": "아이고 고맙심더. 몇 시쯤 오시는교?",
+      "dialect": "아이고 고맙심더. 몇 시쯤 오시는교?",
+      "standard": "아이고 고맙습니다. 몇 시쯤 오시나요?",
+      "at": "2026-08-22T03:55:30Z"
+    },
+    {
+      "role": "caller",
+      "text": "두 번째",
+      "dialect": "두 번째",
+      "standard": "두 번째",
+      "at": "2026-08-22T03:56:20Z"
+    }
+  ]
+}

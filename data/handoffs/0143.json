@@ -1,0 +1,25 @@
+{
+  "complaint_id": "0143",
+  "channel_id": "359824000368491d93f3dcedec1e1bf0",
+  "status": "open",
+  "officer_name_masked": "홍○○",
+  "officer_department": "기후환경국 맑은물정책과",
+  "started_at": "2026-08-22T09:41:21Z",
+  "closed_at": null,
+  "messages": [
+    {
+      "role": "officer",
+      "text": "현장 확인 후 이번 주 내로 배수관을 준설하겠습니다.",
+      "dialect": "현장 확인 후 이번 주 내로 배수관을 준설하겠습니더.",
+      "standard": "현장 확인 후 이번 주 내로 배수관을 준설하겠습니다.",
+      "at": "2026-08-22T09:41:21Z"
+    },
+    {
+      "role": "caller",
+      "text": "언제 오시는교? 아침에만 그래예",
+      "dialect": "언제 오시는교? 아침에만 그래예",
+      "standard": "언제 오시나요? 아침에만 그래요",
+      "at": "2026-08-22T09:41:21Z"
+    }
+  ]
+}

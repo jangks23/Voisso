@@ -385,3 +385,55 @@ def soften(text: str) -> str:
     except Exception:  # noqa: BLE001 - 이 레이어가 통화를 끊게 두지 않는다
         log.exception("행정용어 순화 실패 — 원문 유지")
         return text
+
+def noun_final() -> list[dict[str, str]]:
+    """명사형 종결 → 문장 종결 대응표 (진행 안내 브리핑 전용)."""
+    return load_lexicon().get("noun_final", [])
+
+
+#: 문장 경계. 명사형 종결은 문장 끝에서만 편다.
+_SENTENCE_SPLIT = re.compile(r"([.!?。\n]+)")
+
+
+@lru_cache(maxsize=1)
+def _noun_final_pattern() -> tuple[re.Pattern[str] | None, dict[str, str]]:
+    mapping = {item["noun"]: item["sentence"] for item in noun_final() if item.get("noun")}
+    if not mapping:
+        return None, mapping
+    # 긴 것부터 — "확인 완료"가 "완료"에 잡아먹히면 안 된다.
+    alternation = "|".join(re.escape(k) for k in sorted(mapping, key=len, reverse=True))
+    return re.compile(rf"(?<![{_HANGUL}])({alternation})\s*$"), mapping
+
+
+def expand_noun_final(text: str) -> str:
+    """명사로 끝나는 공문 문장을 말하는 문장으로 편다.
+
+    "현장 확인 완료." 는 글로 읽을 때는 괜찮지만 **소리 내어 읽으면 공문 낭독**이 된다.
+    진행 안내 콜백(계약서 5-C)은 AI 가 읽어 주는 것이라 반드시 펴야 한다.
+
+        >>> expand_noun_final("현장 확인 완료. 이번 주 준설 예정.")
+        '현장 확인 다 했습니다. 이번 주 준설할 예정입니다.'
+
+    문장 끝에서만 걸린다. "완료했습니다" 같은 중간 등장은 건드리지 않는다.
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        pattern, mapping = _noun_final_pattern()
+        if pattern is None:
+            return text
+        parts = _SENTENCE_SPLIT.split(text)
+        for index in range(0, len(parts), 2):
+            segment = parts[index]
+            if not segment.strip():
+                continue
+            parts[index] = pattern.sub(lambda m: mapping[m.group(1)], segment)
+        return "".join(parts)
+    except Exception:  # noqa: BLE001
+        log.exception("명사형 종결 펴기 실패 — 원문 유지")
+        return text
+
+
+def callback_data() -> dict[str, list[str]]:
+    """진행 안내 콜백의 질문 분류·회피 문구 (계약서 5-C)."""
+    return load_lexicon().get("callback", {})
