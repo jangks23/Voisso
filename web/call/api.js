@@ -11,7 +11,10 @@ window.VoissoAPI = (function () {
   const qs = new URLSearchParams(location.search);
 
   // 쿼리스트링 오버라이드: ?mock=0 -> 실서버, ?api=http://... -> 주소 지정
-  let useMock = CFG.USE_MOCK !== false;
+  //  'auto' = file:// 로 열면 목(서버 없이 시연), http(s) 로 열면 실서버
+  let useMock;
+  if (CFG.USE_MOCK === 'auto' || CFG.USE_MOCK == null) useMock = location.protocol === 'file:';
+  else useMock = CFG.USE_MOCK !== false;
   if (qs.has('mock')) useMock = !/^(0|false|no)$/i.test(qs.get('mock'));
   const base = (qs.get('api') || CFG.API_BASE || '').replace(/\/+$/, '');
 
@@ -26,8 +29,15 @@ window.VoissoAPI = (function () {
     });
     if (!res.ok) {
       let detail = '';
-      try { detail = (await res.text()).slice(0, 200); } catch (e) {}
-      throw new Error(`${path} 실패 (HTTP ${res.status}) ${detail}`);
+      try {
+        const raw = await res.text();
+        try { detail = (JSON.parse(raw).detail || raw).slice(0, 200); } catch (e) { detail = raw.slice(0, 200); }
+      } catch (e) {}
+      const err = new Error(`${path} 실패 (HTTP ${res.status}) ${detail}`);
+      err.status = res.status;          // 상위에서 사람이 읽을 문구로 바꾼다
+      err.detail = detail;
+      err.path = path;
+      throw err;
     }
     return res.json();
   }

@@ -68,13 +68,13 @@
     <section class="screen" id="screenCall" aria-label="통화 중">
       <div class="callee">
         <div class="callee-avatar" aria-hidden="true">
-          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
+          <svg viewBox="0 0 24 24" width="26" height="26" fill="currentColor" aria-hidden="true"><path d="M12 12a5 5 0 1 0 0-10 5 5 0 0 0 0 10Zm0 2c-4.4 0-8 2.2-8 5v1h16v-1c0-2.8-3.6-5-8-5Z"/></svg>
         </div>
         <div class="callee-meta">
           <strong>경상북도 민원실</strong>
-          <span id="callStatus">연결 중…</span>
+          <span id="callStatus" role="status">연결 중…</span>
         </div>
-        <div class="callee-timer" id="callTimer">00:00</div>
+        <div class="callee-timer" id="callTimer" aria-live="off"><span class="sr-only">통화 시간 </span>00:00</div>
       </div>
 
       <div class="std-switch">
@@ -83,11 +83,12 @@
           <span class="switch-track" aria-hidden="true"><span class="switch-thumb"></span></span>
           <span class="switch-label">표준어 변환 함께 보기</span>
         </label>
+        <span class="path-chip" id="pathChip" title="지금 쓰는 음성 입력 경로"></span>
       </div>
 
       <div class="transcript" id="transcript" role="log" aria-live="polite" aria-label="통화 내용"></div>
 
-      <div class="slots" id="slots">
+      <div class="slots" id="slots" aria-live="polite">
         <div class="slots-head">
           <span class="slots-title">AI가 모으는 민원 정보</span>
           <span class="slots-count" id="slotsCount">0 / 4</span>
@@ -121,7 +122,7 @@
     <!-- ── 3. 결과(민원카드) 화면 ─────────────────────────── -->
     <section class="screen" id="screenResult" aria-label="민원 접수 결과">
       <div class="result-inner">
-        <div class="delivery" id="delivery">
+        <div class="delivery" id="delivery" role="status">
           <span class="delivery-spin" aria-hidden="true"></span>
           <span class="delivery-text">담당 부서로 보내는 중…</span>
         </div>
@@ -141,7 +142,9 @@
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
 <script src="config.js"></script>
+<script src="dialect-hints.js"></script>
 <script src="mock-api.js"></script>
+<script src="speech.js"></script>
 <script src="api.js"></script>
 <script src="app.js"></script>
 </body>

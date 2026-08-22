@@ -12,6 +12,7 @@
 from __future__ import annotations
 
 import argparse
+import json
 import sys
 from collections import Counter
 
@@ -54,6 +55,149 @@ AGENT_SAMPLES = [
     ("공감", "많이 불편하셨겠어요."),
     ("마무리", "더 궁금한 점 있으세요?"),
 ]
+
+
+#: 데모 1단계용 사투리 대사. 상황은 경북 실정에 맞췄다.
+#:
+#: ``stt`` 는 **예측이다.** 표준어 기준 Web Speech(ko-KR)가 사투리 음성을 어떻게
+#: 받아쓸지 추측한 값이고, 우리가 실제로 브라우저에서 측정한 결과가 아니다.
+#: 실측은 P7이 브라우저에서 하고, 그 결과로 이 값을 갈아끼워야 한다.
+#: ``normalize`` 결과와 라우팅 결과는 예측이 아니라 **실제 실행 결과**다.
+DEMO_LINES = [
+    ("하수구 막힘", "수채구영이 맥히가꼬 물이 넘쳐 나옵니더",
+     "수채구영이 맥히가꼬 물이 넘쳐 나옵니다"),
+    ("상수도 누수", "수도물이 며칠째 안 나옵니더. 상수도가 우예 된 거라예",
+     "수도물이 며칠째 안 나옵니다 상수도가 우예 된 거라예"),
+    ("농로 유실", "비 와가 논에 물 대는 농로가 다 떠내리가뿟심더. 경지정리 좀 해 주이소",
+     "비 와가 논에 물 대는 농로가 다 떠내리가뿟심더 경지정리 좀 해주이소"),
+    ("버스 배차", "우리 마실에 뻐스가 하루에 두 번밖에 안 옵니더",
+     "우리 마실에 뻐스가 하루에 두 번밖에 안 옵니다"),
+    ("경로당 지원", "노인정 보일러가 고장나가 어르신들이 추와가 몬 모입니더",
+     "노인정 보일러가 고장나가 어르신들이 추와가 몬 모입니다"),
+    ("산불 예방", "산에 검불이 마이 쌓이가 산불 나믄 우짜노 예방 좀 해 주이소",
+     "산에 검불이 마이 쌓이가 산불 나믄 우짜노 예방 좀 해주이소"),
+    ("폐기물 무단투기", "밤중에 누가 질가에 씨레기를 마카 내삐리고 갑니더. 단속 좀 해 주이소",
+     "밤중에 누가 질가에 씨레기를 마카 내삐리고 갑니다 단속 좀 해주이소"),
+    ("독거노인 돌봄", "우리 마실에 혼차 사시는 노인이 마이 계신데 돌봄 서비스가 안 옵니더",
+     "우리 마실에 혼차 사시는 노인이 마이 계신데 돌봄 서비스가 안 옵니다"),
+    ("멧돼지 피해", "산돼지가 밭에 내려와가 꼬치를 마카 밟아뿟습니더",
+     "산돼지가 밭에 내려와가 꼬치를 마카 밟아뿟습니다"),
+    ("노인 일자리", "일할 데가 엄써가 그라는데 노인 일자리 좀 알아봐 주이소",
+     "일할 데가 엄써가 그라는데 노인 일자리 좀 알아봐 주이소"),
+]
+
+
+#: STT가 방언 낱말을 **다른 표준어 낱말로 바꿔 버린** 경우. 우리도 복구하지 못한다.
+#: 데모에서 숨기지 않고 한계로 함께 보여준다.
+UNRECOVERABLE = [
+    ("수채구영이 맥히가꼬", "수채 구멍이 매키가꼬",
+     "'수채구영'(하수구)이 '수채 구멍'으로 쪼개졌다. 표제어가 사라져 사전이 걸리지 않는다"),
+    ("나락이 다 씨러졌심더", "나락이 다 쓰러졌습니다",
+     "'나락'(벼)은 표준어에도 있는 낱말이라 STT가 그대로 넘긴다. "
+     "여기서는 우리 사전이 '벼'로 고쳐 주지만, 반대로 STT가 '나라기'처럼 쪼개면 복구 못 한다"),
+]
+
+
+def _route(text: str):
+    """라우팅 결과를 (부서, 점수, 근거, 확신) 로. 라우팅이 없으면 None."""
+    try:
+        from voisso.routing import route
+    except ImportError:
+        return None
+    try:
+        result = route(text, top_k=1)
+    except Exception:  # noqa: BLE001 - 부서 데이터가 없을 수 있다
+        return None
+    matches = result.get("matches") or []
+    if not matches:
+        return ("(배정 실패)", 0.0, "", False)
+    top = matches[0]
+    return (top["full_name"], round(top["score"], 3),
+            " ".join(top["evidence"].split())[:80], result.get("confident", False))
+
+
+def _demo_lines_markdown() -> str:
+    out = [
+        "# 데모 1단계 — 사투리 대사 세트\n\n",
+        "> 이 파일은 `python -m voisso.dialect --demo-lines` 로 **생성된다.**\n",
+        "> 손으로 고치지 말고 사전이나 대사를 고친 뒤 다시 생성하라.\n\n",
+        "데모 1단계 시나리오는 이렇다.\n\n",
+        "```\n어르신이 사투리로 말함\n  → 표준어 STT가 잘못 받아씀\n"
+        "  → normalize() 가 교정\n  → 라우팅이 담당 부서를 찾음\n```\n\n",
+        "## ⚠️ 어느 값이 실측이고 어느 값이 예측인가\n\n",
+        "| 열 | 성격 |\n|---|---|\n",
+        "| 사투리 원문 | 사람이 작성 |\n",
+        "| **STT 예측** | **예측이다. 검증하지 않았다.** 표준어 Web Speech(ko-KR)가 이렇게 "
+        "받아쓸 것이라는 추측일 뿐, 브라우저에서 측정한 값이 아니다 |\n",
+        "| 정규화 결과 | **실행 결과** — `normalize()` 를 실제로 통과시킨 값 |\n",
+        "| 라우팅 | **실행 결과** — `voisso.routing.route()` 실측. 점수·근거·확신도 그대로 |\n\n",
+        "**P7에게**: 브라우저에서 실제 Web Speech 출력을 받으면 `__main__.py` 의 "
+        "`DEMO_LINES` 세 번째 항목을 실측값으로 갈아끼우고 이 파일을 다시 생성하라. "
+        "그러면 아래 표 전체가 실측이 된다.\n\n",
+    ]
+
+    for index, (label, dialect, stt) in enumerate(DEMO_LINES, 1):
+        norm_stt = normalize(stt)
+        norm_true = normalize(dialect)
+        out.append(f"## {index}. {label}\n\n")
+        out.append(f"- **어르신 발화(사투리)** — {dialect}\n")
+        out.append(f"- **STT 예측** *(미검증)* — {stt}\n")
+        out.append(f"- **정규화 결과** — {norm_stt}\n")
+        if norm_true != norm_stt:
+            out.append(f"- *(참고) 사투리 원문을 직접 정규화하면* — {norm_true}\n")
+
+        routed_raw = _route(stt)
+        routed_norm = _route(norm_stt)
+        if routed_raw and routed_norm:
+            out.append("\n| 라우팅 입력 | 배정 부서 | 점수 | 확신 |\n|---|---|---|---|\n")
+            out.append(f"| STT 원문 그대로 | {routed_raw[0]} | {routed_raw[1]} | "
+                       f"{'○' if routed_raw[3] else '×'} |\n")
+            out.append(f"| **정규화 후** | **{routed_norm[0]}** | **{routed_norm[1]}** | "
+                       f"{'○' if routed_norm[3] else '×'} |\n")
+            if routed_norm[2]:
+                out.append(f"\n배정 근거: `{routed_norm[2]}`\n")
+            if routed_raw[0] != routed_norm[0]:
+                out.append(f"\n> **정규화가 부서를 바꿨다.** "
+                           f"{routed_raw[0]} → {routed_norm[0]}\n")
+        else:
+            out.append("\n> 라우팅 결과 없음 — `data/gb_departments.json` 이 필요하다.\n")
+        out.append("\n")
+
+    out.append("## 한계 — 우리가 복구하지 못하는 경우\n\n")
+    out.append(
+        "STT가 방언 낱말을 **소리 나는 대로** 받아쓰면 사전이 걸린다. 하지만 STT의 "
+        "언어모델이 방언 낱말을 다른 표준어 낱말로 **바꿔 버리면** 표제어 자체가 사라져서 "
+        "우리도 복구하지 못한다. 데모에서 이 점을 숨기지 않는 편이 낫다.\n\n"
+    )
+    out.append("| 원래 말 | STT가 이렇게 바꾸면 | 정규화 결과 | 왜 |\n|---|---|---|---|\n")
+    for original, broken, why in UNRECOVERABLE:
+        out.append(f"| {original} | {broken} | {normalize(broken)} | {why} |\n")
+    out.append(
+        "\n그래서 이 레이어의 전제는 **\"STT가 방언 음운을 그대로 받아쓴다\"** 이다. "
+        "한국어 STT는 모르는 낱말을 대체로 소리 나는 대로 적으므로 이 전제는 웬만하면 "
+        "성립하지만, 항상은 아니다. **P7의 브라우저 실측으로 확인해야 할 지점이 정확히 "
+        "여기다.**\n\n"
+    )
+    out.append("## 기계 판독용\n\n")
+    out.append("웹 UI에서 바로 쓸 수 있게 같은 내용을 JSON으로 붙인다.\n\n```json\n")
+    payload = []
+    for label, dialect, stt in DEMO_LINES:
+        norm = normalize(stt)
+        routed = _route(norm)
+        payload.append({
+            "label": label,
+            "dialect": dialect,
+            "stt_predicted": stt,
+            "stt_is_verified": False,
+            "normalized": norm,
+            "department": routed[0] if routed else None,
+            "score": routed[1] if routed else None,
+            "evidence": routed[2] if routed else None,
+            "confident": routed[3] if routed else None,
+        })
+    out.append(json.dumps(payload, ensure_ascii=False, indent=2))
+    out.append("\n```\n")
+    return "".join(out)
 
 
 def _demo() -> None:
@@ -174,6 +318,7 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("-n", "--normalize", metavar="TEXT", help="사투리 → 표준어")
     parser.add_argument("--demo", action="store_true", help="민원 상황 변환 예시 실행")
     parser.add_argument("--samples", action="store_true", help="samples.md 내용 생성")
+    parser.add_argument("--demo-lines", action="store_true", help="demo_lines.md 내용 생성")
     parser.add_argument("--roundtrip-report", action="store_true", help="왕복 보존 통과율")
     parser.add_argument("--stats", action="store_true", help="사전 규모·분포")
     parser.add_argument("-v", "--verbose", action="store_true", help="적용된 규칙을 함께 표시")
@@ -185,6 +330,8 @@ def main(argv: list[str] | None = None) -> int:
         _convert_one(args.normalize, "to_standard", args.verbose)
     elif args.samples:
         print(_samples_markdown(), end="")
+    elif args.demo_lines:
+        print(_demo_lines_markdown(), end="")
     elif args.roundtrip_report:
         return _roundtrip_report()
     elif args.stats:

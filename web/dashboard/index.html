@@ -9,6 +9,9 @@
 </head>
 <body>
 
+<!-- 스크린리더 안내용. 새 민원 도착·처리 상태 변경을 소리로 알린다. -->
+<p id="live-region" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></p>
+
 <header class="topbar">
   <div class="brand">
     <span class="brand-mark" aria-hidden="true">V</span>
@@ -18,7 +21,8 @@
     </div>
   </div>
   <div class="topbar-right">
-    <span id="source-badge" class="src-badge src-badge--loading" title="데이터 출처">연결 확인 중…</span>
+    <span id="last-sync" class="last-sync" title="자동 갱신"></span>
+    <span id="source-badge" role="status" class="src-badge src-badge--loading" title="데이터 출처">연결 확인 중…</span>
     <button id="refresh-btn" class="btn btn-ghost" type="button" title="새로고침 (R)">↻ 새로고침</button>
     <button id="theme-btn" class="btn btn-ghost" type="button" title="화면 모드 전환">◐ 화면</button>
   </div>
@@ -31,19 +35,25 @@
     <span class="stat-sub" id="stat-today-sub">전체 – 건</span>
   </div>
   <div class="stat">
+    <span class="stat-label">미확인</span>
+    <span class="stat-value stat-value--warn" id="stat-unread">–</span>
+    <span class="stat-sub">아직 열어보지 않음</span>
+  </div>
+  <div class="stat">
+    <span class="stat-label">처리중</span>
+    <span class="stat-value stat-value--info" id="stat-progress">–</span>
+    <span class="stat-sub" id="stat-progress-sub">완료 – 건</span>
+  </div>
+  <div class="stat">
     <span class="stat-label">미배정</span>
     <span class="stat-value stat-value--warn" id="stat-unassigned">–</span>
     <span class="stat-sub">담당 부서 확인 필요</span>
   </div>
-  <div class="stat">
-    <span class="stat-label">재배정</span>
-    <span class="stat-value stat-value--info" id="stat-reassigned">–</span>
-    <span class="stat-sub">담당자가 부서를 변경함</span>
-  </div>
-  <div class="stat">
-    <span class="stat-label">평균 통화시간</span>
-    <span class="stat-value" id="stat-duration">–</span>
-    <span class="stat-sub">AI 상담 자동 접수</span>
+  <div class="stat stat--metric">
+    <span class="stat-label">AI 배정 대비 재배정 비율</span>
+    <span class="stat-value" id="stat-rate">–</span>
+    <span class="stat-sub" id="stat-rate-sub">라우팅 품질 지표 · 목표 20% 미만</span>
+    <div class="gauge"><span class="gauge-fill" id="stat-rate-fill"></span><span class="gauge-target" title="목표 20%"></span></div>
   </div>
   <div class="stat stat--wide">
     <span class="stat-label">부서별 분포</span>
@@ -64,12 +74,32 @@
     <label for="f-status">상태</label>
     <select id="f-status">
       <option value="">전체 상태</option>
-      <option value="assigned">배정완료</option>
-      <option value="reassigned">재배정</option>
-      <option value="unassigned">미배정</option>
+      <optgroup label="처리 상태">
+        <option value="wf:received">접수됨(미확인)</option>
+        <option value="wf:ack">확인함</option>
+        <option value="wf:progress">처리중</option>
+        <option value="wf:done">완료</option>
+        <option value="wf:rejected">반려</option>
+      </optgroup>
+      <optgroup label="배정">
+        <option value="as:unassigned">미배정</option>
+        <option value="as:reassigned">재배정됨</option>
+      </optgroup>
     </select>
   </div>
   <button id="reset-btn" class="btn btn-ghost" type="button">필터 해제</button>
+  <div class="export">
+    <button id="export-btn" class="btn" type="button" aria-haspopup="true" aria-expanded="false">⤓ CSV 내보내기</button>
+    <div class="export-menu" id="export-menu" hidden role="menu">
+      <button type="button" role="menuitem" data-scope="filtered">
+        현재 필터 결과 <span class="export-n" id="export-n-filtered"></span>
+      </button>
+      <button type="button" role="menuitem" data-scope="all">
+        전체 민원 <span class="export-n" id="export-n-all"></span>
+      </button>
+      <p class="export-note">엑셀용 UTF-8(BOM) · 신고자 연락처는 마스킹된 값만 포함됩니다.</p>
+    </div>
+  </div>
 </section>
 
 <main class="layout">
@@ -78,7 +108,8 @@
       <h2>접수 민원 <span class="count" id="list-count">0건</span></h2>
       <span class="pane-hint">최신순 · ↑↓ 이동</span>
     </div>
-    <ol class="list" id="list" tabindex="0"></ol>
+    <ol class="list" id="list" tabindex="0" role="listbox"
+        aria-label="접수 민원 목록 (위/아래 화살표로 이동)"></ol>
   </section>
 
   <section class="pane pane--detail" aria-label="민원 상세" id="detail-pane">
@@ -91,10 +122,11 @@
 </main>
 
 <footer class="footer">
-  <span>전화번호는 <code>PHONE_xxxx</code> 토큰으로 관리되며, 매핑이 없으면 경북도청 대표번호 <strong>1522-0120</strong>으로 안내됩니다.</span>
+  <span>담당자 연락처는 서버가 내부 매핑으로 해석한 번호만 표시합니다. 매핑이 없으면 경북도청 대표번호 <strong>1522-0120</strong>으로 안내됩니다.</span>
   <span>신고자 연락처는 마스킹 상태로만 표시됩니다.</span>
 </footer>
 
+<script src="config.js"></script>
 <script src="mock-data.js"></script>
 <script src="app.js"></script>
 </body>

@@ -14,10 +14,12 @@ from __future__ import annotations
 import logging
 import time
 import uuid
+from contextlib import contextmanager
 from datetime import datetime, timezone
 from typing import Any
 
 from ..voice import SpeechContext, synthesize, transcribe
+from ..voice.vocabulary import score_transcript
 from . import integrations, prompts
 from .complaint import build_complaint
 from .engine import get_engines
@@ -28,6 +30,20 @@ log = logging.getLogger("voisso.agent.session")
 # 어르신이 말을 못 알아듣고 빙빙 도는 경우를 대비한 상한.
 # 이 턴 수를 넘으면 있는 정보로 접수하고 마무리한다.
 MAX_TURNS = 24
+
+
+@contextmanager
+def _timed(bucket: dict[str, float], key: str):
+    """구간 소요시간을 ms 로 기록한다.
+
+    실시간 통화에서 지연은 곧 품질이다. 어느 구간이 병목인지 추측하지 않고
+    숫자로 보려고 매 턴 재서 응답 meta 에 실어 보낸다.
+    """
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        bucket[key] = round((time.perf_counter() - start) * 1000, 1)
 
 
 def _utc_now_iso() -> str:
@@ -49,6 +65,8 @@ class ConversationSession:
         # 진단용 — 어떤 엔진/프로바이더가 실제로 쓰였는지 대시보드에서 볼 수 있게.
         self.engine_used: str | None = None
         self.last_error: str | None = None
+        self.last_rescoring: dict[str, Any] | None = None
+        self.end_timings: dict[str, float] = {}
 
     # -- 조회 --------------------------------------------------------------
     @property
@@ -74,20 +92,37 @@ class ConversationSession:
             return self._last_agent_response()
         return self._say(prompts.opening_line(), done=False)
 
-    def turn(self, text: str | None = None, audio_b64: str | None = None) -> dict[str, Any]:
+    def turn(
+        self,
+        text: str | None = None,
+        audio_b64: str | None = None,
+        alternatives: list[Any] | None = None,
+    ) -> dict[str, Any]:
         """어르신의 한 마디를 받아 응답을 만든다.
 
         text 와 audio_b64 가 모두 비어 있으면 첫 인사를 돌려준다
         (P7 이 start 직후 곧바로 turn 을 호출해도 자연스럽게 동작하도록).
+
+        `alternatives` 가 오면 브라우저 음성인식의 후보들로 보고 재점수화한다.
+        기존 `text` 만 보내는 호출은 그대로 동작한다(하위호환).
         """
         if self.closed:
             return self._last_agent_response(done=True)
 
+        turn_started = time.perf_counter()
+        timings: dict[str, float] = {}
         caller_dialect = (text or "").strip()
         stt_error: str | None = None
+        rescored: dict[str, Any] | None = None
+
+        if alternatives:
+            picked, rescored = pick_best_alternative(alternatives, fallback=caller_dialect)
+            if picked:
+                caller_dialect = picked
 
         if not caller_dialect and audio_b64:
-            result = transcribe(audio_b64)
+            with _timed(timings, "stt_ms"):
+                result = transcribe(audio_b64)
             caller_dialect = result.text.strip()
             stt_error = result.error
             if not caller_dialect:
@@ -97,19 +132,24 @@ class ConversationSession:
                     "죄송합니다, 잘 안 들렸어요. 한 번만 더 말씀해 주시겠어요?",
                     done=False,
                     stt_error=stt_error,
+                    timings=timings,
+                    started=turn_started,
                 )
 
         if not caller_dialect:
             return self.greet()
 
         # 사투리 -> 표준어. P5 미탑재면 원문 그대로 통과한다.
-        caller_standard = integrations.normalize(caller_dialect)
+        with _timed(timings, "normalize_ms"):
+            caller_standard = integrations.normalize(caller_dialect)
         self.transcript.append(
             {"role": "caller", "dialect": caller_dialect, "standard": caller_standard}
         )
         self.turn_count += 1
 
-        decision = self._decide()
+        self.last_rescoring = rescored
+        with _timed(timings, "llm_ms"):
+            decision = self._decide()
         self.slots.merge(decision.slots)
         self.engine_used = decision.engine
 
@@ -126,7 +166,14 @@ class ConversationSession:
                 # 포기 처리로 남은 슬롯이 없어졌다면 이제 마무리해도 된다.
                 done = self.slots.is_complete()
 
-        return self._say(decision.reply, done=done, stt_error=stt_error)
+        return self._say(
+            decision.reply,
+            done=done,
+            stt_error=stt_error,
+            rescored=rescored,
+            timings=timings,
+            started=turn_started,
+        )
 
     def end(self, complaint_id: str) -> dict[str, Any]:
         """통화를 닫고 민원카드를 만든다."""
@@ -134,56 +181,80 @@ class ConversationSession:
         self.closed = True
         self.complaint_id = complaint_id
 
-        summary_data = self._summarize()
-        card = build_complaint(
-            complaint_id=complaint_id,
-            created_at=self.created_at,
-            duration_sec=duration,
-            transcript=self.transcript,
-            slots=self.slots,
-            summary=summary_data.get("summary", ""),
-            category=summary_data.get("category", ""),
-            routing_query=summary_data.get("routing_query", ""),
+        self.end_timings: dict[str, float] = {}
+        with _timed(self.end_timings, "summary_ms"):
+            summary_data = self._summarize()
+        with _timed(self.end_timings, "routing_ms"):
+            card = build_complaint(
+                complaint_id=complaint_id,
+                created_at=self.created_at,
+                duration_sec=duration,
+                transcript=self.transcript,
+                slots=self.slots,
+                summary=summary_data.get("summary", ""),
+                category=summary_data.get("category", ""),
+                routing_query=summary_data.get("routing_query", ""),
+            )
+        self.end_timings["total_ms"] = round(
+            sum(self.end_timings.get(k, 0.0) for k in ("summary_ms", "routing_ms")), 1
         )
         return card
 
     # -- 내부 --------------------------------------------------------------
     def _decide(self):
-        """Claude 로 한 턴 결정. 실패하면 그 턴만 규칙 엔진이 받는다."""
-        claude, rule = get_engines()
-        if claude is not None:
+        """LLM 으로 한 턴 결정. 실패하면 그 턴만 규칙 엔진이 받는다."""
+        llm, rule = get_engines()
+        if llm is not None:
             try:
-                return claude.respond(self.transcript, self.slots)
+                return llm.respond(self.transcript, self.slots)
             except Exception as exc:
-                log.warning("Claude 턴 실패 — 규칙 엔진으로 대체합니다: %s", exc)
-                self.last_error = f"claude_turn: {exc}"
+                from .providers import explain_error
+
+                log.warning("%s 턴 실패 — 규칙 엔진으로 대체합니다: %s", llm.name, exc)
+                self.last_error = f"{llm.name}_turn: {exc}"
+                llm.last_error = explain_error(exc)
         return rule.respond(self.transcript, self.slots)
 
     def _summarize(self) -> dict[str, str]:
-        claude, rule = get_engines()
-        if claude is not None:
+        llm, rule = get_engines()
+        if llm is not None:
             try:
-                data = claude.summarize(self.transcript, self.slots)
+                data = llm.summarize(self.transcript, self.slots)
                 if data.get("summary"):
                     return data
                 log.warning("요약이 비어 규칙 기반 요약으로 대체합니다.")
             except Exception as exc:
-                log.warning("Claude 요약 실패 — 규칙 기반 요약으로 대체합니다: %s", exc)
-                self.last_error = f"claude_summary: {exc}"
+                from .providers import explain_error
+
+                log.warning("%s 요약 실패 — 규칙 기반 요약으로 대체합니다: %s", llm.name, exc)
+                self.last_error = f"{llm.name}_summary: {exc}"
+                llm.last_error = explain_error(exc)
         return rule.summarize(self.transcript, self.slots)
 
     def _say(
-        self, reply_standard: str, *, done: bool, stt_error: str | None = None
+        self,
+        reply_standard: str,
+        *,
+        done: bool,
+        stt_error: str | None = None,
+        rescored: dict[str, Any] | None = None,
+        timings: dict[str, float] | None = None,
+        started: float | None = None,
     ) -> dict[str, Any]:
         """상담원 발화를 사투리로 바꾸고 음성으로 만들어 기록한다."""
-        reply_dialect = integrations.to_dialect(reply_standard)
+        timings = timings if timings is not None else {}
+        with _timed(timings, "dialect_ms"):
+            reply_dialect = integrations.to_dialect(reply_standard)
         # 어르신이 방금 한 말을 앞 문맥으로 넘긴다. TTS 가 문맥에서 감정을
         # 추론하므로("아이고, 그러셨구나예"를 밝게 읽으면 이상하다) 실제로
         # 톤이 달라진다.
-        speech = synthesize(
-            reply_dialect,
-            context=SpeechContext(previous_text=_last_caller_utterance(self.transcript)),
-        )
+        with _timed(timings, "tts_ms"):
+            speech = synthesize(
+                reply_dialect,
+                context=SpeechContext(previous_text=_last_caller_utterance(self.transcript)),
+            )
+        if started is not None:
+            timings["total_ms"] = round((time.perf_counter() - started) * 1000, 1)
 
         self.transcript.append(
             {"role": "agent", "standard": reply_standard, "dialect": reply_dialect}
@@ -194,6 +265,7 @@ class ConversationSession:
             "reply_text": reply_standard,
             "reply_dialect": reply_dialect,
             "audio_b64": speech.audio_b64,
+            "audio_mime": speech.mime,
             "done": bool(done),
             "slots": self.slots.as_dict(),
             # 아래는 계약 외 진단 필드다. 소비자는 무시해도 된다.
@@ -203,6 +275,8 @@ class ConversationSession:
                 "tts_error": speech.error,
                 "stt_error": stt_error,
                 "turn": self.turn_count,
+                "rescored": rescored,
+                "timings": timings,
             },
         }
 
@@ -215,11 +289,60 @@ class ConversationSession:
                     "reply_text": entry.get("standard", ""),
                     "reply_dialect": entry.get("dialect", ""),
                     "audio_b64": None,
+                    "audio_mime": None,
                     "done": self.closed if done is None else done,
                     "slots": self.slots.as_dict(),
                     "meta": {"engine": self.engine_used, "replayed": True},
                 }
         return self._say(prompts.opening_line(), done=False)
+
+
+def pick_best_alternative(
+    alternatives: list[Any], fallback: str = ""
+) -> tuple[str, dict[str, Any]]:
+    """음성인식 후보 중 '경북 어르신의 민원 발화'에 가장 가까운 것을 고른다.
+
+    브라우저 Web Speech 는 표준어에 맞춰져 있어 1순위 후보가 사투리를
+    표준어로 바꿔 놓는 일이 잦다("옥동입니더" -> "옥동입니다"). 방언 어미·
+    경북 지명·민원 용어로 점수를 매기면 원래 발화에 가까운 후보가 올라온다.
+
+    후보는 문자열이거나 `{"transcript": ..., "confidence": ...}` 형태를
+    받는다(Web Speech 결과를 그대로 넘겨도 되게).
+    """
+    parsed: list[tuple[str, float]] = []
+    for item in alternatives:
+        if isinstance(item, str):
+            transcript, confidence = item, 0.0
+        elif isinstance(item, dict):
+            transcript = str(item.get("transcript") or item.get("text") or "")
+            try:
+                confidence = float(item.get("confidence") or 0.0)
+            except (TypeError, ValueError):
+                confidence = 0.0
+        else:
+            continue
+        transcript = transcript.strip()
+        if transcript:
+            parsed.append((transcript, confidence))
+
+    if not parsed:
+        return fallback, {"used": False, "reason": "후보 없음"}
+
+    scored = []
+    for index, (transcript, confidence) in enumerate(parsed):
+        # 인식기 신뢰도는 동점일 때만 갈음하는 보조 지표로 쓴다.
+        # 순위가 뒤인 후보를 근거 없이 끌어올리지 않도록 순서도 살짝 반영한다.
+        total = score_transcript(transcript) + confidence * 0.5 - index * 0.01
+        scored.append({"transcript": transcript, "score": round(total, 3), "rank": index})
+
+    best = max(scored, key=lambda c: c["score"])
+    return best["transcript"], {
+        "used": True,
+        "picked": best["transcript"],
+        "picked_rank": best["rank"],
+        "changed": best["rank"] != 0,
+        "candidates": scored,
+    }
 
 
 def _last_caller_utterance(transcript: list[dict[str, Any]]) -> str:

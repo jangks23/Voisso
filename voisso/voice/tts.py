@@ -27,6 +27,8 @@ VOISSO_TTS_PROVIDER    typecast | elevenlabs | none  (기본 none)
 TYPECAST_API_KEY      typecast 사용 시 필수
 TYPECAST_VOICE_ID     보이스 id (비우면 DEFAULT_TYPECAST_VOICE)
 TYPECAST_MODEL        기본 ssfm-v30
+VOISSO_TTS_TEMPO      말하기 속도 0.5~2.0 (기본 0.85, 어르신 대상이라 늦춤)
+                      0.85 가 실질적 하한 — 그 아래로는 차이가 측정 편차에 묻힌다
 ELEVENLABS_API_KEY    elevenlabs 사용 시 필수
 ELEVENLABS_VOICE_ID   voice id (비우면 공개 데모 보이스)
 ELEVENLABS_MODEL_ID   기본 eleven_multilingual_v2
@@ -58,7 +60,8 @@ DEFAULT_TYPECAST_MODEL = "ssfm-v30"
 # 검토한 한국어 보이스들. API 메타데이터에 억양 필드가 없으므로
 # "사투리 보이스"라고 표시하지 않는다. 최종 선택은 사람이 듣고 정했다.
 TYPECAST_VOICE_CANDIDATES = {
-    # Nari — female / young_adult / Conversational. 청취 비교 후 채택.
+    # Yongsik — male / Conversational. 청취 비교 후 최종 채택.
+    "yongsik": "tc_5feb2085cca1a479e73bac37",
     "nari": "tc_606c6b127b9f53b4cd1743f5",
     "kyungsook": "tc_5ebea266728f5b00075e6215",
     "duckchun": "tc_5c3c52c95827e00008dd7f34",
@@ -66,7 +69,34 @@ TYPECAST_VOICE_CANDIDATES = {
     "moonjung": "tc_68f9c6a72f0f04a417bb136f",
 }
 # TYPECAST_VOICE_ID 가 비어 있을 때 쓰는 기본 보이스. 환경변수가 항상 우선한다.
-DEFAULT_TYPECAST_VOICE = TYPECAST_VOICE_CANDIDATES["nari"]
+DEFAULT_TYPECAST_VOICE = TYPECAST_VOICE_CANDIDATES["yongsik"]
+
+# 말하기 속도. 어르신이 알아듣기 쉽도록 표준 속도(1.0)보다 늦춘다.
+#
+# 0.85 가 실질적 하한이다. 같은 문장을 3회씩 측정한 결과:
+#   1.00 -> 5.75초 / 0.90 -> 7.06초 / 0.85 -> 7.65초 / 0.80 -> 7.63초
+# 1.0~0.85 구간에서는 값을 내릴수록 확실히 느려지지만, 0.85 아래로는
+# 차이가 실행 간 편차(같은 설정에서 7.18~7.71초)에 묻혀 사라진다.
+# 더 또박또박 들리게 하려면 문장을 짧게 쓰는 쪽이 낫다 —
+# 무음 마크업은 이 조합에서 먹지 않는다(아래 참고).
+DEFAULT_TYPECAST_TEMPO = 0.85
+# API 가 허용하는 범위. 벗어나면 클램프한다.
+TYPECAST_TEMPO_MIN = 0.5
+TYPECAST_TEMPO_MAX = 2.0
+
+# 무음 마크업(`<|0.5s|>`)은 쓰지 않는다 — **측정해 보니 먹지 않는다.**
+# ssfm-v30 + /v1/text-to-speech 조합에서 같은 문장으로 확인한 결과:
+#   마크업 없음 -> 전체 4.47초 / 최장 무음 0.23초
+#   <|0.5s|>    -> 전체 4.71초 / 최장 무음 0.28초
+#   <|2s|>      -> 전체 4.12초 / 최장 무음 0.30초
+# 무음이 실제로 삽입됐다면 <|2s|> 에서 최장 무음이 2초 가까이 나와야 하는데
+# 0.3초에 머물렀고, 전체 길이는 오히려 <|0.5s|> 보다 짧았다. 마크업이
+# 무음이 아니라 텍스트로 소비된다는 뜻이다. 다시 시도하려면 이 수치부터
+# 재현해 보고 판단할 것.
+
+# 응답마다 음량이 튀지 않도록 라우드니스를 고정한다.
+# 통화 데모에서 턴마다 볼륨이 달라지면 조악하게 들린다.
+TYPECAST_TARGET_LUFS = -14
 
 # Typecast 는 ISO 639-3 을 쓴다. ko -> kor
 TYPECAST_LANG = {"ko": "kor", "en": "eng", "ja": "jpn", "zh": "zho"}
@@ -85,6 +115,33 @@ TYPECAST_USER_AGENT = (
 ELEVEN_TTS_URL = "https://api.elevenlabs.io/v1/text-to-speech/{voice_id}"
 DEFAULT_ELEVEN_MODEL = "eleven_multilingual_v2"
 DEFAULT_ELEVEN_VOICE = "21m00Tcm4TlvDq8ikWAM"
+
+
+def resolve_tempo(raw: str | float | None = None) -> float:
+    """말하기 속도를 정한다. 잘못된 값이 통화를 막지는 않게 한다."""
+    value = raw if raw is not None else os.getenv("VOISSO_TTS_TEMPO")
+    if value is None or (isinstance(value, str) and not value.strip()):
+        return DEFAULT_TYPECAST_TEMPO
+    try:
+        tempo = float(value)
+    except (TypeError, ValueError):
+        log.warning(
+            "VOISSO_TTS_TEMPO='%s' 를 숫자로 읽을 수 없습니다. 기본값 %.2f 를 씁니다.",
+            value,
+            DEFAULT_TYPECAST_TEMPO,
+        )
+        return DEFAULT_TYPECAST_TEMPO
+
+    clamped = min(max(tempo, TYPECAST_TEMPO_MIN), TYPECAST_TEMPO_MAX)
+    if clamped != tempo:
+        log.warning(
+            "audio_tempo %.2f 는 허용 범위(%.1f~%.1f) 밖입니다. %.2f 로 조정합니다.",
+            tempo,
+            TYPECAST_TEMPO_MIN,
+            TYPECAST_TEMPO_MAX,
+            clamped,
+        )
+    return clamped
 
 
 @dataclass
@@ -207,10 +264,12 @@ class TypecastProvider(TTSProvider):
         api_key: str | None = None,
         voice_id: str | None = None,
         model: str | None = None,
+        tempo: float | None = None,
     ) -> None:
         self.api_key = api_key or os.getenv("TYPECAST_API_KEY") or ""
         self.voice_id = voice_id or os.getenv("TYPECAST_VOICE_ID") or DEFAULT_TYPECAST_VOICE
         self.model = model or os.getenv("TYPECAST_MODEL") or DEFAULT_TYPECAST_MODEL
+        self.tempo = resolve_tempo(tempo)
 
     @property
     def available(self) -> bool:
@@ -235,6 +294,13 @@ class TypecastProvider(TTSProvider):
             "text": text[:TYPECAST_MAX_CHARS],
             "language": TYPECAST_LANG.get(language, "kor"),
             "prompt": prompt,
+            # 파일 생성과 스트리밍이 이 페이로드를 공유하므로
+            # 속도·음량 설정이 양쪽에 똑같이 걸린다.
+            "output": {
+                "audio_format": "wav",
+                "audio_tempo": self.tempo,
+                "target_lufs": TYPECAST_TARGET_LUFS,
+            },
         }
 
     def synthesize(
@@ -314,6 +380,8 @@ class TypecastProvider(TTSProvider):
             "streaming": True,
             "voice_id": self.voice_id,
             "model": self.model,
+            "tempo": self.tempo,
+            "target_lufs": TYPECAST_TARGET_LUFS,
             "api_key_set": bool(self.api_key),
             # 억양은 보이스 선택의 문제다. API 는 억양 정보를 주지 않는다.
             "accent": "보이스 선택에 따름 (API 가 억양 정보를 제공하지 않음)",

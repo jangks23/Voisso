@@ -1,0 +1,102 @@
+<!DOCTYPE html>
+<html lang="ko"><head><title>부서 및 직원안내 | 합성 픽스처</title></head>
+<body>
+	<h4 class="first">업무안내</h4>
+	<div class="box_line">
+		<p class="silguk_work">
+		1. 가상 상수도 시설의 설치・운영<br/>2. 모의 급수구역 관리<br/>3. 시험용 수질 검사<br/>4. 그밖에 과내 다른 팀에 속하지 아니하는 사항
+		</p>
+	</div>
+
+	<div class="table_wrap mobile">
+		<table class="table_style">
+			<caption>부서별 직원안내 표</caption>
+			<thead>
+				<tr>
+					<th scope="col">소속부서</th>
+					<th scope="col">직책</th>
+					<th scope="col">전화번호</th>
+					<th scope="col">담당업무</th>
+				</tr>
+			</thead>
+			<tbody>
+				<!-- 부서장: 직책 칸이 비어 있다 -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+					</td>
+					<td>
+						<a href="tel:054-000-0001">054-000-0001</a>
+					</td>
+					<td class="l">
+						가상수도과 업무 총괄
+					</td>
+				</tr>
+				<!-- 담당업무 본문에 전화 부기가 섞인 행 (우리가 실제로 겪은 유출 케이스) -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+						팀장
+					</td>
+					<td>
+						<a href="tel:054-000-0002">054-000-0002</a>
+					</td>
+					<td class="l">
+						급수팀 업무 전반 [행정☎ (시험) 000-0002, (본부) 0002]
+					</td>
+				</tr>
+				<!-- 하이픈이 빠진 전화번호. 숫자는 진짜이므로 구분자만 붙여야 한다 -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+						주무관
+					</td>
+					<td>
+						0540000003
+					</td>
+					<td class="l">
+						수질 검사 의뢰 접수, 시험 성적서 발급
+					</td>
+				</tr>
+				<!-- 같은 번호를 공유하는 행. 토큰이 재사용되어야 한다 -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+						주무관
+					</td>
+					<td>
+						<a href="tel:054-000-0001">054-000-0001</a>
+					</td>
+					<td class="l">
+						서무, 회계
+					</td>
+				</tr>
+				<!-- 공석/휴직 행: 전화번호가 없다 -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+						주무관
+					</td>
+					<td>
+					</td>
+					<td class="l">
+						육아휴직(2026. 1. 1. ~ 2026. 12. 31.)
+					</td>
+				</tr>
+				<!-- 잘린 번호. 토큰을 주면 안 된다 -->
+				<tr>
+					<th scope="row">가상수도과</th>
+					<td>
+						주무관
+					</td>
+					<td>
+						054-000-
+					</td>
+					<td class="l">
+						상수도 요금 민원 응대
+					</td>
+				</tr>
+			</tbody>
+		</table>
+	</div>
+</body></html>

@@ -1,0 +1,75 @@
+# Voisso CI — 시크릿을 요구하지 않는다. 포크에서도 그대로 돈다.
+#
+# 여기서 도는 것은 "키 없이 검증 가능한 전부"다. 실제 크롤링(경상북도청 서버 요청),
+# 수집된 실데이터, 외부 API 왕복은 제외한다. 파싱 로직은 합성 HTML 픽스처로
+# 검증하므로 네트워크도 data/raw 캐시도 필요 없다.
+#   → scripts/tests/fixtures/ 참조 (실제 도청 HTML 은 라이선스 문제로 커밋하지 않는다)
+
+name: CI
+
+on:
+  push:
+  pull_request:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  test:
+    name: 테스트 (Python ${{ matrix.python-version }})
+    runs-on: ubuntu-latest
+    strategy:
+      fail-fast: false
+      matrix:
+        python-version: ["3.10", "3.11", "3.12"]
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: ${{ matrix.python-version }}
+
+      # 여기서 pip install 을 하지 않는 것이 의도다. 라우팅·방언·MCP·크롤러 파싱은
+      # 전부 표준 라이브러리만 쓴다. 설치 없이 통과한다는 사실 자체가 회귀 테스트다.
+      - name: 서드파티 패키지 없이 도는지 확인
+        run: |
+          python -c "
+          import importlib.util as u
+          extra = [m for m in ('fastapi', 'uvicorn', 'anthropic', 'mcp')
+                   if u.find_spec(m) is not None]
+          print('설치된 서드파티 패키지:', extra or '없음')
+          "
+
+      - name: 셸 스크립트 문법 검사
+        run: bash -n scripts/test.sh && bash -n scripts/demo.sh
+
+      - name: 통합 테스트
+        run: ./scripts/test.sh --ci
+
+  server-deps:
+    name: 서버 기동 의존성 확인
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+          cache-dependency-path: requirements.txt
+
+      - name: 의존성 설치
+        run: pip install -r requirements.txt
+
+      # scripts/demo.sh 5단계가 띄우는 앱이다. 임포트가 깨지면 데모가 죽는다.
+      - name: FastAPI 앱 임포트
+        run: python -c "import server.main; print('FastAPI 앱 임포트 OK')"
+
+      - name: 통합 테스트 (의존성 설치 상태)
+        run: ./scripts/test.sh --ci

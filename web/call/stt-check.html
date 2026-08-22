@@ -1,0 +1,202 @@
+<!doctype html>
+<html lang="ko" data-theme="light" data-size="m">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>Voisso — 브라우저 음성인식 실측</title>
+<script>
+(function () {
+  try {
+    var pref = localStorage.getItem('voisso.theme') || 'auto';
+    var dark = pref === 'dark' || (pref === 'auto' &&
+      window.matchMedia && window.matchMedia('(prefers-color-scheme: dark)').matches);
+    document.documentElement.dataset.theme = dark ? 'dark' : 'light';
+  } catch (e) {}
+})();
+</script>
+<link rel="stylesheet" href="styles.css">
+<style>
+  body { display: block; padding: 24px 16px 60px; }
+  .wrap { max-width: 760px; margin: 0 auto; }
+  h1 { font-size: 1.6rem; margin: 0 0 6px; letter-spacing: -.03em; }
+  .lede { color: var(--muted); margin: 0 0 18px; line-height: 1.6; }
+  .lede b { color: var(--text); }
+  .bar {
+    display: flex; flex-wrap: wrap; gap: 10px; align-items: center;
+    padding: 12px 14px; border: 1px solid var(--line); border-radius: var(--r-md);
+    background: var(--surface-2); margin-bottom: 18px;
+  }
+  .bar .stat { font-size: .9rem; color: var(--muted); }
+  .bar .stat b { color: var(--text); font-variant-numeric: tabular-nums; }
+  .row {
+    border: 1px solid var(--line); border-radius: var(--r-md); background: var(--surface);
+    padding: 14px 16px; margin-bottom: 12px;
+  }
+  .row-head { display: flex; align-items: center; gap: 10px; flex-wrap: wrap; }
+  .row-no { font-size: .74rem; font-weight: 800; color: var(--muted); letter-spacing: .06em; }
+  .row-label { font-size: .8rem; font-weight: 800; color: var(--brand); }
+  .say { font-size: 1.2rem; font-weight: 700; margin: 8px 0 12px; word-break: keep-all; line-height: 1.5; }
+  .btn {
+    min-height: 46px; padding: 8px 18px; border-radius: 14px; font-weight: 800; font-size: .95rem;
+    border: 2px solid var(--line); background: var(--surface-2); color: var(--text);
+  }
+  .btn:hover { border-color: var(--brand); color: var(--brand); }
+  .btn.primary { background: var(--brand); border-color: var(--brand); color: var(--surface); }
+  .btn.rec { background: var(--danger); border-color: var(--danger); color: #fff; }
+  .out { margin-top: 12px; font-size: .95rem; }
+  .out:empty { display: none; }
+  .cand {
+    display: flex; gap: 8px; align-items: baseline; padding: 7px 10px; border-radius: 10px;
+    background: var(--surface-2); margin-top: 6px; line-height: 1.5;
+  }
+  .cand .rank { font-size: .74rem; font-weight: 800; color: var(--muted); flex: 0 0 auto; }
+  .cand .txt { flex: 1 1 auto; word-break: keep-all; }
+  .cand .sc { font-size: .78rem; font-weight: 800; color: var(--muted); font-variant-numeric: tabular-nums; flex: 0 0 auto; }
+  .cand.picked { background: var(--accent-soft); border: 1px solid var(--accent); }
+  .cand.picked .rank, .cand.picked .sc { color: var(--accent); }
+  .verdict { margin-top: 10px; font-size: .9rem; font-weight: 800; }
+  .verdict.changed { color: var(--accent); }
+  .verdict.same { color: var(--muted); }
+  .predicted { margin-top: 8px; font-size: .85rem; color: var(--muted); }
+  .predicted b { color: var(--text); }
+  textarea {
+    width: 100%; min-height: 220px; margin-top: 14px; padding: 12px;
+    border-radius: var(--r-md); border: 1px solid var(--line);
+    background: var(--surface-2); color: var(--text);
+    font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: .82rem; line-height: 1.5;
+  }
+  .warn { color: var(--warn); font-weight: 700; }
+</style>
+</head>
+<body>
+<div class="wrap">
+  <h1>브라우저 음성인식 실측</h1>
+  <p class="lede">
+    Chrome 의 Web Speech(ko-KR)가 <b>경북 사투리를 실제로 어떻게 받아쓰는지</b> 측정한다.
+    후보를 4개까지 받아, <b>우리 방언 사전이 1순위 대신 다른 후보를 고르는지</b>도 같이 본다.<br>
+    P5(<code>voisso/dialect</code>)의 STT 예측값은 <b>추측</b>이다. 여기서 나온 실측값으로 갈아끼워야 한다.
+    <span class="warn">마이크 권한이 필요하고, Chrome/Edge 에서만 동작한다. <code>http://localhost</code> 로 열어라.</span>
+  </p>
+
+  <div class="bar">
+    <span class="stat">측정 <b id="statDone">0</b> / <b id="statAll">0</b></span>
+    <span class="stat">재점수화가 1순위를 바꾼 문장 <b id="statChanged">0</b></span>
+    <span class="stat" id="statHints"></span>
+    <button class="btn primary" id="btnCopy" type="button">결과 표 만들기</button>
+  </div>
+
+  <div id="rows"></div>
+  <textarea id="dump" readonly placeholder="측정한 뒤 '결과 표 만들기' 를 누르면 여기에 붙여넣기용 표가 나온다."></textarea>
+</div>
+
+<script src="dialect-hints.js"></script>
+<script src="stt-lines.js"></script>
+<script src="speech.js"></script>
+<script>
+(function () {
+  'use strict';
+  const LINES = window.VoissoSttLines || [];
+  const H = window.VoissoHints;
+  const results = new Array(LINES.length).fill(null);
+  const $ = (id) => document.getElementById(id);
+
+  $('statAll').textContent = LINES.length;
+  $('statHints').textContent = H ? '사전 ' + H.info.entries + '개 · 어미 ' + H.info.endings + '개' : '사전 없음';
+
+  if (!window.VoissoSpeech.supported()) {
+    $('rows').innerHTML = '<div class="row"><b>이 브라우저는 음성인식을 지원하지 않습니다.</b> ' +
+      'Chrome 또는 Edge 로 열어 주세요.</div>';
+    return;
+  }
+
+  const esc = (s) => String(s == null ? '' : s)
+    .replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  LINES.forEach((line, i) => {
+    const row = document.createElement('div');
+    row.className = 'row';
+    row.innerHTML =
+      '<div class="row-head">' +
+        '<span class="row-no">' + String(i + 1).padStart(2, '0') + '</span>' +
+        '<span class="row-label">' + esc(line.label) + '</span>' +
+      '</div>' +
+      '<p class="say">' + esc(line.dialect) + '</p>' +
+      '<button class="btn" type="button">이 문장 말하기</button>' +
+      '<div class="out"></div>';
+
+    const btn = row.querySelector('button');
+    const out = row.querySelector('.out');
+
+    btn.addEventListener('click', () => {
+      if (btn.classList.contains('rec')) { window.VoissoSpeech.stop(); return; }
+      out.innerHTML = '<div class="cand"><span class="txt">듣고 있습니다… 문장을 읽어 주세요.</span></div>';
+      btn.classList.add('rec');
+      btn.textContent = '다 말했으면 누르기';
+
+      window.VoissoSpeech.start({
+        lang: 'ko-KR', continuous: true, silenceMs: 1800, maxAlternatives: 4,
+        onInterim: (t) => {
+          out.innerHTML = '<div class="cand"><span class="rank">듣는 중</span><span class="txt">' +
+            esc(t) + '</span></div>';
+        },
+        onError: (msg) => { out.innerHTML = '<div class="cand"><span class="txt warn">' + esc(msg) + '</span></div>'; },
+        onEnd: () => { btn.classList.remove('rec'); btn.textContent = '다시 말하기'; },
+        onFinal: (text, alts) => {
+          const picked = H ? H.pick(alts) : null;
+          const top1 = alts[0] ? alts[0].transcript : text;
+          const chosen = picked ? picked.text : text;
+          const changed = !!(picked && picked.changed);
+
+          results[i] = { label: line.label, dialect: line.dialect, predicted: line.stt_predicted,
+                         top1: top1, chosen: chosen, changed: changed,
+                         alts: alts.map((a) => a.transcript) };
+
+          out.innerHTML =
+            alts.map((a, k) => {
+              const sc = picked && picked.scores[k] ? picked.scores[k].total.toFixed(2) : '-';
+              const isPick = picked && picked.index === k;
+              return '<div class="cand' + (isPick ? ' picked' : '') + '">' +
+                '<span class="rank">' + (k + 1) + '순위</span>' +
+                '<span class="txt">' + esc(a.transcript) + '</span>' +
+                '<span class="sc">점수 ' + sc +
+                  (typeof a.confidence === 'number' && a.confidence ? ' · 신뢰도 ' + a.confidence.toFixed(2) : '') +
+                '</span></div>';
+            }).join('') +
+            '<div class="verdict ' + (changed ? 'changed' : 'same') + '">' +
+              (changed ? '방언 사전이 ' + (picked.index + 1) + '순위를 골랐다 (1순위와 다름)'
+                       : '1순위 유지 — 사전이 바꿀 이유를 찾지 못했다') +
+            '</div>' +
+            '<div class="predicted">P5 예측: <b>' + esc(line.stt_predicted) + '</b></div>';
+
+          $('statDone').textContent = results.filter(Boolean).length;
+          $('statChanged').textContent = results.filter((r) => r && r.changed).length;
+        },
+      });
+    });
+
+    $('rows').appendChild(row);
+  });
+
+  $('btnCopy').addEventListener('click', () => {
+    const done = results.filter(Boolean);
+    if (!done.length) { $('dump').value = '아직 측정한 문장이 없다.'; return; }
+    const md = [
+      '| # | 상황 | 사투리 원문 | STT 1순위(실측) | 재점수 선택 | 바뀜 | P5 예측 |',
+      '|---|---|---|---|---|---|---|',
+    ];
+    results.forEach((r, i) => {
+      if (!r) return;
+      md.push(`| ${i + 1} | ${r.label} | ${r.dialect} | ${r.top1} | ${r.chosen} | ${r.changed ? 'O' : '-'} | ${r.predicted} |`);
+    });
+    md.push('');
+    md.push('후보 전체:');
+    results.forEach((r, i) => { if (r) md.push(`${i + 1}. ${r.alts.join(' / ')}`); });
+    const text = md.join('\n');
+    $('dump').value = text;
+    try { navigator.clipboard && navigator.clipboard.writeText(text); } catch (e) {}
+    $('dump').focus(); $('dump').select();
+  });
+})();
+</script>
+</body>
+</html>

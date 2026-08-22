@@ -4,8 +4,8 @@
   "region": "경상북도 (동남 방언)",
   "register": "정중체 — 어르신 대상 공공 민원 서비스",
   "honesty": "방언 음향 모델을 학습시키지 않았다. 어휘·어미 사전 기반 결정론적 변환이다. AI Hub 방언 코퍼스(dataSetSn=119)에서 가져온 항목은 하나도 없다 (이용정책 제5항 제3자 제공 금지 — docs/DATA_LICENSE.md §1).",
-  "entry_count": 355,
-  "rule_count": 64,
+  "entry_count": 367,
+  "rule_count": 70,
   "license": "CC BY-SA 4.0 — voisso/dialect/SOURCES.md 참조"
  },
  "entries": [
@@ -2467,13 +2467,6 @@
    "domain": "교통"
   },
   {
-   "dialect": "내리가",
-   "standard": "내려서",
-   "pos": "부사구",
-   "source": "curated:민원도메인",
-   "domain": "교통"
-  },
-  {
    "dialect": "타고 가가",
    "standard": "타고 가서",
    "pos": "부사구",
@@ -2542,6 +2535,99 @@
    "pos": "동사",
    "source": "curated:민원도메인",
    "domain": "농사"
+  },
+  {
+   "dialect": "떠내리가",
+   "standard": "떠내려가",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "도로",
+   "stem": true
+  },
+  {
+   "dialect": "쌓이가",
+   "standard": "쌓여서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "농사"
+  },
+  {
+   "dialect": "끓이가",
+   "standard": "끓여서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "음식"
+  },
+  {
+   "dialect": "추와가",
+   "standard": "추워서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "더와가",
+   "standard": "더워서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "고장나가",
+   "standard": "고장나서",
+   "pos": "부사구",
+   "source": "curated:민원도메인",
+   "domain": "마을행정"
+  },
+  {
+   "dialect": "비 와가",
+   "standard": "비 와서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "눈 와가",
+   "standard": "눈 와서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "날씨"
+  },
+  {
+   "dialect": "엄써가",
+   "standard": "없어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "엄서가",
+   "standard": "없어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "있어가",
+   "standard": "있어서",
+   "pos": "부사구",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "그라는데",
+   "standard": "그러는데",
+   "pos": "부사",
+   "source": "curated:일반어휘",
+   "domain": "일반"
+  },
+  {
+   "dialect": "빌리 쓰",
+   "standard": "빌려 쓰",
+   "pos": "동사어간",
+   "source": "curated:민원도메인",
+   "domain": "농사",
+   "stem": true
   }
  ],
  "rules": [
@@ -2896,6 +2982,16 @@
    "strength": "light"
   },
   {
+   "pattern": "(?<![가-힣])아니요(?![가-힣])",
+   "replace": "아니라예",
+   "desc": "부정 대답 '아니요' → '아니라예'. 일반 -요→-예 규칙에 맡기면 '아니예'가 되어 긍정 대답 '예'처럼 들린다. 어르신 대상 서비스에서 이건 실제 오해를 부른다",
+   "source": "curated:어미규칙",
+   "dir": "to_dialect",
+   "priority": 95,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
    "pattern": "(?<![필중주수동개조소용요])요(?=[\\s.,!?…\\\"'’”\\)\\]]|$)",
    "replace": "예",
    "desc": "해요체 종결 -요 → -예 (있어요→있어예, 할게요→할게예)",
@@ -3076,7 +3172,7 @@
    "strength": "light"
   },
   {
-   "pattern": "(?<=[가-힣])뿟(?=[다습네])",
+   "pattern": "(?<=[가-힣])뿟(?=[다습네는고지])",
    "replace": "버렸",
    "desc": "-아뿟다 → -아 버렸다",
    "source": "curated:어미규칙",
@@ -3086,7 +3182,7 @@
    "strength": "light"
   },
   {
-   "pattern": "(?<=[하가오보주되사살있없몰알받나내드묵새기리지치시우추무두구러서어여려며데매배파푸뿌니비피히키미])노(?![가-힣])",
+   "pattern": "(?<=[하가오보주되사살있없몰알받나내드묵새기리지치시우추무두구러서어여려며데매배파푸뿌니비피히키미쩌짜])노(?![가-힣])",
    "replace": "니",
    "desc": "의문사 의문 -노 → -니 (머하노→뭐 하니)",
    "source": "wikipedia:동남_방언#문법",
@@ -3122,6 +3218,56 @@
    "source": "wikipedia:동남_방언#문법",
    "dir": "to_standard",
    "priority": 57,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])믄(?![가-힣])",
+   "replace": "면",
+   "desc": "연결어미 -믄 → -면 (불나믄→불나면, 하믄→하면)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 62,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[두추더거차미마가려러])버가(?![가-힣])",
+   "replace": "워서",
+   "desc": "ㅂ불규칙 + 연결어미 -버가 → -워서 (어두버가→어두워서)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 62,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[려아져어나라])와가(?![가-힣])",
+   "replace": "와서",
+   "desc": "연결어미 -와가 → -와서 (내려와가→내려와서, 가져와가→가져와서). 앞 음절을 '오다' 활용형으로 제한한다. 조건을 풀면 '기와가 떨어졌다'가 '기와서 떨어졌다'로 망가진다",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 61,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[두추더거차미마가려러])버(?![가-힣])",
+   "replace": "워",
+   "desc": "ㅂ불규칙 방언형 -버 → -워 (어두버→어두워, 무거버→무거워). 뒤에 한글이 오면 '가버리다'류라 건드리지 않는다",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 61,
+   "roundtrip": true,
+   "strength": "light"
+  },
+  {
+   "pattern": "(?<=[가-힣])워가(?![가-힣])",
+   "replace": "워서",
+   "desc": "-워가 → -워서 (어두워가→어두워서)",
+   "source": "curated:어미규칙",
+   "dir": "to_standard",
+   "priority": 60,
    "roundtrip": true,
    "strength": "light"
   },

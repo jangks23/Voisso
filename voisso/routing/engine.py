@@ -35,6 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import tokenizer
+from . import concepts
 from .lexicon import expand_query
 from .privacy import scrub
 
@@ -48,11 +49,26 @@ W_COSINE = 0.62         # 유닛 점수 = 코사인 + BM25 + 어절 커버리지
 W_BM25 = 0.30
 W_COVERAGE = 0.08
 
-W_UNITS = 0.78          # 부서 점수 = 유닛 감쇠합 + 부서 커버리지
-W_DEPT_COVERAGE = 0.22
+W_UNITS = 0.74          # 부서 점수 = 유닛 감쇠합 + 부서 커버리지
+W_DEPT_COVERAGE = 0.26
+
+# 확장 사전(lexicon)으로만 걸린 부서는 근거가 약하다. 민원인이 실제로 쓴
+# 어절이 그 부서 어디에도 없으면 감점한다. "농로 유실"에 대해 "농업기술원
+# 이전사업"이 후보로 올라오는 것 같은 사고를 막는다.
+UNGROUNDED_PENALTY = 0.62
+
+# 2글자 n-gram 겹침만으로 걸린 유닛은 대개 우연이다.
+#   "가로등" vs "가로수"  -> 겹치는 건 '가로' 뿐
+#   "카이"(사투리) vs "하이테크" -> 겹치는 건 '하이' 뿐
+# 3글자 이상이 걸렸거나 개념 사전이 확인해 준 용어가 걸린 경우만 "실질 매칭"으로 본다.
+WEAK_MATCH_PENALTY = 0.25
 
 FIELD_WEIGHT = {"staff": 1.00, "duty": 1.00, "name": 0.85}
-UNIT_DECAY = (1.0, 0.18, 0.08)
+
+# 한 부서 안에서 여러 담당업무가 걸리면 그 부서가 그 일의 주인일 가능성이 높다.
+# 반대로 초단문 하나("배수개선사업")만 걸린 부서는 우연히 튀어오를 수 있다.
+# 상위 5개 유닛까지 감쇠 합산해, 폭넓게 걸린 부서가 이기게 한다.
+UNIT_DECAY = (1.0, 0.28, 0.16, 0.09, 0.05)
 
 # "◦ 하수도팀 업무 전반" 같은 문구는 부서를 맞히는 데는 쓸모 있지만
 # evidence 로는 근거가 안 된다. 점수를 약간 깎아 구체적인 문장에 자리를 내준다.
@@ -62,9 +78,19 @@ GENERIC_PENALTY = 0.80
 # evidence 는 점수가 아니라 "민원인이 쓴 말이 원문에 실제로 있는지"로 고른다.
 EVIDENCE_EXACT_BONUS = 0.60
 
-SCORE_FLOOR = 0.05      # 이보다 낮으면 후보로도 내보내지 않는다
-CONFIDENT_SCORE = 0.30  # 단정해도 되는 최소 점수
+# 이보다 낮으면 후보로도 내보내지 않는다. 0.2 미만은 대부분 스쳐간 겹침이라
+# 담당자에게 보여줘도 판단에 도움이 안 된다.
+SCORE_FLOOR = 0.20
 CONFIDENT_MARGIN = 0.10 # 1위-2위 격차가 이보다 작으면 "여러 후보 제시"
+
+# 단정해도 되는 최소 점수. 실데이터(96개 부서)에서 측정해 잡았다.
+#   정상 민원 질의 10건  : 0.653 ~ 1.000
+#   도청 소관이 아닌 질의 5건: 0.000 ~ 0.312
+#     ("심해 잠수정 도색", "화성 이주 신청", "강아지가 아픈데", "빙하 탐사선 견인")
+# 두 분포 사이가 비어 있어 그 가운데를 임계값으로 잡았다. 이 아래는
+# 후보만 제시하고 단정하지 않는다 — 틀린 부서로 확신에 차 보내는 것보다
+# "확실하지 않다"고 말하는 편이 담당자에게 훨씬 낫다.
+CONFIDENT_SCORE = 0.48
 
 
 @dataclass
@@ -145,14 +171,29 @@ class RoutingIndex:
 
     # -------------------------------------------------------------- 검색
 
-    def _query_vector(self, query: str) -> tuple[Counter, dict[str, float], float, list[str]]:
+    def _query_vector(self, query: str) -> tuple[Counter, dict[str, float], float, list[str], set[str], set[str]]:
+        """(가중 tf, 코사인 벡터, 노름, 원어절, 접지된 항, 개념 사전이 확인한 항)"""
         base_tokens = tokenizer.analyze(query)
-        expanded = expand_query(base_tokens)   # {어절: 가중치}
+        expanded = expand_query(base_tokens)   # {어절: 가중치}, 원어절은 1.0
+
+        # 개념 사전이 "물이 안 빠진다 = 하수도/배수" 같은 다리를 놓는다.
+        # 사람이 검증한 대응이라 우연한 n-gram 겹침보다 높은 가중치를 준다.
+        hits = concepts.detect(query)
+        concept_tokens = concepts.admin_terms(hits)   # {용어: 가중치}
+        for term, weight in concept_tokens.items():
+            expanded[term] = max(expanded.get(term, 0.0), weight)
 
         qtf: Counter = Counter()
+        grounded: set[str] = set()
+        concept_grams: set[str] = set()
         for token, boost in expanded.items():
-            for gram in tokenizer.ngrams(token):
+            grams = tokenizer.ngrams(token)
+            for gram in grams:
                 qtf[gram] += boost
+            if boost >= 1.0:                   # 민원인이 실제로 말한 어절
+                grounded.update(grams)
+            if token in concept_tokens:
+                concept_grams.update(grams)
 
         vec: dict[str, float] = {}
         acc = 0.0
@@ -163,11 +204,25 @@ class RoutingIndex:
             w = (1.0 + math.log(tf)) * idf * tokenizer.term_weight(term)
             vec[term] = w
             acc += w * w
-        return qtf, vec, math.sqrt(acc) or 1.0, base_tokens
+        keys = vec.keys()
+        return qtf, vec, math.sqrt(acc) or 1.0, base_tokens, grounded & keys, concept_grams & keys
+
+    def grounding(self, query: str) -> dict[str, Any]:
+        """질의 어절이 사무분장 원문에 실제로 존재하는지 본다.
+
+        하나도 없으면 이 검색은 전적으로 확장 사전(유사어)에 의존한 것이다.
+        그런 결과는 절대 단정하면 안 된다.
+        """
+        _qtf, _vec, _norm, base_tokens, grounded, _concept = self._query_vector(query)
+        return {
+            "tokens": base_tokens,
+            "grounded_terms": sorted(grounded),
+            "grounded": bool(grounded),
+        }
 
     def search(self, query: str, limit: int) -> list[dict[str, Any]]:
         """질의 -> 부서 단위 후보 리스트 (점수 내림차순)."""
-        qtf, qvec, qnorm, base_tokens = self._query_vector(query)
+        qtf, qvec, qnorm, base_tokens, grounded, concept_grams = self._query_vector(query)
         if not qvec:
             return []
         qmass = sum(qvec.values()) or 1.0
@@ -178,11 +233,14 @@ class RoutingIndex:
             dot = 0.0
             bm = 0.0
             hit = False
+            strong = False
             for term, qw in qvec.items():
                 tf = unit.tf.get(term)
                 if not tf:
                     continue
                 hit = True
+                if len(term) >= 3 or term in concept_grams:
+                    strong = True
                 dw = (1.0 + math.log(tf)) * self.idf[term] * tokenizer.term_weight(term)
                 dot += qw * dw
                 denom = tf + BM25_K1 * (1 - BM25_B + BM25_B * unit.length / self.avgdl)
@@ -197,6 +255,9 @@ class RoutingIndex:
             score *= FIELD_WEIGHT.get(unit.kind, 1.0)
             if unit.generic:
                 score *= GENERIC_PENALTY
+            if not strong:
+                # 2글자 겹침만으로 걸렸다. 우연일 가능성이 높다.
+                score *= WEAK_MATCH_PENALTY
             per_dept.setdefault(unit.dept_idx, []).append((score, unit))
 
         results: list[dict[str, Any]] = []
@@ -210,12 +271,19 @@ class RoutingIndex:
             dept_cover = sum(w for t, w in qvec.items() if t in terms_in_dept) / qmass
             total = min(W_UNITS * decayed + W_DEPT_COVERAGE * dept_cover, 1.0)
 
+            # 민원인이 실제로 쓴 어절이 이 부서 어디에도 없으면 확장어만으로
+            # 걸린 것이다. 후보로 남기되 아래로 민다.
+            is_grounded = bool(grounded & terms_in_dept) if grounded else True
+            if not is_grounded:
+                total *= UNGROUNDED_PENALTY
+
             results.append(
                 {
                     "dept": self.departments[dept_idx],
                     "score": total,
                     "best_score": hits[0][0],
                     "dept_coverage": dept_cover,
+                    "grounded": is_grounded,
                     "evidence_unit": _pick_evidence(hits, exact_tokens),
                     "staff_unit": next((u for _s, u in hits if u.kind == "staff"), None),
                     "hit_count": len(hits),

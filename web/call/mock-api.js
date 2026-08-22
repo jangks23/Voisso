@@ -28,6 +28,7 @@ window.VoissoMockAPI = (function () {
     ['됐니껴', '되었습니까'], ['하이소', '하세요'], ['주이소', '주세요'], ['보이소', '보세요'],
     ['카데예', '하더라고요'], ['카더라', '하더라'], ['맞심더', '맞습니다'], ['맞니더', '맞습니다'],
     ['이시더', '입니다'], ['이라예', '이에요'], ['이라요', '이에요'],
+    ['습니더', '습니다'], ['십니더', '십니다'], ['심더', '습니다'], ['니껴', '습니까'],
     ['그캅니더', '그럽니다'], ['그캅니꺼', '그럽니까'], ['카능교', '합니까'], ['카셨지예', '하셨지요'],
     ['잠기뿌니더', '잠겨버렸습니다'], ['뿌니더', '버렸습니다'], ['뿟니더', '버렸습니다'], ['뿌예', '버려요'], ['뿟다', '버렸다'],
     ['빠지가', '빠져서'], ['오모', '오면'], ['오믄', '오면'], ['하모', '하면'],
@@ -45,6 +46,11 @@ window.VoissoMockAPI = (function () {
 
   function normalize(text) {
     let out = ' ' + (text || '') + ' ';
+    // 1) P5 사전(voisso/dialect/lexicon.json)에서 구운 대응쌍을 먼저 적용한다.
+    //    dialect-hints.js 가 없으면 아래 자체 어미 사전만으로 동작한다.
+    const pairs = (window.VoissoHints && window.VoissoHints.pairs) || [];
+    for (const [d, st] of pairs) out = out.split(d).join(st);
+    // 2) 남은 종결어미는 목 자체 사전으로 마무리한다.
     for (const pair of LEXICON) {
       if (pair.length < 2) continue;
       out = out.split(pair[0]).join(pair[1]);
@@ -219,8 +225,18 @@ window.VoissoMockAPI = (function () {
   async function start() {
     await sleep(260);
     const id = 'mock-' + Math.random().toString(36).slice(2, 9);
-    sessions.set(id, { slots: {}, turns: [], started: Date.now(), done: false });
-    return { session_id: id };
+    const s = { slots: {}, turns: [], started: Date.now(), done: false, asked: 'what' };
+    s.turns.push({ role: 'agent', dialect: GREETING.dialect, standard: GREETING.standard });
+    sessions.set(id, s);
+    // 실서버와 똑같이 첫 인사를 함께 돌려준다(계약 필수 필드는 session_id 하나).
+    return {
+      session_id: id,
+      reply_text: GREETING.standard,
+      reply_dialect: GREETING.dialect,
+      audio_b64: null,
+      done: false,
+      slots: {},
+    };
   }
 
   async function turn(body) {
@@ -238,9 +254,10 @@ window.VoissoMockAPI = (function () {
     let raw = (body.text || '').trim();
     if (!raw && body.audio_b64) raw = VOICE_FALLBACK[Math.min(s.turns.length, VOICE_FALLBACK.length - 1)];
 
-    if (!raw) {                                   // 통화 시작 직후 첫 인사
+    if (!raw) {                                   // 빈 입력 = 첫 인사 요청
       s.asked = 'what';
-      s.turns.push({ role: 'agent', dialect: GREETING.dialect, standard: GREETING.standard });
+      const already = s.turns.length && s.turns[s.turns.length - 1].role === 'agent';
+      if (!already) s.turns.push({ role: 'agent', dialect: GREETING.dialect, standard: GREETING.standard });
       return {
         reply_text: GREETING.standard, reply_dialect: GREETING.dialect,
         audio_b64: null, done: false, slots: { ...s.slots },

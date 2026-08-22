@@ -33,10 +33,12 @@ from pathlib import Path
 from typing import Any
 
 from voisso import routing
+from voisso.routing import concepts, regions
 from voisso.routing.dataaccess import SCRAPER_CMD, MissingDataError, sample_path
 from voisso.routing.privacy import contains_phone
 
 from . import SERVER_NAME, dialect_bridge
+from . import regression
 from .complaints import ComplaintError, get_complaint, submit_complaint
 from .tools import TOOL_NAMES, call_tool
 
@@ -60,6 +62,45 @@ REAL_CASES: list[tuple[str, tuple[str, ...]]] = [
 ]
 
 CASES = SAMPLE_CASES
+
+# 사투리 질의는 표준어 질의와 같은 부서로 가야 한다. (query, 표준어 대응)
+SAMPLE_DIALECT_PAIRS = [
+    ("우리 동네 하수구가 막혔는데 어데 전화하믄 되노?", "하수구가 막혔습니다"),
+    ("경로당 지원 사업은 누가 담당하노?", "경로당 지원 사업 문의"),
+]
+REAL_DIALECT_PAIRS = SAMPLE_DIALECT_PAIRS
+DIALECT_PAIRS = SAMPLE_DIALECT_PAIRS
+
+# 사무분장 원문에 존재하지 않는 어휘 -> "모르겠다"고 말해야 하는 질의
+UNGROUNDED_QUERY = "빙하 탐사선 견인은 누가 담당하노?"
+
+# 개념 사전 — 행정 용어가 하나도 없는 구어 증상 표현
+CONCEPT_PROBES = [
+    ("집 앞에 물이 안 빠지고 자꾸 고여서 큰일이에요", "drain_blocked"),
+    ("며칠째 수돗물이 안 나옵니다", "water_none"),
+    ("농로가 무너져서 트랙터가 못 지나간다", "farm_road"),
+    ("밤에 누가 길가에 쓰레기를 몰래 버리고 갑니다", "illegal_dumping"),
+    ("멧돼지가 밭에 내려와서 다 망쳐놨어요", "wild_animal"),
+]
+
+# 시군 소관 -> 도청 부서를 배정하면 안 되는 질의
+MUNICIPAL_PROBES = [
+    "우리 동네 가로등이 며칠째 안 들어와요",
+    "주민등록등본 떼려면 어디로 가야 되나요?",
+    "종량제 봉투는 어디서 사나요?",
+]
+
+# 시군 감지 — 지명이 일상어와 겹치는 경우를 특히 본다
+REGION_PROBES = [
+    ("안동시 옥동인데 가로등이 안 들어와요", "안동시"),
+    ("안동 사는데 가로등이", "안동시"),
+    ("안동네 골목이 어두워요", None),
+    ("울릉도 사는데 종량제 봉투 어디서 사노", "울릉군"),
+    ("영양 상태가 안 좋아서 병원 갑니다", None),
+    ("영양군에 사는데 가로등이", "영양군"),
+    ("고령자 운전면허 반납은 어디서 하나요", None),
+    ("우리 동네 가로등이 안 들어와요", None),
+]
 
 _PASS, _FAIL = "PASS", "FAIL"
 
@@ -151,6 +192,52 @@ def check_routing(rep: Report) -> None:
             for i, m in enumerate(matches, 1):
                 print(f"        {i}. {m['score']:.3f}  {m['full_name']} / {m['position']}")
                 print(f"           ↳ {m['evidence'][:100]}")
+
+    # 사투리 그대로 넣어도 표준어와 같은 부서로 가야 한다 (STT 원문 직결 대비)
+    for dialect, standard in DIALECT_PAIRS:
+        d_top = routing.find_department(dialect, top_k=1)
+        s_top = routing.find_department(standard, top_k=1)
+        rep.check(
+            f"[사투리] {dialect}",
+            bool(d_top) and bool(s_top) and d_top[0]["department_id"] == s_top[0]["department_id"],
+            (d_top[0]["full_name"] + " / " + d_top[0]["evidence"][:40]) if d_top else "후보 없음",
+        )
+
+    # 사무분장 원문에 없는 어휘로만 이뤄진 질의는 절대 단정하지 않는다
+    unknown = routing.route(UNGROUNDED_QUERY, top_k=3)
+    rep.check(
+        "근거 없는 질의는 단정하지 않음",
+        unknown["grounded"] is False and unknown["confident"] is False,
+        unknown["reason"][:70],
+    )
+
+    # 개념 사전 — 구어 증상 표현이 행정 용어로 이어지는지
+    rep.check("개념 사전 로드", concepts.concept_count() >= 40,
+              f"{concepts.concept_count()}개 개념")
+    for text, expect_id in CONCEPT_PROBES:
+        hits = concepts.detect(text)
+        rep.check(
+            f"[개념] {text}",
+            any(h.id == expect_id for h in hits),
+            ", ".join(f"{h.id}({h.matched})" for h in hits) or "감지 없음",
+        )
+
+    # 시군 소관 업무는 도청 부서를 배정하지 않는다
+    for text in MUNICIPAL_PROBES:
+        result = routing.route(text, top_k=3)
+        rep.check(
+            f"[시군] {text}",
+            result.get("outcome") == "municipal_referral" and not result["matches"],
+            result.get("reason", "")[:60],
+        )
+
+    # 시군 감지 — 지명이 일상어와 겹쳐도 오탐하지 않아야 한다
+    rep.check("시군 목록", regions.REGION_COUNT == 22,
+              f"{regions.REGION_COUNT}개 (군위군 2023년 대구 편입 반영)")
+    for text, expect in REGION_PROBES:
+        got = regions.detect(text)
+        rep.check(f"[시군] {text}", (got.name if got else None) == expect,
+                  f"{got.name if got else '감지 없음'} (기대 {expect or '없음'})")
 
     rep.check("빈 질의는 빈 결과", routing.find_department("") == [])
     rep.check("top_k 존중", len(routing.find_department("민원", top_k=2)) <= 2)
@@ -261,6 +348,31 @@ def check_complaints(rep: Report) -> None:
         else:
             os.environ["VOISSO_COMPLAINTS_DIR"] = prev
         shutil.rmtree(tmpdir, ignore_errors=True)
+
+
+# ------------------------------------------------------------ 6.5 라우팅 회귀
+
+def check_regression(rep: Report, real_data: bool) -> None:
+    """라우팅 회귀 — 고친 것이 다음 수정에서 깨지지 않게 붙잡는다.
+
+    실측 실패 케이스 3건, P5 demo_lines 대사(사투리/STT/정규화 3입력),
+    시군 소관 질의, 범위 밖 질의를 한 번에 채점한다.
+    """
+    _section("6.5 라우팅 회귀")
+    dataset = "real" if real_data else "sample"
+    passed, total, rows = regression.run(dataset)
+    if not real_data:
+        print("  (합성 샘플 — 부서명 기대값 케이스는 제외하고 관할·범위 판단만 채점)")
+
+    rep.check(
+        f"회귀 통과율 {passed}/{total}",
+        passed == total,
+        "전부 통과" if passed == total else ", ".join(r["text"][:24] for r in rows if not r["ok"]),
+    )
+    for row in rows:
+        if not row["ok"]:
+            print(f"        FAIL {row['text']}")
+            print(f"             기대 {row['expect']} / 실제 {row['got']}")
 
 
 # --------------------------------------------------------- 7. 데이터 부재 안내
@@ -446,6 +558,7 @@ def main(argv: list[str] | None = None) -> int:
     check_lookup(rep)
     check_dialect(rep)
     check_complaints(rep)
+    check_regression(rep, real_data)
     check_missing_data(rep)
     check_stdio(rep, no_sdk)
 

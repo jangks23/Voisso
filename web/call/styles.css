@@ -8,12 +8,13 @@
   --surface:   #ffffff;
   --surface-2: #f6f8fb;
   --text:      #14202e;
-  --muted:     #5a6b7d;
+  --muted:     #465362;
   --line:      #dbe2ec;
   --brand:     #14456f;
   --brand-soft:#e6eef6;
   --brand-ink: #0f3453;
-  --accent:    #0d7a53;
+  --accent:    #0b6444;
+  --accent-ink:#095436;      /* accent-soft 위 텍스트 전용 (7.77:1) */
   --accent-soft:#e2f2ea;
   --danger:    #a8241c;
   --warn:      #8a5a00;
@@ -24,7 +25,7 @@
   --r-lg: 26px;
   --r-md: 18px;
   --r-sm: 12px;
-  --base: 16px;
+  --base: 18px;
   color-scheme: light;
 }
 
@@ -34,12 +35,13 @@
   --surface:   #151d26;
   --surface-2: #1b242f;
   --text:      #e9eff6;
-  --muted:     #9dadbe;
+  --muted:     #a6b7c9;
   --line:      #2a3644;
-  --brand:     #7cb2e0;
+  --brand:     #86b9e4;
   --brand-soft:#17293a;
   --brand-ink: #cfe4f6;
   --accent:    #4fd0a0;
+  --accent-ink:#4fd0a0;      /* 다크는 accent 그대로 7.33:1 */
   --accent-soft:#12302a;
   --danger:    #ff8f85;
   --warn:      #e8b866;
@@ -50,8 +52,14 @@
   color-scheme: dark;
 }
 
-:root[data-size="l"]  { --base: 18px; }
-:root[data-size="xl"] { --base: 20.5px; }
+:root[data-size="l"]  { --base: 20px; }
+:root[data-size="xl"] { --base: 22.5px; }
+
+/* 스크린리더 전용 텍스트 */
+.sr-only {
+  position: absolute; width: 1px; height: 1px; padding: 0; margin: -1px;
+  overflow: hidden; clip: rect(0 0 0 0); white-space: nowrap; border: 0;
+}
 
 /* ── 리셋 ─────────────────────────────────────────────── */
 * { box-sizing: border-box; }
@@ -150,10 +158,10 @@ button { cursor: pointer; border: 0; background: none; }
   width: 168px; height: 168px; border-radius: 50%;
   background: var(--accent); color: #fff;
   display: grid; place-items: center; align-content: center; gap: 2px;
-  box-shadow: 0 14px 30px rgba(13, 122, 83, .34);
+  box-shadow: 0 14px 30px rgba(11, 100, 68, .34);
   transition: transform .16s ease, box-shadow .16s ease;
 }
-.call-btn:hover { transform: translateY(-2px); box-shadow: 0 18px 38px rgba(13, 122, 83, .42); }
+.call-btn:hover { transform: translateY(-2px); box-shadow: 0 18px 38px rgba(11, 100, 68, .42); }
 :root[data-theme="dark"] .call-btn { color: #05201a; box-shadow: 0 14px 30px rgba(0, 0, 0, .5); }
 :root[data-theme="dark"] .call-btn:hover { box-shadow: 0 18px 38px rgba(0, 0, 0, .6); }
 .call-btn:active { transform: scale(.97); }
@@ -180,7 +188,7 @@ button { cursor: pointer; border: 0; background: none; }
 .idle-points li::before {
   content: "✓"; position: absolute; left: 0; top: -1px;
   width: 21px; height: 21px; border-radius: 50%;
-  background: var(--accent-soft); color: var(--accent);
+  background: var(--accent-soft); color: var(--accent-ink);
   display: grid; place-items: center; font-size: .72rem; font-weight: 800;
 }
 .mode-chip {
@@ -219,8 +227,20 @@ button { cursor: pointer; border: 0; background: none; }
 .std-switch {
   flex: 0 0 auto; padding: 10px 16px 4px;
   border-bottom: 1px dashed var(--line);
+  display: flex; align-items: center; justify-content: space-between; gap: 8px;
 }
-.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer; padding: 4px 0; }
+
+/* 지금 쓰는 음성 입력 경로 */
+.path-chip {
+  flex: 0 0 auto;
+  font-size: .72rem; font-weight: 800; letter-spacing: -.01em;
+  padding: 4px 10px; border-radius: 999px; white-space: nowrap;
+  border: 1px solid var(--line); background: var(--surface-2); color: var(--muted);
+}
+.path-chip.on  { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-soft); }
+.path-chip.off { color: var(--warn); }
+.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
+          min-height: 44px; padding: 4px 0; }
 .switch input { position: absolute; opacity: 0; width: 0; height: 0; }
 .switch-track {
   width: 46px; height: 27px; border-radius: 999px; background: var(--line);
@@ -256,7 +276,7 @@ button { cursor: pointer; border: 0; background: none; }
 :root[data-theme="dark"] .bubble.caller { color: #0b1119; }
 .bubble-who {
   font-size: .74rem; font-weight: 800; letter-spacing: .04em;
-  opacity: .68; margin-bottom: 4px; text-transform: uppercase;
+  opacity: .92; margin-bottom: 4px; text-transform: uppercase;
 }
 .bubble-dialect { font-size: 1.14rem; line-height: 1.55; word-break: keep-all; }
 .bubble-std {
@@ -270,6 +290,14 @@ button { cursor: pointer; border: 0; background: none; }
   display: block; font-size: .72rem; font-weight: 800; letter-spacing: .05em;
   opacity: .62; margin-bottom: 3px;
 }
+.std-row + .std-row { margin-top: 10px; }
+.alt-row .alt-body { opacity: .72; text-decoration: line-through; text-decoration-thickness: 1px; }
+.pick-badge {
+  margin-left: 7px; padding: 2px 8px; border-radius: 999px;
+  font-size: .66rem; font-weight: 800; letter-spacing: 0;
+  border: 1px solid currentColor; opacity: .85; text-transform: none;
+  vertical-align: middle;
+}
 .bubble-std mark {
   background: var(--mark); color: var(--mark-ink);
   border-radius: 5px; padding: 0 3px; font-weight: 700;
@@ -278,16 +306,36 @@ button { cursor: pointer; border: 0; background: none; }
 .bubble-toggle {
   margin-top: 9px;
   display: inline-flex; align-items: center; gap: 6px;
-  min-height: 34px; padding: 4px 12px;
+  min-height: 44px; padding: 6px 14px;
   border-radius: 999px;
   border: 1.5px solid currentColor;
   font-size: .82rem; font-weight: 700;
-  opacity: .72; transition: opacity .16s, background .16s;
+  opacity: .92; transition: opacity .16s, background .16s;
 }
 .bubble-toggle:hover { opacity: 1; background: rgba(125,125,125,.12); }
 .bubble.show-std .bubble-toggle { opacity: 1; }
 .bubble-toggle::before { content: "🅐"; font-size: .85em; }
 .bubble.pending .bubble-dialect { opacity: .6; font-style: italic; }
+
+/* 음성인식 중 — 말하는 대로 채워지는 말풍선 */
+.bubble.listening .bubble-std,
+.bubble.listening .bubble-toggle { display: none; }
+.bubble.listening .bubble-dialect { opacity: 1; font-style: normal; }
+.bubble.listening .bubble-dialect::after {
+  content: "▍"; margin-left: 1px; animation: caret 1s steps(1) infinite;
+}
+.bubble.listening .bubble-dialect:empty::before {
+  content: "듣고 있습니더…"; opacity: .7;
+}
+@keyframes caret { 0%, 49% { opacity: 1; } 50%, 100% { opacity: 0; } }
+
+/* 음성인식 중 마이크 버튼의 파동 (레벨 미터 없이 CSS 만으로) */
+.mic-btn.speech .mic-level { animation: micPulse 1.5s ease-out infinite; }
+@keyframes micPulse {
+  0%   { transform: scale(1);    opacity: .55; }
+  70%  { transform: scale(1.35); opacity: 0; }
+  100% { transform: scale(1.35); opacity: 0; }
+}
 
 .typing { display: inline-flex; gap: 5px; padding: 4px 2px; }
 .typing i {
@@ -317,11 +365,11 @@ button { cursor: pointer; border: 0; background: none; }
   transition: border-color .3s, background .3s, transform .3s;
 }
 .slot-key { font-size: .74rem; font-weight: 800; color: var(--muted); letter-spacing: .02em; }
-.slot-val { font-size: .95rem; font-weight: 600; color: var(--muted); opacity: .6;
+.slot-val { font-size: .95rem; font-weight: 600; color: var(--muted);
             overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .slot.filled { border-color: var(--accent); background: var(--accent-soft); }
-.slot.filled .slot-key { color: var(--accent); }
-.slot.filled .slot-val { color: var(--text); opacity: 1; font-weight: 700; }
+.slot.filled .slot-key { color: var(--accent-ink); }
+.slot.filled .slot-val { color: var(--text); font-weight: 700; }
 .slot.just-filled { animation: fill .5s ease; }
 @keyframes fill { 0% { transform: scale(1);} 40% { transform: scale(1.045);} 100% { transform: scale(1);} }
 
@@ -336,7 +384,7 @@ button { cursor: pointer; border: 0; background: none; }
 .suggestions::-webkit-scrollbar { display: none; }
 .suggestions:empty { display: none; }
 .chip {
-  flex: 0 0 auto; min-height: 40px; padding: 6px 14px;
+  flex: 0 0 auto; min-height: 44px; padding: 6px 14px;
   border-radius: 999px; border: 1.5px solid var(--line); background: var(--surface-2);
   font-size: .9rem; font-weight: 600; color: var(--muted); white-space: nowrap;
   transition: border-color .16s, color .16s, background .16s;
@@ -350,8 +398,10 @@ button { cursor: pointer; border: 0; background: none; }
   font-size: 1.05rem;
   transition: border-color .16s, background .16s;
 }
-.text-in::placeholder { color: var(--muted); opacity: .75; }
-.text-in:focus { outline: none; border-color: var(--brand); background: var(--surface); }
+.text-in::placeholder { color: var(--muted); opacity: 1; }
+.text-in:focus { border-color: var(--brand); background: var(--surface); }
+/* 포커스 표시를 지우지 않는다. 키보드 사용자에게 위치를 알려주는 유일한 신호다.
+   (전역 :focus-visible 아웃라인 + 테두리 색 변화 두 겹) */
 .mic-btn, .send-btn {
   flex: 0 0 auto; width: 58px; height: 58px; border-radius: 17px;
   display: grid; place-items: center; position: relative;
@@ -404,7 +454,7 @@ button { cursor: pointer; border: 0; background: none; }
   animation: spin .8s linear infinite;
 }
 @keyframes spin { to { transform: rotate(360deg); } }
-.delivery.done { background: var(--accent-soft); border-color: var(--accent); color: var(--accent); }
+.delivery.done { background: var(--accent-soft); border-color: var(--accent); color: var(--accent-ink); }
 .delivery.done .delivery-spin {
   border: 0; background: var(--accent); animation: none;
   position: relative;
@@ -435,7 +485,7 @@ button { cursor: pointer; border: 0; background: none; }
   background: var(--accent-soft); border: 1px solid var(--accent);
   border-radius: var(--r-md); padding: 13px 15px;
 }
-.assigned .field-key { color: var(--accent); }
+.assigned .field-key { color: var(--accent-ink); }
 .evidence {
   margin-top: 9px; padding: 9px 11px; border-radius: var(--r-sm);
   background: var(--surface); border-left: 4px solid var(--accent);

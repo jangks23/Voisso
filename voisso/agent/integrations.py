@@ -119,6 +119,25 @@ def find_department(query: str, top_k: int = 3) -> list[dict[str, Any]]:
     return [m for m in matches if isinstance(m, dict)]
 
 
+def route(query: str, top_k: int = 3) -> dict[str, Any]:
+    """P4 의 확신도 판단까지 포함한 라우팅. 없으면 빈 dict.
+
+    `find_department` 와 달리 "단정할 만한가"를 함께 알려준다.
+    사전이 미스했는지 판단하는 데 쓴다.
+    """
+    if not query or not query.strip():
+        return {}
+    func = _lookup("voisso.routing", "route")
+    if func is None:
+        return {}
+    try:
+        result = func(query, top_k)
+    except Exception:
+        log.exception("voisso.routing.route 실패")
+        return {}
+    return result if isinstance(result, dict) else {}
+
+
 def get_department(department_id: str) -> dict[str, Any]:
     """부서 상세. P4 미탑재 시 빈 dict."""
     if not department_id:

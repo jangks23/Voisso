@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="ko"><head><title>조직도 | 합성 픽스처</title></head>
+<body>
+	<h4 class="hidden">본청 조직도</h4>
+
+	<!-- 미끼 1: dept_code 가 없는 안내 링크. 부서로 세면 안 된다. -->
+	<li><a href="/Main/page.do?mnu_uid=7332&amp;LARGE_CODE=720&amp;SMALL_CODE2=70&amp;">직원/담당업무</a></li>
+	<!-- 미끼 2: mnu_uid 가 다른 링크. -->
+	<li><a href="/Main/page.do?mnu_uid=6851&amp;dept_code=9999999&amp;dept_code1=9999999">경상북도 조직도 보기</a></li>
+
+	<ul class="orge">
+		<li>
+			<!-- 도지사 링크처럼 span 으로 감싸고 하위 조직이 이어 붙는 형태 -->
+			<a href="./page.do?mnu_uid=7332&dept_code=1000001&dept_code1=1000001&listType=2&tabNum=7&MEDIUM_CODE=60" class="org1"><span class="governor">시험비서실</span>
+				<ul><li>하위조직 자리</li></ul>
+			</a>
+		</li>
+		<li>
+			<!-- 실/국 단위: dept_code1 이 비어 있다 -->
+			<a href="/Main/page.do?mnu_uid=7332&amp;dept_code=2000000&amp;dept_code1=&amp;listType=2&amp;tabNum=7">테스트국</a>
+		</li>
+		<li>
+			<!-- 앵커 텍스트에 주석과 개행·탭이 섞인 형태 -->
+			<a href="/Main/page.do?mnu_uid=7332&amp;dept_code=2000000&amp;dept_code1=2000010&amp;listType=2&amp;tabNum=7">
+				<!-- 부서명 시작 -->
+				가상수도과
+				<!-- 부서명 끝 -->
+			</a>
+		</li>
+		<li>
+			<a href="/Main/page.do?mnu_uid=7332&amp;dept_code=2000000&amp;dept_code1=2000020&amp;listType=2&amp;tabNum=7">모의도로과</a>
+		</li>
+		<li>
+			<!-- 같은 부서가 두 번 링크되는 경우(조직도 + 목록). 중복 제거되어야 한다. -->
+			<a href="/Main/page.do?mnu_uid=7332&amp;dept_code=2000000&amp;dept_code1=2000020&amp;listType=2&amp;tabNum=1">모의도로과</a>
+		</li>
+	</ul>
+</body></html>

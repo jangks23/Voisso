@@ -123,16 +123,45 @@ def _unassigned(slots: Slots, reason: str) -> dict[str, Any]:
     }
 
 
+def resolve_routing_query(llm_query: str, slots: Slots) -> tuple[str, str]:
+    """부서 검색에 쓸 질의를 정한다. `(질의, 어떻게 정했는지)`.
+
+    **사전 우선, 미스 시 LLM.** P4 의 개념 사전은 빠르고 결정적이라 먼저 쓴다.
+    다만 사전은 구어체에 약하다 — "아 저기 집 앞에 물이 안 빠지고 자꾸 고여서
+    큰일이에요" 는 96개 부서 어디에도 안 걸린다(matched_terms 가 비어 나온다).
+    그때 LLM 이 뽑아 둔 행정 용어("하수도 배수 불량")로 다시 시도한다.
+    경쟁이 아니라 보완이다.
+    """
+    spoken = " ".join(p for p in (slots.get("what"), slots.get("where")) if p).strip()
+    llm_query = (llm_query or "").strip()
+
+    # 1) 사전 먼저 — 발화 그대로 넣어 본다.
+    if spoken:
+        verdict = integrations.route(spoken)
+        if verdict.get("confident"):
+            return spoken, "사전(발화 그대로)"
+
+    # 2) 사전이 미스했으면 LLM 이 뽑은 행정 용어로.
+    if llm_query:
+        verdict = integrations.route(llm_query)
+        if verdict.get("confident"):
+            return llm_query, "LLM 주제 추출(사전 미스)"
+        return llm_query, "LLM 주제 추출(확신 없음)"
+
+    return spoken, "발화 그대로(LLM 질의 없음)"
+
+
 def build_assignment(
     routing_query: str, slots: Slots
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     """(assigned, alternatives) 를 만든다."""
-    query = (routing_query or "").strip()
-    if not query:
-        query = " ".join(p for p in (slots.get("what"), slots.get("where")) if p).strip()
-
     if not integrations.routing_available():
         return _unassigned(slots, "부서 라우팅 모듈 미탑재"), []
+
+    query, how = resolve_routing_query(routing_query, slots)
+    if not query:
+        return _unassigned(slots, "검색어를 만들지 못했습니다"), []
+    log.info("라우팅 질의 '%s' (%s)", query[:60], how)
 
     matches = integrations.find_department(query, top_k=3)
     if not matches:

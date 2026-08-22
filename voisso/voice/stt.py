@@ -12,7 +12,7 @@ large-v2 급 모델이라 로컬 large 를 돌리는 것과 품질이 같거나 
 --------
 VOISSO_STT_PROVIDER   openai | none   (기본 auto: 키가 있으면 openai, 없으면 none)
 OPENAI_API_KEY       openai 사용 시 필수
-VOISSO_STT_MODEL      기본 whisper-1
+VOISSO_STT_MODEL      whisper-1 | gpt-4o-transcribe(기본) | gpt-4o-mini-transcribe | gpt-transcribe
 VOISSO_STT_LANGUAGE   기본 ko
 """
 
@@ -29,17 +29,97 @@ from ._http import post_multipart
 
 log = logging.getLogger("voisso.voice.stt")
 
-DEFAULT_MODEL = "whisper-1"
+# 기본 모델을 gpt-4o-transcribe 로 둔 이유:
+#   1. 한국어 인식 품질이 whisper-1 보다 낫다. whisper-1 은 OpenAI 문서에서도
+#      legacy 로 분류되고, 새 구현에는 신형 transcribe 계열을 권한다.
+#   2. **프라이밍 프롬프트 예산이 훨씬 크다.** whisper-1 은 224 토큰이 상한이라
+#      방언 어미 몇 개 넣으면 끝나는데, 신형은 사투리 어휘를 충분히 물릴 수 있다.
+#      사투리 인식이 이 프로젝트의 핵심이라 이 차이가 결정적이다.
+# whisper-1 은 타임스탬프·번역이 필요할 때를 위해 그대로 선택 가능하게 둔다.
+# 더 최신인 gpt-transcribe 도 VOISSO_STT_MODEL 로 지정하면 그대로 쓰인다.
+DEFAULT_MODEL = "gpt-4o-transcribe"
+
+# 모델별 프라이밍 프롬프트 예산(토큰).
+# whisper-1 의 224 는 문서에 명시된 상한이고, 신형 계열은 명시된 수치가 없어
+# 보수적으로 잡았다. 넘치면 API 가 잘라내므로 우리가 먼저 자른다.
+WHISPER_PROMPT_TOKENS = 224
+MODERN_PROMPT_TOKENS = 900
 DEFAULT_LANGUAGE = "ko"
 OPENAI_STT_URL = "https://api.openai.com/v1/audio/transcriptions"
 
-# 방언 화자 발화에서 Whisper 가 엉뚱하게 받아쓰거나 환청을 뱉는 것을 줄이기 위한
-# 힌트. 도메인 어휘(지명·민원 용어)를 미리 물려준다.
-INITIAL_PROMPT = (
+# 방언 화자 발화가 표준어로 뭉개지거나 환청이 섞이는 것을 줄이기 위한 힌트.
+# P5 방언 사전이 있으면 거기서 동적으로 만들고(build_priming_prompt),
+# 없으면 아래 고정 문구로 폴백한다.
+FALLBACK_PROMPT = (
     "경상북도 주민이 도청에 전화로 민원을 접수하는 통화입니다. "
     "안동시, 구미시, 포항시, 경주시, 영주시, 상주시, 문경시, 의성군, 청송군, 예천군 같은 "
     "지명과 배수, 하수구, 도로 포장, 가로등, 상수도, 쓰레기 같은 민원 용어가 나옵니다."
 )
+
+_prompt_cache: dict[str, str] = {}
+
+
+def _prompt_budget(model: str) -> int:
+    return WHISPER_PROMPT_TOKENS if model.startswith("whisper") else MODERN_PROMPT_TOKENS
+
+
+def priming_prompt(model: str = DEFAULT_MODEL) -> str:
+    """모델 예산에 맞춘 프라이밍 프롬프트. 사전이 없으면 고정 문구."""
+    from .vocabulary import build_priming_prompt, vocabulary_status
+
+    status = vocabulary_status()
+    # 사전이 나중에 붙을 수 있으므로 사전 상태까지 캐시 키에 넣는다.
+    key = f"{model}|{status['dialect_lexicon']}|{status['dialect_terms']}"
+    cached = _prompt_cache.get(key)
+    if cached is not None:
+        return cached
+
+    if not status["dialect_lexicon"]:
+        log.info("방언 사전 없음 — 고정 프라이밍 문구를 씁니다.")
+        _prompt_cache[key] = FALLBACK_PROMPT
+        return FALLBACK_PROMPT
+
+    budget = _prompt_budget(model)
+    prompt, truncated = build_priming_prompt(budget)
+    if truncated:
+        log.info(
+            "프라이밍 프롬프트를 %s 예산(%d 토큰)에 맞춰 잘랐습니다 "
+            "— 사용 %d자, 사전 어휘 %d개 중 일부만 반영됨.",
+            model,
+            budget,
+            len(prompt),
+            status["dialect_terms"],
+        )
+    _prompt_cache[key] = prompt
+    return prompt
+
+
+_AUDIO_MAGIC = (
+    (b"RIFF", b"WAVE", "wav"),
+    (b"\x1a\x45\xdf\xa3", None, "webm"),
+    (b"OggS", None, "ogg"),
+    (b"fLaC", None, "flac"),
+    (b"ID3", None, "mp3"),
+    (b"\xff\xfb", None, "mp3"),
+    (b"\xff\xf3", None, "mp3"),
+)
+
+
+def _sniff_extension(audio: bytes) -> str:
+    """오디오 바이트의 매직 넘버로 컨테이너를 판별한다.
+
+    OpenAI 오디오 엔드포인트는 업로드 파일의 **확장자**로 포맷을 판단한다.
+    확장자가 실제 내용과 어긋나면 400 "Audio file might be corrupted or
+    unsupported" 로 거부한다. 브라우저 MediaRecorder(webm/opus)만 가정하면
+    TTS 가 만든 WAV 나 업로드된 mp3 가 그대로 실패하므로 내용으로 판별한다.
+    """
+    head = audio[:16]
+    for prefix, marker, ext in _AUDIO_MAGIC:
+        if head.startswith(prefix) and (marker is None or marker in head):
+            return ext
+    if len(head) >= 12 and head[4:8] == b"ftyp":
+        return "m4a"
+    return "webm"
 
 
 @dataclass
@@ -109,6 +189,10 @@ class OpenAIWhisperSTT(STTProvider):
     def __init__(self, api_key: str | None = None, model: str | None = None) -> None:
         self.api_key = api_key or os.getenv("OPENAI_API_KEY") or ""
         self.model = model or os.getenv("VOISSO_STT_MODEL") or DEFAULT_MODEL
+        # 키가 '있다'와 '통한다'는 다르다. 마지막 실패를 기억해 두고
+        # 상태 조회에 실어 보낸다 — 안 그러면 401 나는 키를 두고도
+        # 화면에는 "음성 인식 켜짐"이라고 뜬다.
+        self.last_error: str | None = None
 
     @property
     def available(self) -> bool:
@@ -118,18 +202,19 @@ class OpenAIWhisperSTT(STTProvider):
         if not audio:
             return STTResult(text="", language=language, provider=self.name, error="빈 오디오")
         try:
+            self.last_error = None
             payload = post_multipart(
                 OPENAI_STT_URL,
                 fields={
                     "model": self.model,
                     "language": (language or DEFAULT_LANGUAGE),
-                    "prompt": INITIAL_PROMPT,
+                    "prompt": priming_prompt(self.model),
                     "response_format": "json",
                 },
-                # 브라우저 MediaRecorder 는 보통 webm/opus 를 준다. 확장자는
-                # 참고용이고 실제 판별은 서버가 한다.
+                # OpenAI 는 업로드 파일의 확장자로 포맷을 판단한다. 실제
+                # 바이트를 보고 확장자를 맞춰야 WAV/mp3 도 통과한다.
                 file_field="file",
-                filename="call.webm",
+                filename=f"call.{_sniff_extension(audio)}",
                 file_bytes=audio,
                 headers={"Authorization": f"Bearer {self.api_key}"},
                 timeout=60.0,
@@ -140,8 +225,10 @@ class OpenAIWhisperSTT(STTProvider):
                 provider=self.name,
             )
         except Exception as exc:
-            log.warning("Whisper API 실패: %s", exc)
-            return STTResult(text="", language=language, provider=self.name, error=str(exc))
+            message = _explain(exc)
+            self.last_error = message
+            log.warning("음성 인식 실패: %s", message)
+            return STTResult(text="", language=language, provider=self.name, error=message)
 
     def status(self) -> dict[str, Any]:
         return {
@@ -149,8 +236,25 @@ class OpenAIWhisperSTT(STTProvider):
             "available": self.available,
             "audio_in": True,
             "model": self.model,
+            "prompt_tokens_budget": _prompt_budget(self.model),
             "api_key_set": bool(self.api_key),
+            "last_error": self.last_error,
         }
+
+
+def _explain(exc: Exception) -> str:
+    """실패 원인을 담당자가 바로 고칠 수 있는 문장으로 바꾼다."""
+    from ._http import HTTPError
+
+    if isinstance(exc, HTTPError):
+        if exc.status == 401:
+            return "OPENAI_API_KEY 가 거부되었습니다(401). 키가 올바른지 확인하세요."
+        if exc.status == 429:
+            return "OpenAI 사용 한도에 걸렸습니다(429). 잠시 후 다시 시도하세요."
+        if exc.status == 400:
+            return f"요청이 거부되었습니다(400). 오디오 형식이나 모델명을 확인하세요. {exc}"
+        return str(exc)
+    return str(exc)
 
 
 _provider: STTProvider | None = None

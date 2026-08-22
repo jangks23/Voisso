@@ -20,7 +20,7 @@ from __future__ import annotations
 
 from typing import Any, TypedDict
 
-from . import engine
+from . import concepts, engine, regions
 from .dataaccess import (
     FALLBACK_PHONE,
     SCRAPER_CMD,
@@ -101,6 +101,11 @@ def find_department(query: str, top_k: int = 3) -> list[Match]:
     if not query or not query.strip():
         return []
 
+    # 시군 소관 업무(가로등·주민등록·쓰레기 수거 등)는 도청 사무분장에 없다.
+    # 억지로 비슷한 부서를 붙이면 민원인이 두 번 전화하게 된다.
+    if concepts.municipal_only(concepts.detect(query)):
+        return []
+
     candidates = _index().search(query, limit=top_k * 4)
     if not candidates:
         return []
@@ -138,37 +143,113 @@ def route(query: str, top_k: int = 3) -> dict[str, Any]:
     MCP 툴과 대시보드가 "AI가 단정했는지 / 후보를 제시했는지"를 구분해
     보여줄 수 있게 한다.
     """
+    hits = concepts.detect(query)
     matches = find_department(query, top_k=top_k)
-    if not matches:
+
+    if concepts.municipal_only(hits):
+        labels = ", ".join(dict.fromkeys(h.concept.label for h in hits))
+        action = regions.municipal_next_action(query)
         return {
             "query": query,
             "confident": False,
-            "reason": "일치하는 사무분장을 찾지 못했습니다. 경북도청 대표번호로 안내하세요.",
+            "outcome": "municipal_referral",
+            "reason": f"'{labels}' 은(는) 경상북도청이 아니라 시·군 소관 업무입니다. "
+                      "도청 부서를 배정하지 않습니다.",
+            "referral": concepts.referral_note(hits),
+            "next_action": action,
+            "concepts": [h.concept.label for h in hits],
+            "grounded": False,
+            "matched_terms": [],
             "fallback_phone": FALLBACK_PHONE,
             "matches": [],
             "data_source": data_source(),
             "is_sample": is_sample(),
         }
 
+    if not matches:
+        return {
+            "query": query,
+            "confident": False,
+            "outcome": "no_match",
+            "reason": "96개 부서 사무분장 어디에도 일치하는 담당업무가 없습니다. "
+                      "추측해서 배정하지 말고 경북도청 대표번호로 안내하세요.",
+            "grounded": False,
+            "matched_terms": [],
+            "concepts": [h.concept.label for h in hits],
+            "next_action": {
+                "type": "province_main",
+                "region": "",
+                "instruction": "담당 부서를 특정하지 못했습니다. 추측해서 배정하지 말고 "
+                               f"경상북도청 대표번호 {FALLBACK_PHONE} 로 안내하세요.",
+                "phone": FALLBACK_PHONE,
+                "phone_label": "경상북도청 대표번호",
+            },
+            "fallback_phone": FALLBACK_PHONE,
+            "matches": [],
+            "data_source": data_source(),
+            "is_sample": is_sample(),
+        }
+
+    grounding = _index().grounding(query)
     top = matches[0]["score"]
     margin = top - matches[1]["score"] if len(matches) > 1 else top
     confident = top >= engine.CONFIDENT_SCORE and margin >= engine.CONFIDENT_MARGIN
-    if confident:
+
+    if not grounding["grounded"]:
+        # 민원인이 쓴 말이 96개 부서 사무분장 어디에도 없다. 유사어로 좁힌
+        # 결과일 뿐이므로 단정하지 않는다. 모른다고 말할 수 있어야 한다.
+        confident = False
+        words = ", ".join(grounding["tokens"]) or "(검색어 없음)"
+        reason = (
+            f"'{words}' 이(가) 도청 사무분장 원문에 없어 유사어로 찾은 결과입니다 — "
+            f"직접 근거가 없으니 후보 {len(matches)}곳을 담당자가 확인해야 합니다"
+        )
+    elif confident:
         reason = f"1순위 점수 {top:.2f}, 2순위와 격차 {margin:.2f} — 단독 배정 가능"
     elif top < engine.CONFIDENT_SCORE:
         reason = f"1순위 점수 {top:.2f}가 낮습니다 — 후보 {len(matches)}곳을 담당자가 확인해야 합니다"
     else:
         reason = f"1·2순위 격차가 {margin:.2f}로 작습니다 — 후보 {len(matches)}곳을 함께 제시하세요"
 
-    return {
+    top_match = matches[0]
+    if confident:
+        action = {
+            "type": "call_department",
+            "region": "",
+            "instruction": f"{top_match['full_name']} {top_match['position']} 에게 연결하세요. "
+                           "배정 근거(evidence)를 함께 전달하면 담당자가 바로 확인할 수 있습니다.",
+            "phone": "",
+            "phone_label": top_match["phone_token"],
+        }
+    else:
+        action = {
+            "type": "confirm_candidates",
+            "region": "",
+            "instruction": f"1순위 {top_match['full_name']} 를 포함해 후보 {len(matches)}곳을 "
+                           "근거와 함께 제시하고 담당자가 고르게 하세요. 단독 배정하지 마세요.",
+            "phone": FALLBACK_PHONE,
+            "phone_label": "판단이 안 서면 경상북도청 대표번호",
+        }
+
+    notes = concepts.shared_notes(hits)
+    result: dict[str, Any] = {
         "query": query,
         "confident": confident,
+        "outcome": "department",
         "reason": reason,
+        "grounded": grounding["grounded"],
+        "matched_terms": grounding["grounded_terms"],
+        "concepts": [h.concept.label for h in hits],
+        "next_action": action,
         "fallback_phone": FALLBACK_PHONE,
         "matches": matches,
         "data_source": data_source(),
         "is_sample": is_sample(),
     }
+    if notes:
+        # 도와 시군이 나눠 맡는 업무라는 사실을 담당자에게 알린다.
+        result["jurisdiction_note"] = " ".join(notes)
+    return result
 
 
 def get_department(department_id: str) -> dict:

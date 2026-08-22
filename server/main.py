@@ -17,11 +17,16 @@ from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import HTMLResponse, RedirectResponse, StreamingResponse
 from fastapi.staticfiles import StaticFiles
+from typing import Any
+
 from pydantic import BaseModel, Field
 
 from voisso.agent import agent_status
 from voisso.voice import SpeechContext, get_tts_provider, stt_status, tts_status
 from voisso.voice import stream as tts_stream
+from voisso.voice.vocabulary import vocabulary_status
+
+import os
 
 from . import config
 from .store import ComplaintStore, SessionStore
@@ -69,6 +74,10 @@ class TurnRequest(BaseModel):
     session_id: str
     text: str | None = None
     audio_b64: str | None = None
+    # 브라우저 음성인식(Web Speech)의 maxAlternatives 후보들.
+    # 문자열 배열이거나 [{"transcript": ..., "confidence": ...}] 형태.
+    # 없으면 기존처럼 text 만 쓴다(하위호환).
+    alternatives: list[Any] | None = None
 
 
 class EndRequest(BaseModel):
@@ -89,12 +98,74 @@ class SpeakRequest(BaseModel):
 # --------------------------------------------------------------------------
 
 
+def runtime_status() -> dict:
+    """지금 무엇이 켜져 있고 무엇이 꺼져 있는지 한눈에.
+
+    키가 없어도 데모가 너무 잘 돌아서 "키가 없다"는 사실 자체가 안 보였다.
+    개발 중에 "왜 응답이 밋밋하지?" 를 즉시 알 수 있어야 한다.
+    """
+    stt = stt_status()
+    tts = tts_status()
+    agent = agent_status()
+    engine = agent["engine"]
+
+    missing_keys: list[str] = []
+    if not engine["llm_available"]:
+        # 어느 쪽 키든 하나만 있으면 된다.
+        missing_keys.append("OPENAI_API_KEY 또는 ANTHROPIC_API_KEY")
+    if not stt.get("audio_in"):
+        # 명시적으로 꺼 둔 경우는 키 문제가 아니다.
+        if "none" not in str(os.getenv("VOISSO_STT_PROVIDER") or "").lower():
+            missing_keys.append("OPENAI_API_KEY")
+
+    if engine.get("llm_error"):
+        engine_label = f"규칙 기반 폴백 · {engine['llm_error']}"
+        if "401" in engine["llm_error"]:
+            missing_keys.append(f"{engine['provider']} 키(무효)")
+    elif engine["llm_available"]:
+        engine_label = f"{engine['provider']} 대화 ({engine['turn_model']})"
+    else:
+        engine_label = "규칙 기반 폴백 · LLM 키 없음"
+
+    stt_error = stt.get("last_error")
+    if stt_error:
+        # 키가 있어도 통하지 않으면 '켜짐'이라고 말하면 안 된다.
+        stt_label = f"음성 인식 실패 · {stt_error}"
+        if "401" in stt_error and "OPENAI_API_KEY" not in missing_keys:
+            missing_keys.append("OPENAI_API_KEY(무효)")
+    elif stt.get("audio_in"):
+        stt_label = f"음성 인식 켜짐 ({stt.get('model')})"
+    else:
+        stt_label = "음성 인식 꺼짐 · 텍스트 입력만"
+
+    tts_label = "음성 출력 꺼짐 · 텍스트만" if tts["provider"] == "none" else f"음성 출력 ({tts['provider']})"
+
+    integrations = agent["integrations"]
+    return {
+        "engine": engine["primary"],
+        "engine_label": engine_label,
+        "engine_provider": engine["provider"],
+        "turn_model": engine["turn_model"],
+        "summary_model": engine["summary_model"],
+        "stt": stt.get("provider"),
+        "stt_label": stt_label,
+        "tts": tts["provider"],
+        "tts_label": tts_label,
+        "dialect": integrations["dialect"],
+        "routing": integrations["routing"],
+        # 하나라도 폴백으로 돌고 있으면 true. P7 이 배지를 띄우는 기준.
+        "degraded": bool(missing_keys) or not integrations["routing"],
+        "missing_keys": missing_keys,
+    }
+
+
 @app.post("/api/call/start")
 def call_start(payload: StartRequest | None = None) -> dict:
     """통화를 연다.
 
-    계약상 필수 응답은 `session_id` 하나다. 첫 인사(`reply_text` 등)를 함께
-    돌려주는 것은 **추가 필드**로, P7 이 왕복을 한 번 아끼도록 얹은 것이다.
+    계약상 필수 응답은 `session_id` 하나다. 첫 인사(`reply_text` 등)와
+    `status` 는 **추가 필드**다. P7 이 왕복을 한 번 아끼고, 지금 어떤 엔진·
+    프로바이더로 돌고 있는지 화면에 표시할 수 있게 얹은 것이다.
     쓰지 않아도 되고, 무시해도 계약은 지켜진다.
     """
     session = sessions.create()
@@ -105,8 +176,10 @@ def call_start(payload: StartRequest | None = None) -> dict:
         "reply_text": greeting["reply_text"],
         "reply_dialect": greeting["reply_dialect"],
         "audio_b64": greeting["audio_b64"],
+        "audio_mime": greeting.get("audio_mime"),
         "done": False,
         "slots": greeting["slots"],
+        "status": runtime_status(),
     }
 
 
@@ -117,11 +190,20 @@ def call_turn(payload: TurnRequest) -> dict:
     if session is None:
         raise HTTPException(status_code=404, detail="세션을 찾을 수 없습니다. 통화를 다시 시작해 주세요.")
 
-    if not (payload.text or "").strip() and not (payload.audio_b64 or "").strip():
+    has_alternatives = bool(payload.alternatives)
+    if (
+        not (payload.text or "").strip()
+        and not (payload.audio_b64 or "").strip()
+        and not has_alternatives
+    ):
         # 빈 입력은 오류로 보지 않고 첫 인사로 처리한다.
         return session.greet()
 
-    return session.turn(text=payload.text, audio_b64=payload.audio_b64)
+    return session.turn(
+        text=payload.text,
+        audio_b64=payload.audio_b64,
+        alternatives=payload.alternatives,
+    )
 
 
 @app.post("/api/call/end")
@@ -143,11 +225,14 @@ def call_end(payload: EndRequest) -> dict:
     sessions.drop(session.id)
 
     log.info(
-        "민원 접수 id=%s 부서=%s",
+        "민원 접수 id=%s 부서=%s (요약 %.0fms / 라우팅 %.0fms)",
         complaint["id"],
         complaint["assigned"]["full_name"],
+        session.end_timings.get("summary_ms", 0.0),
+        session.end_timings.get("routing_ms", 0.0),
     )
-    return {"complaint": complaint}
+    # `complaint` 는 계약서 5절 스키마 그대로다. `meta` 는 추가 필드.
+    return {"complaint": complaint, "meta": {"timings": session.end_timings}}
 
 
 # --------------------------------------------------------------------------
@@ -208,6 +293,8 @@ def health() -> dict:
     """지금 어떤 조합으로 돌고 있는지. 데모 전에 한 번 찍어보면 좋다."""
     return {
         "status": "ok",
+        "runtime": runtime_status(),
+        "vocabulary": vocabulary_status(),
         "stt": stt_status(),
         "tts": tts_status(),
         "agent": agent_status(),
@@ -256,6 +343,31 @@ def _mount_static(url_path: str, directory, title: str) -> None:
 
 _mount_static("/call", config.CALL_UI_DIR, "통화 화면")
 _mount_static("/dashboard", config.DASHBOARD_DIR, "담당자 대시보드")
+
+
+@app.on_event("startup")
+def log_runtime_banner() -> None:
+    """기동할 때 지금 무엇으로 도는지 찍는다.
+
+    ANTHROPIC_API_KEY 를 넣고 재시작하면 engine 이 rule -> claude 로 바뀌는 것이
+    로그 첫 줄에서 바로 보여야 한다. 안 그러면 키를 넣고도 왜 응답이 밋밋한지
+    한참 헤매게 된다.
+    """
+    status = runtime_status()
+    log.info("─" * 58)
+    log.info("  대화 엔진 : %-8s  %s", status["engine"].upper(), status["engine_label"])
+    log.info("  음성 인식 : %-8s  %s", status["stt"], status["stt_label"])
+    log.info("  음성 출력 : %-8s  %s", status["tts"], status["tts_label"])
+    log.info(
+        "  옆 모듈   : 방언 %s / 라우팅 %s",
+        "O" if status["dialect"] else "X",
+        "O" if status["routing"] else "X",
+    )
+    if status["missing_keys"]:
+        log.warning("  빠진 키   : %s — 폴백으로 동작합니다.", ", ".join(status["missing_keys"]))
+    else:
+        log.info("  모든 기능이 켜져 있습니다.")
+    log.info("─" * 58)
 
 
 @app.get("/", include_in_schema=False)

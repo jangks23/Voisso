@@ -145,6 +145,19 @@ class ConversionTest(unittest.TestCase):
                 self.assertIn("건설도시국 도로과", result)
                 self.assertIn("1522-0120", result)
 
+    def test_connective_rules_do_not_eat_real_words(self):
+        """연결어미 규칙이 실제 낱말을 잡아먹으면 안 된다. 전부 한 번씩 물렸던 것들이다."""
+        cases = [
+            ("기와가 떨어졌다", "기와가"),      # -와가 규칙
+            ("차에 타고 가버렸다", "가버렸다"),  # ㅂ불규칙 -버 규칙
+            ("학교에 가고 싶다", "가고"),        # -가꼬 규칙
+            ("나이가 많다", "나이가"),          # -이가 (규칙으로 만들지 않은 이유)
+            ("질문이 있습니다", "질문"),        # '질'(길)을 사전에서 뺀 이유
+        ]
+        for text, must_survive in cases:
+            with self.subTest(text=text):
+                self.assertIn(must_survive, normalize(text))
+
     def test_standard_text_is_left_alone(self):
         """사투리 요소가 없으면 normalize 가 건드리지 않아야 한다."""
         for text in ["담당자가 확인 후 연락드리겠습니다.", "서류를 준비해 오세요."]:

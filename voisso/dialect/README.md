@@ -37,7 +37,7 @@ python -c "from voisso.dialect import normalize, to_dialect, lexicon_size; \
 ```
 
 ```
-355
+367
 확인해 드리겠습니더. 담당자가 연락드릴 예정입니더.
 물이 안 빠져서 큰일이에요
 ```
@@ -87,6 +87,7 @@ python -m voisso.dialect --demo              # 민원 상황 변환 예시 실�
 python -m voisso.dialect --stats             # 사전 규모·도메인·출처 분포
 python -m voisso.dialect --roundtrip-report  # 왕복 보존 통과율
 python -m voisso.dialect --samples           # samples.md 내용 생성
+python -m voisso.dialect --demo-lines        # demo_lines.md 내용 생성 (데모 1단계 대사)
 python -m voisso.dialect -d "접수해 드리겠습니다" -v   # 표준어 → 경북 (적용 규칙 표시)
 python -m voisso.dialect -n "어데서 물이 새노" -v      # 사투리 → 표준어
 ```
@@ -109,8 +110,9 @@ python -m voisso.dialect -n "어데서 물이 새노" -v      # 사투리 → �
 `억수로`, `-구마`, `-카이`, `가시나` 같은 표현은 `to_dialect` 에서 **의도적으로 뺐다.**
 희화화된 사투리는 역효과다. (알아듣기는 해야 하므로 `normalize` 방향으로는 남아 있다.)
 
-변환 예시 30개는 [`samples.md`](samples.md) — 손으로 지어낸 기대값이 아니라
-실제 실행 결과다.
+변환 예시 30개는 [`samples.md`](samples.md), 데모 1단계용 사투리 대사 10개와
+라우팅 실측은 [`demo_lines.md`](demo_lines.md) — 둘 다 손으로 지어낸 기대값이 아니라
+실제 실행 결과다. (`demo_lines.md` 의 STT 열만 예측이고, 파일 안에 그렇게 표시돼 있다.)
 
 ## 설계상 지킨 것
 
@@ -191,6 +193,10 @@ python -m voisso.dialect.tools.filter_lexicon --stats # 출처별 집계
   정규식으로 한글 음절을 자모 분해할 수 없어 여기까지가 한계다. 뜻은 통한다.
 - 사전은 **경북 기준**이다. 경남·부산 쪽 어형(`-능교` 등)은 `normalize` 로는
   알아듣지만 `to_dialect` 기본값으로는 생성하지 않는다.
+- **STT가 방언 낱말을 다른 표준어 낱말로 바꿔 버리면 복구하지 못한다.** 예를 들어
+  "수채구영"(하수구)이 "수채 구멍"으로 받아써지면 표제어가 사라져 사전이 걸리지 않는다.
+  이 레이어의 전제는 "STT가 방언 음운을 소리 나는 대로 받아쓴다"이다.
+  실제 사례는 [`demo_lines.md`](demo_lines.md) 의 «한계» 절에 있다.
 
 ## 환경변수
 

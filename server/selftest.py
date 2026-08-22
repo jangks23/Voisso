@@ -27,10 +27,13 @@ for _var in (
     "ELEVENLABS_API_KEY",
 ):
     os.environ[_var] = ""
+# 키를 지워도 프로바이더 지정이 남아 있으면 안 된다.
+os.environ["VOISSO_AGENT_PROVIDER"] = "rule"
 os.environ["VOISSO_TTS_PROVIDER"] = "none"
 os.environ["VOISSO_STT_PROVIDER"] = "none"
 
 from voisso.agent import ConversationSession  # noqa: E402
+from voisso.agent.engine import engine_status  # noqa: E402
 from voisso.voice import stt_status, tts_status  # noqa: E402
 
 SCENARIO = [
@@ -69,6 +72,8 @@ def check(label: str, condition: bool, detail: str = "") -> None:
 
 def main() -> int:
     print("Voisso 자체 점검 — 키 0개 텍스트 모드\n")
+    engine = engine_status()
+    print(f"  대화 엔진     : {engine['primary']}  (LLM 프로바이더: {engine['provider'] or '없음'})")
     print(f"  STT 프로바이더: {stt_status()['provider']}")
     print(f"  TTS 프로바이더: {tts_status()['provider']}\n")
 

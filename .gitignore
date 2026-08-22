@@ -47,3 +47,10 @@ Thumbs.db
 data/gb_departments.json
 data/gb_departments.csv
 mcp_server/fixtures/gb_departments.json
+
+# 타 지자체 이식 산출물도 같은 방침을 적용한다 (docs/PORTABILITY.md).
+#   python3 scripts/scrape_andong_departments.py
+# 안동시는 공공누리 제1유형이라 재배포가 법적으로 가능하지만,
+# "스크레이퍼를 공개하고 데이터는 이용자가 생성한다"는 방침을 일관되게 지킨다.
+data/andong_departments.json
+data/andong_departments.csv

@@ -1,18 +1,24 @@
-"""대화 엔진 — Claude 기반과 규칙 기반 두 가지.
+"""대화 엔진 — LLM 프로바이더 선택과 규칙 기반 폴백.
 
-`ClaudeEngine` 이 본체다. 하지만 **ANTHROPIC_API_KEY 가 없어도 전체 흐름이
-동작해야 한다**는 것이 이 프로젝트의 타협 불가 조건이라, 같은 인터페이스를
-구현한 `RuleEngine` 을 항상 곁에 둔다. 키가 없으면 처음부터 규칙 엔진으로
-가고, 통화 중 API 호출이 실패하면 그 턴만 규칙 엔진이 받아낸다.
+실제 LLM 호출은 `providers.py` 가 한다(OpenAI / Anthropic). 이 파일은
+**무엇을 쓸지 고르는 일**과, 아무것도 쓸 수 없을 때를 위한 `RuleEngine` 을 맡는다.
+
+**어떤 키도 없이 전체 흐름이 동작해야 한다**는 것이 이 프로젝트의 타협 불가
+조건이라, 규칙 엔진을 항상 곁에 둔다. 키가 없으면 처음부터 규칙 엔진으로 가고,
+통화 중 API 호출이 실패하면(401/429/5xx/타임아웃) 그 턴만 규칙 엔진이 받아낸다.
 통화가 API 오류로 끊기는 것이 가장 나쁜 실패다.
+
+환경변수
+--------
+VOISSO_AGENT_PROVIDER  openai | anthropic | rule (기본 auto: 키 있는 것을 자동 선택)
+VOISSO_AGENT_MODEL     대화 턴 모델
+VOISSO_SUMMARY_MODEL   요약 모델
 """
 
 from __future__ import annotations
 
-import json
 import logging
 import os
-import random
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -37,6 +43,8 @@ class TurnDecision:
     ready_to_close: bool = False
     engine: str = "rule"
     error: str | None = None
+    # 어르신이 되물어서 그 질문에 먼저 답한 턴인지. 규칙 엔진은 항상 False.
+    answered_question: bool = False
 
 
 class RuleEngine:
@@ -49,13 +57,22 @@ class RuleEngine:
 
     name = "rule"
 
-    # 어르신이 한 말을 먼저 받아주는 맞장구. 매 턴 하나를 고른다.
+    # 어르신이 한 말을 먼저 받아주는 맞장구.
+    #
+    # **매 턴 반드시 하나가 붙는다.** 어르신 대상 공공 서비스에서 사무적인
+    # 응답은 그 자체로 실패다. 예전에는 random 으로 골랐는데 "예, 알겠습니다."
+    # 같은 건조한 문구가 걸리면 공감이 사라졌고, 무작위라 재현도 안 됐다.
+    # 지금은 턴 번호로 순환시켜 공감 표현이 빠지는 경우가 없게 하고,
+    # 연속으로 같은 말이 나오지도 않게 한다.
     ACKS = (
         "아이고, 그러셨구나예.",
-        "네, 말씀 잘 들었습니다.",
         "아이고, 얼마나 불편하셨겠습니까.",
-        "예, 알겠습니다.",
+        "예, 그러셨군요. 많이 답답하셨겠습니다.",
+        "아이고, 고생이 많으십니다.",
     )
+
+    # 마무리 인사에도 공감을 먼저 둔다.
+    CLOSING_ACK = "아이고, 말씀하시느라 고생 많으셨습니다."
 
     # 슬롯별 질문. 인덱스는 몇 번째로 묻는지(0-based).
     QUESTIONS = {
@@ -78,7 +95,7 @@ class RuleEngine:
     }
 
     CLOSING = (
-        "네, 말씀하신 내용 잘 접수해 두겠습니다. "
+        "말씀하신 내용 잘 접수해 두겠습니다. "
         "담당하는 곳으로 전달해서 연락이 가도록 하겠습니다. 전화 주셔서 고맙습니다."
     )
 
@@ -144,10 +161,14 @@ class RuleEngine:
         preview.ask_counts = dict(slots.ask_counts)
         preview.given_up = set(slots.given_up)
 
+        # 몇 번째 응답인지 — 맞장구를 순환시키는 기준.
+        turn_index = sum(1 for e in transcript if e.get("role") == "caller")
+
         target = preview.next_slot()
         if target is None:
+            reply = f"{self.CLOSING_ACK} {self.CLOSING}" if last_caller else self.CLOSING
             return TurnDecision(
-                reply=self.CLOSING, slots=merged, ready_to_close=True, engine=self.name
+                reply=reply, slots=merged, ready_to_close=True, engine=self.name
             )
 
         asked = slots.ask_counts.get(target, 0)
@@ -156,7 +177,7 @@ class RuleEngine:
 
         # 첫 인사 직후(=아직 아무것도 못 들은 상태)에는 맞장구가 어색하다.
         if last_caller:
-            ack = random.choice(self.ACKS)
+            ack = self.ACKS[(turn_index - 1) % len(self.ACKS)]
             reply = f"{ack} {question}"
         else:
             reply = question
@@ -192,153 +213,12 @@ class RuleEngine:
         }
 
 
-class ClaudeEngine:
-    """Claude 기반 엔진. 실패 시 호출자가 RuleEngine 으로 넘긴다."""
-
-    name = "claude"
-
-    def __init__(
-        self,
-        api_key: str | None = None,
-        turn_model: str | None = None,
-        summary_model: str | None = None,
-    ) -> None:
-        self.api_key = api_key or os.getenv("ANTHROPIC_API_KEY") or ""
-        self.turn_model = turn_model or os.getenv("VOISSO_AGENT_MODEL") or DEFAULT_TURN_MODEL
-        self.summary_model = (
-            summary_model or os.getenv("VOISSO_SUMMARY_MODEL") or DEFAULT_SUMMARY_MODEL
-        )
-        self._client: Any | None = None
-        # output_config.effort 를 서버가 거부하면 한 번만 배우고 이후엔 안 보낸다.
-        self._send_effort = True
-
-    @property
-    def available(self) -> bool:
-        if not self.api_key:
-            return False
-        try:
-            import anthropic  # noqa: F401
-        except ImportError:
-            return False
-        return True
-
-    def _get_client(self) -> Any:
-        if self._client is None:
-            import anthropic
-
-            # 통화 중이다. SDK 기본 10분 타임아웃은 너무 길다.
-            self._client = anthropic.Anthropic(api_key=self.api_key, timeout=30.0, max_retries=1)
-        return self._client
-
-    def _create_json(
-        self,
-        *,
-        model: str,
-        system: str,
-        messages: list[dict[str, Any]],
-        schema: dict[str, Any],
-        max_tokens: int,
-        thinking: dict[str, Any] | None,
-        effort: str | None,
-    ) -> dict[str, Any]:
-        """구조화 출력으로 한 번 호출하고 JSON 을 파싱해 돌려준다."""
-        import anthropic
-
-        client = self._get_client()
-        output_config: dict[str, Any] = {"format": {"type": "json_schema", "schema": schema}}
-        if effort and self._send_effort:
-            output_config["effort"] = effort
-
-        kwargs: dict[str, Any] = {
-            "model": model,
-            "max_tokens": max_tokens,
-            "system": system,
-            "messages": messages,
-            "output_config": output_config,
-        }
-        if thinking is not None:
-            kwargs["thinking"] = thinking
-
-        try:
-            response = client.messages.create(**kwargs)
-        except anthropic.BadRequestError:
-            # effort 를 못 받는 조합이면 그것만 빼고 한 번 더 시도한다.
-            if "effort" not in output_config:
-                raise
-            log.warning("output_config.effort 거부됨 — 이후 호출에서는 생략합니다.")
-            self._send_effort = False
-            output_config.pop("effort")
-            response = client.messages.create(**kwargs)
-
-        text = "".join(block.text for block in response.content if block.type == "text")
-        # 구조화 출력이라 정상 경로에서는 그대로 JSON 이다.
-        return json.loads(text)
-
-    def respond(self, transcript: list[dict[str, Any]], slots: Slots) -> TurnDecision:
-        messages = _build_messages(transcript)
-        if not messages:
-            # 아직 어르신 발화가 없다 — 물어볼 것도 없다.
-            return TurnDecision(reply=prompts.opening_line(), engine=self.name)
-
-        # 현재 슬롯 상태를 마지막 사용자 메시지에 붙여 준다. Sonnet 5 는
-        # 대화 중간 system 메시지를 지원하지 않으므로 이 방식이 맞다.
-        note = prompts.build_state_note(slots)
-        messages[-1]["content"] = f"{messages[-1]['content']}\n\n{note}"
-
-        data = self._create_json(
-            model=self.turn_model,
-            system=prompts.SYSTEM_PROMPT,
-            messages=messages,
-            schema=prompts.TURN_SCHEMA,
-            max_tokens=1024,
-            # 실시간 통화라 지연을 줄인다. 슬롯 채우기는 추론이 깊게 필요한 일이 아니다.
-            thinking={"type": "disabled"},
-            effort="low",
-        )
-
-        raw_slots = data.get("slots") or {}
-        merged = {name: str(raw_slots.get(name) or "").strip() for name in SLOT_ORDER}
-        # 모델이 이전에 알아낸 값을 빠뜨렸으면 우리가 가진 값을 지킨다.
-        for name in SLOT_ORDER:
-            if not merged[name]:
-                merged[name] = slots.get(name)
-
-        return TurnDecision(
-            reply=str(data.get("reply") or "").strip() or prompts.opening_line(),
-            slots=merged,
-            ready_to_close=bool(data.get("ready_to_close")),
-            engine=self.name,
-        )
-
-    def summarize(self, transcript: list[dict[str, Any]], slots: Slots) -> dict[str, str]:
-        conversation = _render_transcript(transcript)
-        state = "\n".join(f"- {k}: {v}" for k, v in slots.for_card().items())
-        content = f"[통화 기록]\n{conversation}\n\n[접수된 슬롯]\n{state}"
-
-        data = self._create_json(
-            model=self.summary_model,
-            system=prompts.SUMMARY_PROMPT,
-            messages=[{"role": "user", "content": content}],
-            schema=prompts.SUMMARY_SCHEMA,
-            max_tokens=4000,
-            # 담당 공무원이 읽는 결과물이다. Opus 5 는 사고가 기본으로 켜져 있고,
-            # 끄면 오히려 품질이 떨어지므로 그대로 둔다.
-            thinking=None,
-            effort=None,
-        )
-        return {
-            "summary": str(data.get("summary") or "").strip(),
-            "category": str(data.get("category") or "").strip(),
-            "routing_query": str(data.get("routing_query") or "").strip(),
-        }
-
-
 # --------------------------------------------------------------------------
 # 헬퍼
 # --------------------------------------------------------------------------
 
 
-def _build_messages(transcript: list[dict[str, Any]]) -> list[dict[str, str]]:
+def build_messages(transcript: list[dict[str, Any]]) -> list[dict[str, str]]:
     """통화 기록을 Messages API 형식으로 바꾼다.
 
     Messages API 는 user 로 시작해야 하는데 우리 통화는 상담원 인사로 시작한다.
@@ -370,7 +250,7 @@ def _last_caller_text(transcript: list[dict[str, Any]]) -> str:
     return ""
 
 
-def _render_transcript(transcript: list[dict[str, Any]]) -> str:
+def render_transcript(transcript: list[dict[str, Any]]) -> str:
     lines = []
     for entry in transcript:
         who = "어르신" if entry.get("role") == "caller" else "상담원"
@@ -380,28 +260,72 @@ def _render_transcript(transcript: list[dict[str, Any]]) -> str:
     return "\n".join(lines)
 
 
-_claude_engine: ClaudeEngine | None = None
+_llm_provider: Any | None = None
+_llm_key: tuple[str, str] | None = None
 _rule_engine = RuleEngine()
 
 
-def get_engines() -> tuple[ClaudeEngine | None, RuleEngine]:
-    """(주 엔진, 폴백 엔진). 주 엔진은 키가 없으면 None."""
-    global _claude_engine
-    candidate = ClaudeEngine()
-    if candidate.available:
-        if _claude_engine is None or _claude_engine.api_key != candidate.api_key:
-            _claude_engine = candidate
-        return _claude_engine, _rule_engine
-    _claude_engine = None
-    return None, _rule_engine
+def _select_provider():
+    """VOISSO_AGENT_PROVIDER 에 따라 LLM 프로바이더를 고른다.
+
+    기본은 auto — **키가 있는 것을 자동으로 쓴다.** 둘 다 없으면 None 이고
+    호출자는 규칙 엔진으로 간다. 어떤 경우에도 예외를 던지지 않는다.
+    """
+    from .providers import AnthropicProvider, OpenAIProvider
+
+    choice = (os.getenv("VOISSO_AGENT_PROVIDER") or "auto").strip().lower()
+
+    if choice == "rule":
+        return None
+    if choice == "openai":
+        candidate = OpenAIProvider()
+        return candidate if candidate.available else None
+    if choice == "anthropic":
+        candidate = AnthropicProvider()
+        return candidate if candidate.available else None
+
+    # auto — OpenAI 를 먼저 본다. STT 와 키를 공유하므로 이미 있을 확률이 높다.
+    for factory in (OpenAIProvider, AnthropicProvider):
+        candidate = factory()
+        if candidate.available:
+            return candidate
+    return None
+
+
+def get_engines() -> tuple[Any | None, RuleEngine]:
+    """(LLM 프로바이더, 폴백 규칙 엔진). LLM 은 쓸 수 없으면 None."""
+    global _llm_provider, _llm_key
+
+    choice = (os.getenv("VOISSO_AGENT_PROVIDER") or "auto").strip().lower()
+    # 키가 바뀌면 프로바이더를 다시 만든다(재시작 없이 반영되도록).
+    key = (
+        choice,
+        f"{bool(os.getenv('OPENAI_API_KEY'))}{bool(os.getenv('ANTHROPIC_API_KEY'))}"
+        f"{os.getenv('VOISSO_AGENT_MODEL') or ''}",
+    )
+    if _llm_provider is not None and _llm_key == key:
+        return _llm_provider, _rule_engine
+
+    provider = _select_provider()
+    _llm_provider, _llm_key = provider, key
+    if provider is not None:
+        log.info("대화 프로바이더: %s (%s)", provider.name, provider.turn_model)
+    return provider, _rule_engine
 
 
 def engine_status() -> dict[str, Any]:
-    claude, _ = get_engines()
+    llm, _ = get_engines()
+    error = llm.last_error if llm else None
     return {
-        "primary": "claude" if claude else "rule",
-        "claude_available": claude is not None,
-        "turn_model": claude.turn_model if claude else None,
-        "summary_model": claude.summary_model if claude else None,
+        # 키가 있어도 호출이 실패하고 있으면 실질 엔진은 rule 이다.
+        "primary": llm.name if (llm and not error) else "rule",
+        "provider": llm.name if llm else None,
+        "llm_available": llm is not None,
+        "llm_error": error,
+        # 이전 이름 호환 — 대시보드/헬스체크가 쓰고 있다.
+        "claude_available": bool(llm and llm.name == "anthropic"),
+        "claude_error": error if (llm and llm.name == "anthropic") else None,
+        "turn_model": llm.turn_model if llm else None,
+        "summary_model": llm.summary_model if llm else None,
         "fallback": "rule",
     }
