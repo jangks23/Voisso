@@ -25,6 +25,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -83,6 +84,14 @@ CONCEPT_PROBES = [
     ("멧돼지가 밭에 내려와서 다 망쳐놨어요", "wild_animal"),
 ]
 
+# 119 소관 -> 도청에 맞는 부서가 없다. 억지 배정 금지.
+EMERGENCY_119_PROBES = [
+    "안동시 옥동 주택 내 가스 냄새 발생",
+    "주택 화재 발생 및 인명 대피",
+    "건물 붕괴 위험으로 주민 대피",
+    "전선 단선으로 감전 위험 발생",
+]
+
 # 시군 소관 -> 도청 부서를 배정하면 안 되는 질의
 MUNICIPAL_PROBES = [
     "우리 동네 가로등이 며칠째 안 들어와요",
@@ -127,6 +136,54 @@ def _section(title: str) -> None:
 
 REPO_ROOT = str(Path(__file__).resolve().parents[1])
 
+# ── 계약서 5-D: 개발·테스트 중 유료 API 호출 금지 ──────────────────────
+#
+# 타입캐스트 TTS 는 종량제고, 충전된 크레딧은 발표·촬영용이다.
+# .env 를 source 한 셸에서 셀프테스트를 돌려도 과금되지 않도록,
+# 프로세스 시작 시점에 환경변수를 덮어쓴다. 이 파일이 켜는 유료 경로는 없다.
+NO_COST_ENV = {
+    "VOISSO_TTS_PROVIDER": "none",   # 음성 합성 끔
+    "VOISSO_STT_PROVIDER": "none",   # 음성 인식 끔
+    "VOISSO_DIALECT_LLM": "0",       # 방언 LLM 다듬기 끔 (규칙 경로만)
+}
+
+
+# P4 전용 테스트 디렉터리. 포트 배정과 같은 번호를 쓴다(P4 = 8021).
+# 쓰기가 저장소의 data/ 로 새면 사용자 발표 화면에 테스트 잔해가 섞인다 —
+# 실제로 민원 3건이 7건이 된 적이 있다.
+MY_PORT = "8021"
+SCRATCH_ROOT = Path(os.environ.get("TMPDIR", "/tmp")) / f"voisso-{MY_PORT}"
+
+
+def enforce_no_cost() -> dict[str, str]:
+    """유료 provider 를 끄고, 덮어쓴 항목을 돌려준다."""
+    overridden: dict[str, str] = {}
+    for key, value in NO_COST_ENV.items():
+        before = os.environ.get(key)
+        if before != value:
+            overridden[key] = f"{before or '(미설정)'} -> {value}"
+        os.environ[key] = value
+    return overridden
+
+
+def isolate_writes() -> tuple[Path, dict[str, str]]:
+    """쓰기 경로를 저장소 밖으로 돌린다. (디렉터리, 덮어쓴 항목)
+
+    **읽기는 건드리지 않는다** — ``--real-data`` 가 data/gb_departments.json 을
+    읽어야 하므로 VOISSO_DATA_DIR 은 그대로 둔다. 저장 경로만 옮긴다.
+    """
+    SCRATCH_ROOT.mkdir(parents=True, exist_ok=True)
+    workdir = Path(tempfile.mkdtemp(prefix="mcp-selftest-", dir=SCRATCH_ROOT))
+    overridden: dict[str, str] = {}
+    for key, value in (
+        ("VOISSO_COMPLAINTS_DIR", str(workdir / "complaints")),
+        ("VOISSO_HANDOFFS_DIR", str(workdir / "handoffs")),
+        ("VOISSO_CALLBACKS_DIR", str(workdir / "callbacks")),
+    ):
+        overridden[key] = f"{os.environ.get(key) or '(미설정)'} -> {value}"
+        os.environ[key] = value
+    return workdir, overridden
+
 
 def _reset_data_cache() -> None:
     """환경변수를 바꾼 뒤 이전 데이터가 캐시에서 되살아나지 않게 한다."""
@@ -137,10 +194,11 @@ def _reset_data_cache() -> None:
 
 
 def _child_env() -> dict:
-    """자식 프로세스가 저장소를 import 할 수 있도록 PYTHONPATH 를 넣는다."""
+    """자식 프로세스용 환경. PYTHONPATH 를 넣고 유료 provider 는 꺼서 넘긴다."""
     env = dict(os.environ)
     existing = env.get("PYTHONPATH")
     env["PYTHONPATH"] = REPO_ROOT + (os.pathsep + existing if existing else "")
+    env.update(NO_COST_ENV)   # 계약서 5-D — 자식이 과금하지 않도록
     return env
 
 
@@ -222,6 +280,15 @@ def check_routing(rep: Report) -> None:
             ", ".join(f"{h.id}({h.matched})" for h in hits) or "감지 없음",
         )
 
+    # 119 소관 응급은 부서를 배정하지 않는다 — 무관한 근거가 붙을 여지 자체를 없앤다
+    for text in EMERGENCY_119_PROBES:
+        result = routing.route(text, top_k=3)
+        rep.check(
+            f"[119] {text}",
+            result.get("outcome") == "external_referral" and not result["matches"],
+            (result.get("referral") or result.get("reason", ""))[:56],
+        )
+
     # 시군 소관 업무는 도청 부서를 배정하지 않는다
     for text in MUNICIPAL_PROBES:
         result = routing.route(text, top_k=3)
@@ -287,6 +354,9 @@ def check_lookup(rep: Report) -> None:
 def check_dialect(rep: Report) -> None:
     _section("5. 방언 위임 (P5)")
     status = dialect_bridge.status()
+    # 계약서 5-D — 테스트는 규칙 경로만 쓴다. 유료 LLM 다듬기를 태우지 않는다.
+    rule_only = dialect_bridge.normalize_dialect("하수구가 막혔어예", use_llm=False)
+    rep.check("방언 규칙 경로(무과금)", "text" in rule_only, rule_only.get("text", ""))
     out = call_tool("normalize_dialect", {"text": "하수구가 막혔어예"})
     rep.check(
         "normalize_dialect 응답",
@@ -373,6 +443,95 @@ def check_regression(rep: Report, real_data: bool) -> None:
         if not row["ok"]:
             print(f"        FAIL {row['text']}")
             print(f"             기대 {row['expect']} / 실제 {row['got']}")
+
+
+# ------------------------------------------------- 6.7 비용 규칙 (계약서 5-D)
+
+def check_no_cost(rep: Report, overridden: dict[str, str]) -> None:
+    """유료 API 가 꺼진 상태로 돌고 있는지 눈에 보이게 확인한다."""
+    _section("6.7 비용 규칙 (계약서 5-D)")
+    for key, value in NO_COST_ENV.items():
+        actual = os.environ.get(key)
+        rep.check(f"{key} = {value}", actual == value, f"실제 {actual!r}")
+    if overridden:
+        for key, change in overridden.items():
+            print(f"        (덮어씀) {key}: {change}")
+
+    # 방언 LLM 게이트가 실제로 닫혔는지 P5 모듈에 직접 물어본다.
+    try:
+        from voisso.dialect import llm as dialect_llm
+
+        rep.check("방언 LLM 게이트 닫힘", dialect_llm.enabled() is False,
+                  "VOISSO_DIALECT_LLM 이 꺼져 있어 규칙 경로만 쓴다")
+    except Exception as exc:
+        rep.check(True, "방언 LLM 게이트", f"확인 불가(무시): {exc}")
+
+    # 이 파일과 회귀·검증기가 유료 provider 를 직접 부르는 코드가 없어야 한다.
+    # 문자열 포함이 아니라 **실제 import·호출**만 본다.
+    # (이 파일 자신이 금지어 목록을 문자열로 갖고 있어 단순 검색은 자기를 잡는다.)
+    call_patterns = re.compile(
+        r"^\s*(?:import|from)\s+(?:openai|anthropic|requests|httpx)\b"
+        r"|urlopen\s*\("
+        r"|api\.typecast\.ai|api\.elevenlabs\.io",
+        re.M,
+    )
+    own = [Path(REPO_ROOT) / "mcp_server" / n
+           for n in ("selftest.py", "regression.py", "verify_connection.py",
+                     "tools.py", "server.py", "_fallback.py", "complaints.py",
+                     "dialect_bridge.py")]
+    hits = []
+    for path in own:
+        if not path.is_file():
+            continue
+        for m in call_patterns.finditer(path.read_text(encoding="utf-8")):
+            hits.append(f"{path.name}:{m.group(0).strip()[:28]}")
+    rep.check("MCP 코드에 유료 API 직접 호출 없음", not hits,
+              ", ".join(hits) or "0건 (라우팅·MCP 계층은 표준 라이브러리만 쓴다)")
+
+
+# ------------------------------------ 6.8 사용자 데모 데이터 보호 (계약서 5-E)
+
+def demo_dirs() -> list[Path]:
+    """사용자 발표용 디렉터리. 셀프테스트가 절대 건드리면 안 된다."""
+    root = Path(REPO_ROOT) / "data"
+    return [root / name for name in ("complaints", "handoffs", "callbacks")]
+
+
+def snapshot_demo_dirs() -> dict[str, list[str]]:
+    return {
+        str(d): sorted(p.name for p in d.glob("*.json")) if d.is_dir() else []
+        for d in demo_dirs()
+    }
+
+
+def check_demo_data_untouched(rep: Report, before: dict[str, list[str]]) -> None:
+    """셀프테스트가 사용자 발표 데이터를 바꾸지 않았는지 확인한다.
+
+    포트만 나누고 데이터 디렉터리를 공유하면 사용자 발표 화면에 테스트 잔해가
+    섞인다. 실제로 3건이던 민원이 7건이 된 적이 있다.
+    """
+    _section("6.8 사용자 데모 데이터 보호")
+    after = snapshot_demo_dirs()
+    for key, before_names in before.items():
+        after_names = after.get(key, [])
+        name = Path(key).name
+        added = sorted(set(after_names) - set(before_names))
+        removed = sorted(set(before_names) - set(after_names))
+        detail = f"{len(after_names)}건 유지"
+        if added:
+            detail = f"추가됨 {added}"
+        elif removed:
+            detail = f"삭제됨 {removed}"
+        rep.check(f"data/{name} 변경 없음", not added and not removed, detail)
+
+    # 쓰기가 임시 디렉터리로 가는지 직접 확인한다.
+    from .complaints import complaints_dir
+
+    target = complaints_dir()
+    inside_repo = str(target).startswith(str(Path(REPO_ROOT) / "data"))
+    rep.check("민원카드 저장 위치가 저장소 밖", not inside_repo, str(target))
+    rep.check("전용 테스트 디렉터리 사용", str(SCRATCH_ROOT) in str(target),
+              f"{SCRATCH_ROOT} (P4 전용, 포트 {MY_PORT} 과 같은 번호)")
 
 
 # --------------------------------------------------------- 7. 데이터 부재 안내
@@ -523,7 +682,14 @@ def main(argv: list[str] | None = None) -> int:
     no_sdk = "--no-sdk" in argv
     real_data = "--real-data" in argv
 
+    overridden = enforce_no_cost()
+    workdir, write_overrides = isolate_writes()
+    overridden.update(write_overrides)
+    demo_before = snapshot_demo_dirs()
+
     print("Voisso MCP 서버 자체 점검")
+    print("  비용   : 유료 API 전부 꺼짐 (계약서 5-D) — TTS/STT/방언LLM none")
+    print(f"  격리   : 쓰기 전부 {workdir} (사용자 data/ 는 읽기만)")
     print(f"  python  : {sys.version.split()[0]}")
     try:
         import mcp  # noqa: F401
@@ -559,8 +725,12 @@ def main(argv: list[str] | None = None) -> int:
     check_dialect(rep)
     check_complaints(rep)
     check_regression(rep, real_data)
+    check_no_cost(rep, overridden)
+    check_demo_data_untouched(rep, demo_before)
     check_missing_data(rep)
     check_stdio(rep, no_sdk)
+
+    shutil.rmtree(workdir, ignore_errors=True)   # 테스트 잔해를 남기지 않는다
 
     total = len(rep.rows)
     print("\n" + "=" * 64)

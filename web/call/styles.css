@@ -237,7 +237,7 @@ button { cursor: pointer; border: 0; background: none; }
 .std-switch {
   flex: 0 0 auto; padding: 10px 16px 4px;
   border-bottom: 1px dashed var(--line);
-  display: flex; align-items: center; justify-content: space-between; gap: 8px;
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
 }
 
 /* 지금 쓰는 음성 입력 경로 */
@@ -251,21 +251,6 @@ button { cursor: pointer; border: 0; background: none; }
 .path-chip:hover { border-color: currentColor; }
 .path-chip.on  { color: var(--accent-ink); border-color: var(--accent); background: var(--accent-soft); }
 .path-chip.off { color: var(--warn); }
-.switch { display: inline-flex; align-items: center; gap: 10px; cursor: pointer;
-          min-height: 44px; padding: 4px 0; }
-.switch input { position: absolute; opacity: 0; width: 0; height: 0; }
-.switch-track {
-  width: 46px; height: 27px; border-radius: 999px; background: var(--line);
-  display: block; position: relative; transition: background .2s; flex: 0 0 auto;
-}
-.switch-thumb {
-  position: absolute; top: 3px; left: 3px; width: 21px; height: 21px; border-radius: 50%;
-  background: var(--surface); box-shadow: var(--shadow-sm); transition: transform .2s;
-}
-.switch input:checked + .switch-track { background: var(--brand); }
-.switch input:checked + .switch-track .switch-thumb { transform: translateX(19px); }
-.switch input:focus-visible + .switch-track { outline: 3px solid var(--brand); outline-offset: 2px; }
-.switch-label { font-size: .92rem; color: var(--muted); font-weight: 600; }
 
 /* 말풍선 */
 .transcript {
@@ -374,47 +359,7 @@ button { cursor: pointer; border: 0; background: none; }
   opacity: .92; margin-bottom: 4px; text-transform: uppercase;
 }
 .bubble-dialect { font-size: 1.14rem; line-height: 1.55; word-break: keep-all; overflow-wrap: anywhere; }
-.bubble-std {
-  display: none;
-  margin-top: 10px; padding-top: 10px;
-  border-top: 1px dashed currentColor;
-  font-size: 1.02rem; line-height: 1.5; opacity: .92; word-break: keep-all; overflow-wrap: anywhere;
-}
-.bubble.show-std .bubble-std { display: block; animation: pop .22s ease both; }
-.bubble-std .lbl {
-  display: block; font-size: .72rem; font-weight: 800; letter-spacing: .05em;
-  opacity: .62; margin-bottom: 3px;
-}
-.std-row + .std-row { margin-top: 10px; }
-.alt-row .alt-body { opacity: .72; text-decoration: line-through; text-decoration-thickness: 1px; }
-.pick-badge {
-  margin-left: 7px; padding: 2px 8px; border-radius: 999px;
-  font-size: .66rem; font-weight: 800; letter-spacing: 0;
-  border: 1px solid currentColor; opacity: .85; text-transform: none;
-  vertical-align: middle;
-}
-.bubble-std mark {
-  background: var(--mark); color: var(--mark-ink);
-  border-radius: 5px; padding: 0 3px; font-weight: 700;
-}
-.bubble.caller .bubble-std mark { background: rgba(255,255,255,.28); color: inherit; }
-.bubble-toggle {
-  margin-top: 9px;
-  display: inline-flex; align-items: center; gap: 6px;
-  min-height: 44px; padding: 6px 14px;
-  border-radius: 999px;
-  border: 1.5px solid currentColor;
-  font-size: .82rem; font-weight: 700;
-  opacity: .92; transition: opacity .16s, background .16s;
-}
-.bubble-toggle:hover { opacity: 1; background: rgba(125,125,125,.12); }
-.bubble.show-std .bubble-toggle { opacity: 1; }
-.bubble-toggle::before { content: "🅐"; font-size: .85em; }
 .bubble.pending .bubble-dialect { opacity: .6; font-style: italic; }
-
-/* 음성인식 중 — 말하는 대로 채워지는 말풍선 */
-.bubble.listening .bubble-std,
-.bubble.listening .bubble-toggle { display: none; }
 .bubble.listening .bubble-dialect { opacity: 1; font-style: normal; }
 .bubble.listening .bubble-dialect::after {
   content: "▍"; margin-left: 1px; animation: caret 1s steps(1) infinite;
@@ -626,7 +571,6 @@ button { cursor: pointer; border: 0; background: none; }
   .transcript { scroll-behavior: auto; }
 }
 
-
 /* 슬롯 칸이 길면 줄여 보여주고, 눌러서 전문을 편다. hover 로만 열지 않는다. */
 .slot[aria-expanded="true"] .slot-val {
   white-space: normal; overflow: visible; text-overflow: clip;
@@ -649,11 +593,6 @@ button { cursor: pointer; border: 0; background: none; }
 .tl-row.agent  { border-left-color: var(--muted); }
 .tl-who { font-size: .7rem; font-weight: 800; color: var(--muted); letter-spacing: .04em; }
 .tl-dialect { font-size: .98rem; font-weight: 600; word-break: keep-all; overflow-wrap: anywhere; }
-.tl-standard {
-  margin-top: 4px; font-size: .9rem; color: var(--muted);
-  word-break: keep-all; overflow-wrap: anywhere;
-}
-.tl-standard b { color: var(--text); }
 
 /* ═══════════════════════════════════════════════════════════
    어르신 모드 / 시연 모드
@@ -687,19 +626,7 @@ button { cursor: pointer; border: 0; background: none; }
 .demo-bar[hidden] { display: none; }
 
 /* ── 어르신 모드: 덜어내기 ────────────────────────────── */
-:root[data-mode="elder"] { --base: 20px; }          /* 본문 최소 20px */
-
-:root[data-mode="elder"] #btnTheme,
-:root[data-mode="elder"] #btnTextSize,
-:root[data-mode="elder"] .std-switch,
-:root[data-mode="elder"] .slots,
-:root[data-mode="elder"] .callee-timer,
-:root[data-mode="elder"] .suggestions,
-:root[data-mode="elder"] .mode-chip,
-:root[data-mode="elder"] .bubble-toggle,
-:root[data-mode="elder"] .bubble-std,
-:root[data-mode="elder"] .pick-badge,
-:root[data-mode="elder"] .demo-bar { display: none !important; }
+:root[data-mode="elder"] { --base: 20px; }
 
 /* 어르신 모드에서는 말풍선을 눌러도 펼쳐지지 않는다 */
 :root[data-mode="elder"] .bubble { cursor: default; }
@@ -894,7 +821,6 @@ button { cursor: pointer; border: 0; background: none; }
 /* 서버가 caller_turn 을 주지 않은 경우 — 시연 모드에서 원인을 드러낸다 */
 .bubble.missing { border: 2px dashed var(--danger); background: var(--alert-soft); }
 .bubble.missing .bubble-dialect { color: var(--alert-ink); font-weight: 700; }
-.sent-row .sent-body { opacity: .85; }
 
 /* 시연 정보 막대 안의 트리거 버튼 */
 .demo-bar { display: flex; align-items: center; gap: 10px; }
@@ -996,3 +922,40 @@ button { cursor: pointer; border: 0; background: none; }
 /* 안전바가 자리를 먹을 때는 자막을 기준 하한(22px)까지만 낮춘다. 잘리는 것보다 낫다. */
 :root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions .cap-text { font-size: 1.1rem; }
 :root[data-mode="elder"] .safety-bar:not([hidden]) ~ .captions .cap-who { font-size: .76rem; }
+
+/* 어르신 모드에서 덜어내는 것들.
+   (죽은 CSS 정리 중에 이 규칙이 통째로 지워져 슬롯·칩이 되살아난 적이 있다.
+    여기 목록에는 실제로 존재하는 요소만 둔다. 타이머는 아래에서 다시 보이게 한다.) */
+:root[data-mode="elder"] #btnTheme,
+:root[data-mode="elder"] #btnTextSize,
+:root[data-mode="elder"] .std-switch,
+:root[data-mode="elder"] .slots,
+:root[data-mode="elder"] .suggestions,
+:root[data-mode="elder"] .mode-chip,
+:root[data-mode="elder"] .demo-bar { display: none !important; }
+
+/* 세로가 좁으면(발표 화면 왼쪽 패널 등) 자막 두 줄이 서로를 눌러 글자가 잘린다.
+   그때는 방금 온 말 하나만 남긴다. 잘린 글자보다 한 줄이 낫다. */
+@media (max-height: 860px) {
+  :root[data-mode="elder"] .captions .cap.stale { display: none; }
+  :root[data-mode="elder"] .cap-text { font-size: 1.1rem; }
+  :root[data-mode="elder"] .captions { gap: 10px; padding: 12px 16px; }
+}
+/* 발표 화면 패널처럼 더 좁을 때(1280x800 의 왼쪽 패널 = 약 630px)는 한 단계 더 줄인다.
+   심사위원이 보는 화면에서는 잘린 글자보다 조금 작은 글자가 낫다.
+   어르신이 실제로 쓰는 전체 화면(높이 800 이상)에는 적용되지 않는다. */
+@media (max-height: 740px) {
+  :root[data-mode="elder"] .cap-text { font-size: 1rem; -webkit-line-clamp: 4; }
+}
+/* 세로가 아주 좁으면 아래쪽 조작부를 조금 줄여 자막에 자리를 내준다.
+   (버튼은 여전히 44px 기준을 넘는다) */
+@media (max-height: 740px) {
+  :root[data-mode="elder"] .mic-btn { min-height: 72px; }
+  :root[data-mode="elder"] .mic-btn svg { width: 30px; height: 30px; }
+  :root[data-mode="elder"] .mic-btn .mic-label { font-size: 1.1rem; }
+  :root[data-mode="elder"] .text-in,
+  :root[data-mode="elder"] .send-btn { min-height: 52px; height: 52px; }
+  :root[data-mode="elder"] .end-btn { min-height: 56px; font-size: 1.05rem; }
+  :root[data-mode="elder"] .composer-hint { display: none; }
+  :root[data-mode="elder"] .elder-status { padding: 8px 16px 2px; font-size: 1.05rem; }
+}

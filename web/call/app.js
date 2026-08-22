@@ -16,7 +16,7 @@
                incoming: $('screenIncoming') },
     btnCall: $('btnCall'), modeChip: $('modeChip'),
     callee: document.querySelector('.callee'), callStatus: $('callStatus'), callTimer: $('callTimer'),
-    chkStdAll: $('chkStandardAll'), pathChip: $('pathChip'),
+    pathChip: $('pathChip'),
     transcript: $('transcript'),
     slots: $('slots'), slotsCount: $('slotsCount'),
     capAgent: $('capAgent'), capCaller: $('capCaller'),
@@ -37,7 +37,7 @@
   const state = {
     sessionId: null, startedAt: 0, timer: null,
     slots: {}, turns: [], busy: false, done: false, ended: false,
-    showStdAll: false, recording: false, recognizing: false, inputPath: 'text', lastMs: 0,
+    recording: false, recognizing: false, inputPath: 'text', lastMs: 0,
     serverStt: null,          // /api/health 가 알려주는 서버 STT 가용 여부 (null = 아직 모름)
     handoff: { id: null, status: 'none', open: false, rendered: 0, timer: 0, officer: null },
     callback: { status: 'none', open: false, rendered: 0, officer: null },
@@ -233,11 +233,15 @@
   function renderDemoBar() {
     if (!isDemo()) return;
     const filled = ['what', 'where', 'when', 'contact'].filter((k) => state.slots[k]).length;
+    const u = state.urgency;
     const bits = [
       (API.isMock() ? '목 API' : '서버') + ' <b>' + esc(API.baseLabel()) + '</b>',
+      state.engine ? '엔진 <b>' + esc(state.engine) + '</b>' : '',
       '입력 <b>' + esc((PATHS[state.inputPath] || {}).chip || state.inputPath) + '</b>',
       '슬롯 <b>' + filled + '/4</b>',
       state.lastMs ? '응답 <b>' + (state.lastMs / 1000).toFixed(1) + '초</b>' : '',
+      u && u.level ? '긴급도 <b>' + esc(u.level) + '</b>' +
+        (u.reason ? ' <span style="opacity:.75">(' + esc(u.reason) + ')</span>' : '') : '',
       state.handoff.open ? '<b>담당자 연결됨</b>' : '',
     ].filter(Boolean);
     el.demoBarText.innerHTML = bits.join(' · ');
@@ -249,28 +253,6 @@
   }
 
   /* ── 사투리 / 표준어 말풍선 ────────────────────────────── */
-  // 표준어 문장에서 사투리 원문에 없던 단어를 표시한다(LCS 기반 단어 정렬).
-  function markChanged(dialect, standard) {
-    const a = String(dialect || '').split(/\s+/).filter(Boolean);
-    const b = String(standard || '').split(/\s+/).filter(Boolean);
-    if (!b.length) return '';
-    if (!a.length) return esc(standard);
-    const n = a.length, m = b.length;
-    const dp = Array.from({ length: n + 1 }, () => new Uint16Array(m + 1));
-    for (let i = n - 1; i >= 0; i--) {
-      for (let j = m - 1; j >= 0; j--) {
-        dp[i][j] = a[i] === b[j] ? dp[i + 1][j + 1] + 1 : Math.max(dp[i + 1][j], dp[i][j + 1]);
-      }
-    }
-    const keep = new Array(m).fill(false);
-    let i = 0, j = 0;
-    while (i < n && j < m) {
-      if (a[i] === b[j]) { keep[j] = true; i++; j++; }
-      else if (dp[i + 1][j] >= dp[i][j + 1]) i++;
-      else j++;
-    }
-    return b.map((w, k) => (keep[k] ? esc(w) : '<mark>' + esc(w) + '</mark>')).join(' ');
-  }
 
   // 발화 출처에 따라 위/아래 라벨이 달라진다.
   //  - 타이핑한 말   : [사투리 원문] / [표준어 변환]
@@ -281,27 +263,26 @@
       if (role === 'officer') {
         const o = (opts && opts.officer) || {};
         return { who: '담당자' + (o.department ? ' · ' + o.department : ''),
-                 std: '표준어 원문', on: '표준어 원문 보기', off: '접기' };
+               };
       }
       return role === 'caller'
-        ? { who: '나', std: '표준어 변환', on: '표준어 보기', off: '접기' }
-        : { who: '민원실', std: '표준어 변환', on: '표준어 보기', off: '접기' };
+        ? { who: '나' }
+        : { who: '민원실' };
     }
     if (role === 'officer') {
       // 사람 담당자. AI 와 헷갈리면 안 되므로 이름표를 분명히 단다.
       const o = (opts && opts.officer) || {};
       const who = '담당자' + (o.name ? ' ' + o.name : '') + (o.department ? ' · ' + o.department : '');
-      return { who: who, std: '담당자가 쓴 표준어 원문',
-               on: '표준어 원문 보기', off: '사투리로만 보기' };
+      return { who: who };
     }
     if (role !== 'caller') {
-      return { who: 'Voisso 상담원 (AI)', std: '표준어 변환', on: '표준어 보기', off: '사투리 원문만 보기' };
+      return { who: 'Voisso 상담원 (AI)' };
     }
     if (source === 'voice' || source === 'voice-server') {
       return { who: source === 'voice' ? '나 · 받아쓴 것 (브라우저 음성인식)' : '나 · 받아쓴 것 (Whisper 음성인식)',
-               std: '방언 정규화 후', on: '전사 결과 보기', off: '접기' };
+               };
     }
-    return { who: '나 (발신자)', std: '표준어 변환', on: '표준어 보기', off: '사투리 원문만 보기' };
+    return { who: '나 (발신자)' };
   }
 
   function addBubble(role, dialect, standard, opts) {
@@ -313,34 +294,13 @@
     b.className = 'bubble ' + (role === 'caller' ? 'caller' : role === 'officer' ? 'officer' : 'agent');
     if (o.pending) b.classList.add('pending');
     if (o.listening) { b.classList.add('listening'); b.setAttribute('aria-hidden', 'true'); }
-    if (state.showStdAll) b.classList.add('show-std');
 
+    // 표준어 대비 표시는 걷어냈다. 한국인은 사투리를 그냥 알아듣는다 —
+    // 굳이 표준어로 바꿔 보여주면 없는 문제를 만들어낸 것처럼 보인다.
+    // 정규화 자체는 서버에서 계속 돌아간다(라우팅 정확도가 거기 달려 있다).
     b.innerHTML =
-      '<div class="bubble-who"><span class="who-text">' + esc(L.who) + '</span>' +
-        '<span class="pick-badge" hidden>방언 사전이 고른 후보</span></div>' +
-      '<div class="bubble-dialect"></div>' +
-      '<div class="bubble-std">' +
-        '<div class="std-row alt-row" hidden>' +
-          '<span class="lbl">받아쓴 것 (STT 원본)</span><span class="alt-body"></span>' +
-        '</div>' +
-        '<div class="std-row sent-row" hidden>' +
-          '<span class="lbl">보낸 것</span><span class="sent-body"></span>' +
-        '</div>' +
-        '<div class="std-row">' +
-          '<span class="lbl">' + esc(L.std) + '</span><span class="std-body"></span>' +
-        '</div>' +
-      '</div>' +
-      '<button class="bubble-toggle" type="button">' + esc(L.on) + '</button>';
-
-    const toggle = b.querySelector('.bubble-toggle');
-    const syncToggle = () => { toggle.textContent = b.classList.contains('show-std') ? L.off : L.on; };
-    const flip = () => { b.classList.toggle('show-std'); syncToggle(); };
-    toggle.addEventListener('click', (e) => { e.stopPropagation(); flip(); });
-    b.addEventListener('click', (e) => {          // 말풍선 어디를 눌러도 펼쳐진다
-      if (e.target.closest('button') || window.getSelection().toString()) return;
-      flip();
-    });
-    syncToggle();
+      '<div class="bubble-who"><span class="who-text">' + esc(L.who) + '</span></div>' +
+      '<div class="bubble-dialect"></div>';
 
     el.transcript.appendChild(b);
     scrollDown();
@@ -352,15 +312,11 @@
         b.classList.remove('pending', 'listening');
         b.removeAttribute('aria-hidden');       // 확정된 뒤에 한 번만 읽어준다
         const d = dia || std || '';
-        const t = std || dia || '';
-        const same = d.trim() === t.trim();
         b.querySelector('.bubble-dialect').textContent = d;
-        b.querySelector('.std-body').innerHTML = markChanged(d, t);
-        b.querySelector('.bubble-std .lbl').textContent = same ? L.std + ' (원문과 동일)' : L.std;
-        // 음성 발화이고 실제로 교정이 일어났으면 접지 않고 바로 펼친다.
-        // (데모 스크립트의 핵심 컷: STT 원문과 정규화 결과가 동시에 보이는 순간)
-        if (isVoice && !same) b.classList.add('show-std');
-        syncToggle();
+        // 정규화 결과는 화면에 띄우지 않는다. 오류 추적용으로 콘솔에만 남긴다.
+        if (std && std.trim() !== d.trim()) {
+          console.debug('[Voisso] normalize: ' + d + ' → ' + std);
+        }
         showCaption(role, d);            // 어르신 모드 자막
         scrollDown();
       },
@@ -370,23 +326,11 @@
         if (text) showCaption(role, text, { live: true });
         scrollDown();
       },
-      // 방언 사전이 1순위가 아닌 후보를 골랐을 때만 '받아쓴 것' 줄을 띄운다.
+      // STT 1순위는 화면에 띄우지 않는다. 오류 추적이 필요할 때 콘솔에서 본다.
       setTop1(top1) {
-        const row = b.querySelector('.alt-row');
-        const badge = b.querySelector('.pick-badge');
         const chosen = (b.querySelector('.bubble-dialect').textContent || '').trim();
         const t = (top1 || '').trim();
-        const show = !!t && t !== chosen;
-        row.hidden = !show;
-        badge.hidden = !show;
-        if (show) {
-          b.querySelector('.alt-body').textContent = t;
-          // 본문이 더 이상 'STT 원본'이 아니므로 머리말도 정확하게 바꾼다.
-          b.querySelector('.who-text').textContent = '나 · 음성 입력';
-          b.classList.add('show-std');
-          syncToggle();
-        }
-        scrollDown();
+        if (t && t !== chosen) console.debug('[Voisso] STT 1순위: ' + t + ' → 채택: ' + chosen);
       },
       remove() { b.remove(); },
       // 서버가 알려준 STT 출처를 머리말에 반영한다 (Whisper / 브라우저 음성인식)
@@ -398,13 +342,10 @@
         const w = b.querySelector('.who-text');
         if (w && role === 'caller') w.textContent = '나 · 받아쓴 것 (' + name + ')';
       },
-      // 실제로 서버에 보낸 텍스트가 표시된 것과 다르면 그대로 드러낸다
       setSent(text) {
-        const row = b.querySelector('.sent-row');
         const chosen = (b.querySelector('.bubble-dialect').textContent || '').trim();
         const t = (text || '').trim();
-        row.hidden = !(t && t !== chosen);
-        if (!row.hidden) b.querySelector('.sent-body').textContent = t;
+        if (t && t !== chosen) console.debug('[Voisso] 보낸 것: ' + t);
       },
     };
     api.set(dialect, standard);
@@ -473,14 +414,6 @@
     });
   }
 
-  el.chkStdAll.addEventListener('change', () => {
-    state.showStdAll = el.chkStdAll.checked;
-    el.transcript.querySelectorAll('.bubble').forEach((b) => {
-      b.classList.toggle('show-std', state.showStdAll);
-      const t = b.querySelector('.bubble-toggle');
-      if (t) t.textContent = state.showStdAll ? '사투리 원문만 보기' : '표준어 보기';
-    });
-  });
 
   /* ── 슬롯 ─────────────────────────────────────────────── */
   // 서버가 어떤 키로 보내든 4칸에 매핑되도록 관대하게 읽는다.
@@ -596,6 +529,10 @@
   }
 
   async function startCall() {
+    // 연속으로 눌러도 통화는 하나만. (가드가 없으면 누를 때마다 새 세션이 생기고
+    //  서버 호출도 그만큼 늘어난다 — 발표 중에 두 번 누르는 일은 흔하다.)
+    if (state.starting || state.sessionId) return;
+    state.starting = true;
     unlockAudio();                      // 반드시 사용자 클릭 핸들러 안에서 호출해야 한다
     stopReconnect();
     resetHandoff();
@@ -614,7 +551,7 @@
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
     state.callerBubbles = []; state.slotRevisions = []; state.pending = [];
     if (el.hwQueue) el.hwQueue.innerHTML = '';
-    state.safety = []; state.hurry = 0; state.safetyConfirmed = false;
+    state.safety = []; state.hurry = 0; state.safetyConfirmed = false; state.urgency = null;
     el.safetyBar.hidden = true;
     el.safetyBar.classList.remove('again', 'confirmed');
     document.documentElement.dataset.sos = '';
@@ -629,6 +566,7 @@
       state.sessionId = r.session_id;
       state.startedAt = Date.now();
       el.callee.classList.add('is-live');
+      state.starting = false;
       setPhase('통화 중');
       say('말씀해 주이소');
       clearInterval(state.timer);
@@ -640,6 +578,7 @@
       }, 500);
       paintTimer('00:00');
     } catch (e) {
+      state.starting = false;
       setBusy(false);
       const addr = API.baseLabel();
       setPhase('연결 실패');
@@ -746,6 +685,8 @@
       // ── 안전 안내 (계약 5-A) ───────────────────────────────
       // 1순위: 서버의 구조화 판정. 없으면 답변·발화에서 직접 잡는다(안전 쪽으로 치우친다).
       const u = r.urgency || null;
+      if (u) state.urgency = u;
+      if (r.meta && r.meta.engine) state.engine = r.meta.engine;
       let shown = false;
       if (u && u.safety_referral) shown = applySafety(u.safety_referral);
       if (!shown) {
@@ -1244,6 +1185,7 @@
   }
 
   function goIdle() {
+    state.starting = false;
     stopReconnect();
     resetHandoff();
     resetEndButton();
@@ -1436,8 +1378,6 @@
       return '<div class="tl-row ' + (t.role === 'caller' ? 'caller' : 'agent') + '">' +
         '<div class="tl-who">' + esc(who) + '</div>' +
         '<div class="tl-dialect">' + esc(dia) + '</div>' +
-        (same || !std ? '' :
-          '<div class="tl-standard"><b>표준어</b> ' + markChanged(dia, std) + '</div>') +
         '</div>';
     }).join('');
     return '<details class="tl-wrap"><summary class="field-key" style="cursor:pointer">' +

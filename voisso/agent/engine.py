@@ -27,11 +27,7 @@ from .slots import SLOT_ORDER, Slots, extract_slots, is_meaningless
 
 log = logging.getLogger("voisso.agent.engine")
 
-# 실시간 통화다. 응답 지연이 곧 사용성이라 대화 턴은 Sonnet 을 쓴다.
-DEFAULT_TURN_MODEL = "claude-sonnet-5"
-# 요약은 통화가 끝난 뒤 한 번만 도는 배치성 작업이고, 담당 공무원이 읽는
-# 결과물이라 품질을 우선한다.
-DEFAULT_SUMMARY_MODEL = "claude-opus-5"
+# 프로바이더별 기본 모델은 providers.py 가 정한다.
 
 
 @dataclass

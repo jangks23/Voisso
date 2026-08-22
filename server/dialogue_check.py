@@ -16,17 +16,27 @@
 
 **키가 없으면 건너뛴다.** 실제 API 를 호출하므로 비용이 든다. 케이스를
 4개로 제한한 것도 그래서다. 키 없이 도는 검증은 `server.selftest` 를 쓴다.
+
+**음성은 생성하지 않는다** (계약서 5-D). 이 스크립트가 확인하는 것은 대화
+품질이고 TTS 는 필요 없다. 타입캐스트 크레딧은 발표·촬영용이라 개발 중
+테스트로 소진하면 정작 시연 때 음성이 안 나온다. 실제로 한 번 그렇게 됐다.
 """
 
 from __future__ import annotations
 
 import argparse
+import os
 import sys
 
-from voisso.agent import ConversationSession
-from voisso.agent.engine import engine_status
+# **import 시점에 끈다.** ConversationSession 이 프로바이더를 잡기 전에
+# 꺼 놔야 한다. .env 에 typecast 가 들어 있어도 여기서 덮어쓴다.
+os.environ["VOISSO_TTS_PROVIDER"] = "none"
 
-from . import config
+from voisso.agent import ConversationSession  # noqa: E402
+from voisso.agent.engine import engine_status  # noqa: E402
+from voisso.voice import tts_status  # noqa: E402
+
+from . import config  # noqa: E402
 
 _failures: list[str] = []
 _passes = 0
@@ -97,7 +107,12 @@ def case_b() -> None:
     what = session.slots.get("what")
     check("질문을 민원 내용으로 오인하지 않았다", "대신 신청" not in what and "아들" not in what, what)
     # 질문에 실제로 답했는가
-    answered = any(word in last for word in ("됩니다", "되십니다", "가능", "괜찮", "하셔도"))
+    # 모델은 같은 뜻을 여러 표현으로 답한다 — "하셔도 됩니다" / "접수할 수 있습니다" /
+    # "가능합니다". 문구를 좁게 잡으면 동작이 멀쩡한데도 실패로 잡힌다.
+    answered = any(
+        word in last
+        for word in ("됩니다", "되십니다", "가능", "괜찮", "하셔도", "할 수 있", "하실 수 있", "해도 좋")
+    )
     check("질문에 답했다", answered, last[:60])
     # 같은 질문을 그대로 반복하지 않았는가
     check("직전 질문을 그대로 반복하지 않았다", len(replies) < 2 or replies[-1] != replies[-2])
@@ -261,6 +276,7 @@ def main() -> int:
     print(f"  프로바이더: {status['provider'] or '없음'}")
     print(f"  대화 모델  : {status['turn_model'] or '—'}")
     print(f"  요약 모델  : {status['summary_model'] or '—'}")
+    print(f"  음성 합성  : {tts_status()['provider']} (개발 중에는 항상 꺼 둔다)")
 
     if not status["llm_available"]:
         print("\n건너뜀 — LLM 키가 없습니다.")

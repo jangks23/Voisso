@@ -34,7 +34,6 @@
   var LS_SORT = "voisso.dashboard.sort.v1";
   var LS_REASSIGN_V1 = "voisso.dashboard.reassign.v1"; // 이전 버전 마이그레이션용
   var LS_THEME = "voisso.dashboard.theme";
-  var LS_TRMODE = "voisso.dashboard.trmode";
   var FALLBACK_PHONE = "1522-0120"; // 계약서 3절: 매핑 없으면 경북도청 대표번호
 
   // 근거 원문이 이보다 길면 접어 둔다. 첫 줄(또는 첫 항목)은 항상 보인다.
@@ -104,7 +103,6 @@
     apiBase: null,
     selectedId: null,
     book: loadBook(),     // id -> { workflow, assignment, history }
-    trMode: localStorage.getItem(LS_TRMODE) || "both",
     filter: { q: "", dept: "", status: "" },
     // 기본은 최신순 + 응급 상단 고정. 이유는 README '정렬을 이렇게 정한 이유' 참고.
     sortMode: localStorage.getItem(LS_SORT) || "recent",
@@ -118,7 +116,6 @@
       name: localStorage.getItem(LS_OFFICER_NAME) || "",
       department: localStorage.getItem(LS_OFFICER_DEPT) || ""
     },
-    handoffDialect: {},    // 상세에서 사투리 원문을 펼쳐 둔 메시지
     handoffBusy: false,
     callback: {},          // id -> 마지막으로 받은 콜백 상태
     callbackApi: null,     // true=실서버, false=목
@@ -1343,22 +1340,18 @@
     // 처리 이력 — AI 최초 배정과 담당자의 개입이 모두 남는다
     html += renderHistory(raw);
 
-    // 전사
+    // 전사 — 어르신이 실제로 한 말을 그대로 보여 준다.
+    // 표준어 변환본을 나란히 놓지 않는다: 담당자는 사투리를 그냥 알아듣는다.
+    // (dialect/standard 는 서버에 그대로 저장된다. 화면에서 대비로 보여주지 않을 뿐이다.)
     var turns = c.transcript || [];
-    html += '<div class="section"><h3>통화 전문 · 사투리 원문과 표준어 대조</h3>' +
-      '<div class="tr-toolbar"><div class="seg">' +
-        seg("both", "대조 보기") + seg("dialect", "사투리 원문") + seg("standard", "표준어") +
-      "</div>" +
-      '<span class="pane-hint">사투리 정규화: voisso/dialect (STT 교정 결과)</span></div>';
+    html += '<div class="section"><h3>통화 전문</h3>';
     if (turns.length) {
-      html += '<div class="scroll-x"><div class="transcript mode-' + esc(state.trMode) + '" id="transcript">' +
-        '<div class="tr-head"><span>화자</span><span>사투리 원문</span><span>표준어</span></div>' +
+      html += '<div class="scroll-x"><div class="transcript">' +
         turns.map(function (t) {
           var caller = t.role === "caller";
           return '<div class="tr-row ' + (caller ? "is-caller" : "is-agent") + '">' +
             '<div class="tr-who">' + (caller ? "신고자" : "AI 상담") + "</div>" +
-            '<div class="tr-cell tr-cell--dialect">' + esc(t.dialect || t.standard || "") + "</div>" +
-            '<div class="tr-cell tr-cell--standard">' + esc(t.standard || t.dialect || "") + "</div>" +
+            '<div class="tr-cell">' + esc(t.dialect || t.standard || "") + "</div>" +
           "</div>";
         }).join("") + "</div></div>";
     } else {
@@ -1538,9 +1531,9 @@
   /**
    * 담당자 핸드오프 패널 (계약 5-B).
    *
-   * 이 화면의 핵심 가치: **담당자는 표준어만 쓰면 된다.**
-   * 담당자가 친 표준어는 어르신에게 사투리로 가고, 어르신의 사투리는 표준어로 도착한다.
-   * 경상도 사람이 아니어도 어르신과 대화할 수 있다 — 그 사실이 화면에 보여야 한다.
+   * 담당자가 친 말은 어르신 화면·음성에 사투리로 나간다(서버의 to_dialect).
+   * 다만 **담당자 화면에서는 그 변환을 강조하지 않는다.** 한국인 담당자는 사투리를 그냥 알아듣는다.
+   * 어르신 말은 실제로 한 그대로, 담당자 말은 자기가 친 그대로 보여 주고 변환은 조용히 돌아간다.
    */
   function renderHandoff(raw) {
     var h = state.handoff[raw.id];
@@ -1559,8 +1552,7 @@
       if (known && state.handoffForm !== raw.id) {
         return head + '<div class="ho ho--idle">' +
           '<div class="ho-idle-text"><b>어르신이 담당자 연결을 기다리고 있을 수 있습니다.</b>' +
-            '<span class="ho-bridge-inline">담당자는 <b>표준어로 입력</b>하시면 됩니다 — ' +
-              '어르신께는 사투리로 전달됩니더.</span>' +
+            '<span>연결하면 AI 응대가 멈추고 담당자가 직접 대화합니다.</span>' +
           "</div>" +
           '<div class="ho-connect">' +
             '<button class="btn btn-primary btn-lg" data-act="ho-quick">☎ 통화 잇기</button>' +
@@ -1574,8 +1566,7 @@
       if (!known && state.handoffForm !== raw.id) {
         return head + '<div class="ho ho--idle">' +
           '<div class="ho-idle-text"><b>어르신이 담당자 연결을 기다리고 있을 수 있습니다.</b>' +
-            '<span class="ho-bridge-inline">담당자는 <b>표준어로 입력</b>하시면 됩니다 — ' +
-              '어르신께는 사투리로 전달됩니더.</span>' +
+            '<span>연결하면 AI 응대가 멈추고 담당자가 직접 대화합니다.</span>' +
           "</div>" +
           '<button class="btn btn-primary btn-lg" data-act="ho-open">☎ 통화 잇기</button>' +
           "</div></div>";
@@ -1585,8 +1576,6 @@
       if (state.handoffForm === raw.id || !known) {
         return head + '<div class="ho ho--form">' +
           '<p class="ho-lead">이 민원의 신고자와 직접 통화합니다. 연결하면 AI 응대는 멈춥니다.</p>' +
-          '<p class="ho-bridge-inline"><b>표준어로 입력하시면 어르신께 사투리로 전달됩니더.</b> ' +
-            '사투리를 치실 필요가 없습니다.</p>' +
           '<div class="ho-fields">' +
             '<label class="ho-field"><span>담당자 이름</span>' +
               '<input id="ho-name" type="text" maxlength="20" placeholder="예: 홍길동" value="' +
@@ -1621,11 +1610,6 @@
       (open ? '<button class="btn btn-ghost ho-close" data-act="ho-close">통화 종료</button>' : "") +
       "</div>";
 
-    // 통역이 무슨 일을 하는지 화면에 못박는다
-    out += '<p class="ho-bridge">' +
-      '<span class="ho-bridge-k">표준어로 입력하시면 사투리로 전달됩니더</span>' +
-      '<span class="ho-bridge-d">어르신 말씀은 표준어로 바꿔서 보여 드립니다 · voisso/dialect</span></p>';
-
     if (open) {
       out += '<p class="ho-notice">' + esc((h && h.notice) || "지금부터 담당자가 직접 응대합니더.") +
         ' <span>— 어르신 화면에도 같은 안내가 표시되고, AI 는 발화를 멈춥니다.</span></p>';
@@ -1638,23 +1622,17 @@
     msgs = dedupeMessages(msgs);
     out += '<ol class="ho-log" id="ho-log">';
     if (!msgs.length) {
-      out += '<li class="ho-empty">아직 대화가 없습니다. 아래에 첫 인사를 표준어로 입력하세요.</li>';
+      out += '<li class="ho-empty">아직 대화가 없습니다. 아래에 첫 인사를 입력하세요.</li>';
     } else {
-      out += msgs.map(function (m, i) {
+      // 어르신 말은 실제로 한 그대로, 담당자 말은 자기가 친 그대로 보여 준다.
+      // (변환본은 서버에 남아 있고, 어르신 화면에는 사투리 음성이 그대로 나간다.)
+      out += msgs.map(function (m) {
         var mine = m.role === "officer";
-        var key = raw.id + ":" + i;
-        var shown = mine ? (m.standard || m.text || "") : (m.standard || m.text || "");
-        var other = mine ? (m.dialect || "") : (m.dialect || "");
-        var openRaw = !!state.handoffDialect[key];
+        var shown = mine ? (m.standard || m.text || "") : (m.dialect || m.text || m.standard || "");
         return '<li class="ho-msg ' + (mine ? "is-officer" : "is-caller") + '">' +
           '<div class="ho-msg-top"><span class="ho-role">' + (mine ? "담당자" : "신고자") + "</span>" +
             '<span class="ho-at">' + esc(fmtClock(m.at)) + "</span></div>" +
           '<p class="ho-text">' + esc(shown) + "</p>" +
-          (other && other !== shown
-            ? '<button type="button" class="ho-raw-toggle" data-act="ho-raw" data-key="' + esc(key) + '">' +
-                (openRaw ? "▲ " : "▼ ") + (mine ? "어르신에게 전달된 사투리" : "사투리 원문 보기") + "</button>" +
-              (openRaw ? '<p class="ho-raw">' + esc(other) + "</p>" : "")
-            : "") +
         "</li>";
       }).join("");
     }
@@ -1663,8 +1641,8 @@
     // ── 입력
     if (open) {
       out += '<div class="ho-input">' +
-        '<label class="sr-only" for="ho-text">담당자 메시지 (표준어로 입력)</label>' +
-        '<textarea id="ho-text" rows="2" maxlength="500" placeholder="표준어로 입력하세요. 어르신께는 사투리로 전달됩니다."></textarea>' +
+        '<label class="sr-only" for="ho-text">담당자 메시지</label>' +
+        '<textarea id="ho-text" rows="2" maxlength="500" placeholder="메시지를 입력하세요."></textarea>' +
         '<button class="btn btn-primary" data-act="ho-send"' + (state.handoffBusy ? " disabled" : "") + ">전송</button>" +
         "</div>" +
         '<p class="ho-hint">Enter 전송 · Shift+Enter 줄바꿈</p>';
@@ -1681,11 +1659,11 @@
    * 진행 안내 콜백 패널 (계약 5-C).
    *
    * 어르신이 진행 상황을 알려면 다시 전화해 ARS 를 또 뚫어야 한다.
-   * 방향을 뒤집어 시스템이 먼저 건다. 담당자는 진행 상황만 표준어로 쓰고,
-   * AI 는 **그 문장을 사투리로 읽어 줄 뿐** 아무것도 지어내지 않는다.
+   * 방향을 뒤집어 시스템이 먼저 건다. 담당자는 진행 상황을 쓰고,
+   * AI 는 **그 문장을 읽어 줄 뿐** 아무것도 지어내지 않는다.
    *
-   * 그래서 이 화면은 두 가지를 반드시 보여 준다.
-   *  1) 내가 쓴 원문과 실제로 전달된 사투리 (내 말대로 갔는가)
+   * 그래서 이 화면이 반드시 보여 주는 것:
+   *  1) 담당자가 전달한 내용 (실제로 나간 문장은 접힌 한 줄로 확인 가능 — 계약 5-C)
    *  2) 어르신이 추가로 물은 것 (AI 가 답하지 않았으니 담당자가 답해야 한다)
    */
   function renderCallback(raw) {
@@ -1705,9 +1683,9 @@
     if (status === "none" || state.callbackForm === raw.id) {
       var prefill = state.callbackDraft || "";
       return head + '<div class="cb cb--form">' +
-        '<p class="cb-lead"><b>진행 상황을 표준어로 쓰면, AI 가 어르신께 사투리로 읽어 드립니다.</b>' +
+        '<p class="cb-lead"><b>진행 상황을 쓰면 어르신께 전화를 걸어 읽어 드립니다.</b>' +
           '<span>어르신은 다시 전화해서 ARS 를 뚫을 필요가 없습니다.</span></p>' +
-        '<label class="sr-only" for="cb-text">진행 상황 (표준어로 작성)</label>' +
+        '<label class="sr-only" for="cb-text">진행 상황</label>' +
         '<textarea id="cb-text" rows="3" maxlength="600" placeholder="예: 현장 확인 완료했습니다. 이번 주 내로 배수관 준설 예정입니다.">' +
           esc(prefill) + "</textarea>" +
         '<p class="cb-rule">⚠ <b>AI 는 여기 쓰신 내용만 전달합니다.</b> ' +
@@ -1723,16 +1701,20 @@
 
     var out = head + '<div class="cb cb--live' + (status === "closed" ? " is-closed" : "") + '">';
 
-    // ── 브리핑 원문 / 사투리 대조 — "내가 쓴 대로 전달됐는가"
+    // ── 전달한 내용.
+    // 담당자가 쓴 글을 본문으로 보여 준다. 사투리 변환본을 나란히 놓아 대비시키지 않는다.
+    // 다만 계약 5-C 는 "내가 쓴 대로 전달됐는가" 를 확인할 수 있어야 한다고 못박고 있으므로,
+    // 실제로 나간 문장은 접힌 한 줄로 조용히 남겨 둔다.
     var b = (c && c.briefing) || { standard: "", dialect: "" };
     out += '<div class="cb-brief">' +
-      '<div class="cb-brief-col"><span class="cb-brief-label">담당자가 쓴 내용 (표준어)</span>' +
-        '<p class="cb-brief-text">' + esc(b.standard || "(내용 없음)") + "</p></div>" +
-      '<div class="cb-brief-arrow" aria-hidden="true">→</div>' +
-      '<div class="cb-brief-col is-dialect"><span class="cb-brief-label">어르신께 전달된 말 (사투리)</span>' +
-        '<p class="cb-brief-text">' + esc(b.dialect || "(변환 없음)") + "</p></div>" +
+      '<span class="cb-brief-label">담당자가 전달한 내용</span>' +
+      '<p class="cb-brief-text">' + esc(b.standard || "(내용 없음)") + "</p>" +
+      (b.dialect && b.dialect !== b.standard
+        ? '<details class="cb-sent"><summary>어르신께 나간 문장 확인</summary>' +
+          '<p>' + esc(b.dialect) + "</p></details>"
+        : "") +
       "</div>";
-    out += '<p class="cb-verify">AI 는 위 문장을 사투리로 바꿔 읽었을 뿐입니다. 새로 만든 내용은 없습니다.</p>';
+    out += '<p class="cb-verify">AI 는 담당자가 쓴 내용만 전달합니다. 새로 만든 내용은 없습니다.</p>';
 
     // ── 상태별 안내
     if (status === "pending") {
@@ -1750,11 +1732,9 @@
         '<b>어르신이 추가로 물으신 것</b> <span class="badge cb--pending">' + qs.length + "건</span>" +
         '<span class="cb-q-note">AI 가 답하지 않았습니다. 담당자 확인이 필요합니다.</span></div>' +
         "<ul>" + qs.map(function (m) {
-          return "<li><p class=\"cb-q-text\">" + esc(m.standard || m.text || "") + "</p>" +
-            '<div class="cb-q-meta"><span>' + esc(fmtClock(m.at)) + "</span>" +
-            (m.dialect && m.dialect !== (m.standard || m.text)
-              ? '<span class="cb-q-raw">원문: ' + esc(m.dialect) + "</span>" : "") +
-            "</div></li>";
+          // 어르신이 실제로 물은 그대로 보여 준다(표준어 변환본을 나란히 놓지 않는다).
+          return "<li><p class=\"cb-q-text\">" + esc(m.dialect || m.text || m.standard || "") + "</p>" +
+            '<div class="cb-q-meta"><span>' + esc(fmtClock(m.at)) + "</span></div></li>";
         }).join("") + "</ul>" +
         (status !== "closed"
           ? '<button class="btn btn-primary" data-act="cb-reply">이 질문에 답해 다시 안내하기</button>'
@@ -1807,19 +1787,7 @@
     return d.toLocaleTimeString("ko-KR", { hour: "2-digit", minute: "2-digit", hour12: false });
   }
 
-  function seg(mode, label) {
-    return '<button type="button" data-act="trmode" data-mode="' + mode + '"' +
-      (state.trMode === mode ? ' class="is-on"' : "") + ">" + label + "</button>";
-  }
-
   function bindDetail(raw, alts) {
-    el.detail.querySelectorAll('[data-act="trmode"]').forEach(function (b) {
-      b.addEventListener("click", function () {
-        state.trMode = b.dataset.mode;
-        localStorage.setItem(LS_TRMODE, state.trMode);
-        renderDetail();
-      });
-    });
     el.detail.querySelectorAll('[data-act="ev-toggle"]').forEach(function (b) {
       b.addEventListener("click", function () {
         var k = b.dataset.key;
@@ -1875,14 +1843,6 @@
     on("ho-close", function () { closeHandoff(raw); });
     on("ho-send", function () { sendHandoff(raw); });
 
-    el.detail.querySelectorAll('[data-act="ho-raw"]').forEach(function (b) {
-      b.addEventListener("click", function () {
-        var k = b.dataset.key;
-        if (state.handoffDialect[k]) delete state.handoffDialect[k]; else state.handoffDialect[k] = 1;
-        renderDetail();
-      });
-    });
-
     var ta = document.getElementById("ho-text");
     if (ta) {
       ta.value = state.handoffDraft || "";
@@ -1921,7 +1881,7 @@
       return refreshHandoff(raw.id, { render: true });
     }).then(function () {
       render();
-      toast("연결됐습니다. 표준어로 입력하시면 사투리로 전달됩니더.");
+      toast("통화를 연결했습니다. 지금부터 담당자가 직접 응대합니다.");
       announce("접수번호 " + raw.id + " 담당자 통화가 연결되었습니다.");
     }).catch(function (err) {
       toast("연결 실패: " + (err && err.message ? err.message : "잠시 후 다시 시도하세요."));
@@ -1941,9 +1901,6 @@
       state.handoffFocus = true;
       state.lastChange = Date.now();
       var m = res && res.message;
-      if (m && m.dialect && m.dialect !== m.standard) {
-        toast("사투리로 전달: " + truncate(m.dialect, 30));
-      }
       return refreshHandoff(raw.id, { render: true });
     }).catch(function (err) {
       state.handoffBusy = false;

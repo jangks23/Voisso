@@ -1,8 +1,11 @@
 """음성 왕복 회귀 테스트 — TTS 로 합성 -> STT 로 받아쓰기 -> 유사도 측정.
 
-    python3 -m server.voice_check
-    python3 -m server.voice_check --threshold 90 --model whisper-1
-    python3 -m server.voice_check --compare-priming
+    python3 -m server.voice_check --audio
+    python3 -m server.voice_check --audio --threshold 90 --model whisper-1
+    python3 -m server.voice_check --audio --compare-priming
+
+**`--audio` 없이는 돌지 않는다.** 이 검사는 실제로 타입캐스트 음성을 만든다.
+크레딧은 발표·촬영용이라 개발 중 반복 실행으로 소진하면 안 된다(계약서 5-D).
 
 사투리 인식은 이 프로젝트의 핵심인데, 눈으로 확인하려면 매번 마이크에 대고
 말해 봐야 했다. Typecast 로 사투리 대사를 합성해 그걸 다시 Whisper 에 넣으면
@@ -83,6 +86,11 @@ def main() -> int:
         prog="python3 -m server.voice_check", description="TTS→STT 왕복 회귀 테스트"
     )
     parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="**실제로 음성을 생성한다.** 타입캐스트 크레딧을 쓰므로 기본은 꺼짐",
+    )
+    parser.add_argument(
         "--threshold", type=float, default=DEFAULT_THRESHOLD, help=f"기본 {DEFAULT_THRESHOLD}%%"
     )
     parser.add_argument("--model", default=None, help="STT 모델 (기본: VOISSO_STT_MODEL)")
@@ -98,6 +106,15 @@ def main() -> int:
         help="프라이밍 프롬프트 유무를 비교한다 (API 호출이 2배로 는다)",
     )
     args = parser.parse_args()
+
+    # 계약서 5-D: 개발 중에는 음성을 생성하지 않는다. 이 스크립트는 **합성이
+    # 목적**이므로 반드시 명시적으로 켜야 돈다. 타입캐스트 크레딧은 발표·촬영용이다.
+    if not args.audio:
+        print("음성 왕복 회귀 테스트\n")
+        print("건너뜀 — 이 검사는 실제로 음성을 생성합니다(타입캐스트 크레딧 소모).")
+        print("  실행하려면: python3 -m server.voice_check --audio")
+        print("  개발 중 기본 검증은 `python3 -m server.selftest` 를 쓰세요.")
+        return 0
 
     tts = get_tts_provider()
     stt = get_stt_provider()

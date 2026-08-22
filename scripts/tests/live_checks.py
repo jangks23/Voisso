@@ -60,9 +60,16 @@ def record(status: str, name: str, detail: str = "") -> None:
 # 개별 검사
 # --------------------------------------------------------------------------
 
-def check_tts() -> bytes | None:
-    """Typecast / ElevenLabs 실제 합성. 성공하면 오디오 바이트를 돌려준다."""
+def check_tts(allow_tts: bool = False) -> bytes | None:
+    """Typecast / ElevenLabs 실제 합성. 성공하면 오디오 바이트를 돌려준다.
+
+    계약서 5-D — 타입캐스트는 종량제다. 크레딧은 발표·촬영용이므로
+    ``--allow-tts`` 를 명시하지 않으면 호출하지 않는다.
+    """
     name = "TTS 합성 왕복"
+    if not allow_tts:
+        record(_SKIP, name, "계약서 5-D — 음성 생성은 --allow-tts 로만 연다")
+        return None
     provider = (env("VOISSO_TTS_PROVIDER") or "none").lower()
     if provider in ("", "none"):
         record(_SKIP, name, "VOISSO_TTS_PROVIDER=none")
@@ -158,12 +165,18 @@ def check_llm() -> None:
 
 # --------------------------------------------------------------------------
 
-def main() -> int:
+def main(argv: list[str] | None = None) -> int:
+    args = list(sys.argv[1:] if argv is None else argv)
+    # 계약서 5-D. 기본값은 "음성 생성 안 함" 이고, 켜는 길은 명시적 플래그뿐이다.
+    allow_tts = "--allow-tts" in args or env("VOISSO_ALLOW_TTS") == "1"
+
     load_dotenv()
     print("라이브 API 검사 (키가 있는 항목만 실행한다)")
+    if not allow_tts:
+        print("  TTS 합성은 건너뛴다 — 계약서 5-D 비용 규칙 (켜려면 --allow-tts)")
     print()
 
-    audio = check_tts()
+    audio = check_tts(allow_tts)
     check_stt(audio)
     check_llm()
 

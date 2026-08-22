@@ -1,8 +1,13 @@
 """서버 E2E — 브라우저 없이 HTTP 로만 전 구간 검증.
 
-    python3 -m server.e2e_check                     # 실제 오디오 왕복 + 지연 + 동시 세션
-    python3 -m server.e2e_check --text-only         # 키 없는 텍스트 모드 경로만
+    python3 -m server.e2e_check                     # 캐시된 WAV 만 사용 (음성 생성 없음)
+    python3 -m server.e2e_check --audio             # WAV 를 새로 합성 (크레딧 소모)
+    python3 -m server.e2e_check --text-only         # 오디오 없이 텍스트 경로만
     python3 -m server.e2e_check --base http://...   # 다른 서버를 가리킬 때
+
+검증 대상 서버는 샌드박스로 띄운다 — 데모 데이터를 오염시키지 않기 위해서다:
+
+    python3 -m server --port 8023 --sandbox
 
 지금까지의 검증은 파이썬 함수를 직접 부르는 수준이었다. 이 스크립트는
 **실행 중인 서버에 HTTP 로만** 말을 건다. 확인하는 것:
@@ -14,7 +19,8 @@
   2. 구간별 지연 — STT / LLM / 방언 / TTS 를 나눠 잰다. 병목을 숫자로 남긴다.
   3. 동시 세션 — 2~3개를 동시에 진행해 상태가 섞이지 않는지.
 
-비용을 아끼려고 합성한 WAV 는 디스크에 캐시한다(`--fresh` 로 무시).
+합성한 WAV 는 `.cache/e2e_audio/` 에 캐시해 재실행 때 다시 만들지 않는다.
+기본은 **새로 합성하지 않음** 이고, `--audio` 를 줘야 만든다(계약서 5-D).
 """
 
 from __future__ import annotations
@@ -71,14 +77,30 @@ def api(base: str, path: str, payload: dict | None = None, timeout: float = 120.
 # --------------------------------------------------------------------------
 
 
-def audio_fixtures(cache_dir: Path, fresh: bool = False) -> dict[str, bytes] | None:
+def audio_fixtures(
+    cache_dir: Path, fresh: bool = False, cache_only: bool = False
+) -> dict[str, bytes] | None:
+    """검증용 WAV 를 준비한다.
+
+    `cache_only=True` 면 **이미 만들어 둔 파일만** 쓰고 새로 합성하지 않는다.
+    계약서 5-D: 개발 중에는 음성을 생성하지 않는다. 타입캐스트 크레딧은
+    발표·촬영용이다.
+    """
+    cache_dir.mkdir(parents=True, exist_ok=True)
+    if cache_only:
+        cached = {
+            line: (cache_dir / f"turn{index}.wav").read_bytes()
+            for index, line in enumerate(SCRIPT)
+            if (cache_dir / f"turn{index}.wav").is_file()
+        }
+        return cached if len(cached) == len(SCRIPT) else None
+
     from voisso.voice.tts import TypecastProvider
 
     provider = TypecastProvider()
     if not provider.available:
         return None
 
-    cache_dir.mkdir(parents=True, exist_ok=True)
     out: dict[str, bytes] = {}
     for index, line in enumerate(SCRIPT):
         path = cache_dir / f"turn{index}.wav"
@@ -295,7 +317,14 @@ def main() -> int:
     parser = argparse.ArgumentParser(prog="python3 -m server.e2e_check")
     parser.add_argument("--base", default=DEFAULT_BASE)
     parser.add_argument("--text-only", action="store_true", help="오디오 없이 텍스트 경로만")
-    parser.add_argument("--fresh", action="store_true", help="오디오 캐시를 무시하고 재합성")
+    parser.add_argument(
+        "--audio",
+        action="store_true",
+        help="검증용 WAV 를 새로 합성한다 (**타입캐스트 크레딧을 쓴다.** 기본은 꺼짐)",
+    )
+    parser.add_argument(
+        "--fresh", action="store_true", help="--audio 와 함께: 캐시를 무시하고 재합성"
+    )
     parser.add_argument("--report", default="docs/E2E_SERVER.md", help="결과를 쓸 파일")
     parser.add_argument(
         "--keyless-base",
@@ -321,8 +350,8 @@ def main() -> int:
     print(f"  옆 모듈   : 방언 {runtime['dialect']} / 라우팅 {runtime['routing']}\n")
 
     audio = None
-    if not args.text_only:
-        cache = Path(config.ROOT_DIR) / ".cache" / "e2e_audio"
+    cache = Path(config.ROOT_DIR) / ".cache" / "e2e_audio"
+    if args.audio and not args.text_only:
         print("오디오 픽스처 준비 중…")
         audio = audio_fixtures(cache, fresh=args.fresh)
         if audio is None:
@@ -330,6 +359,15 @@ def main() -> int:
         else:
             sizes = ", ".join(f"{len(v)//1024}KB" for v in audio.values())
             print(f"  WAV {len(audio)}개 준비됨 ({sizes})\n")
+    elif not args.text_only:
+        # 캐시된 WAV 가 있으면 **새로 만들지 않고** 그것만 쓴다.
+        cached = audio_fixtures(cache, fresh=False, cache_only=True)
+        if cached:
+            audio = cached
+            print(f"  캐시된 WAV {len(cached)}개 사용 (새로 합성하지 않음)\n")
+        else:
+            print("  오디오 픽스처가 없어 텍스트 경로로 진행합니다.")
+            print("  실제 음성이 필요하면 --audio 를 주세요 (타입캐스트 크레딧을 씁니다).\n")
 
     mode = "오디오(WAV)" if audio else "텍스트"
     print(f"1) 통화 왕복 — {mode} 경로")

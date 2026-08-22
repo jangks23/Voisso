@@ -226,13 +226,6 @@ def looks_finished(text: str) -> bool:
     return closing_intent(text) == "close"
 
 
-def has_gb_city(text: str) -> bool:
-    """경상북도 시군 이름이 들어 있는가."""
-    if not text:
-        return False
-    return bool(_CITY_RE.search(text) or _BARE_CITY_RE.search(text))
-
-
 def extract_city(text: str) -> str:
     """시군만 뽑는다. 없으면 빈 문자열."""
     match = _CITY_RE.search(text or "")

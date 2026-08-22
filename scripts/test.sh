@@ -2,9 +2,10 @@
 #
 # Voisso 통합 테스트 러너 — 흩어진 스위트를 한 명령으로 돌린다.
 #
-#   ./scripts/test.sh              # 키 없이 도는 것 전부 + 키가 있으면 라이브 검사도
+#   ./scripts/test.sh              # 외부 API 를 부르지 않는 검사 전부
 #   ./scripts/test.sh --ci         # CI 모드: 네트워크·실데이터·키 의존 전부 제외
 #   ./scripts/test.sh --network    # 실제 크롤링까지 포함 (네트워크 필요)
+#   ./scripts/test.sh --live       # 외부 API 실호출 포함 (TTS 크레딧 소모 — 계약서 5-D)
 #   ./scripts/test.sh -v           # 통과한 스위트의 출력까지 전부 보여준다
 #
 # 키가 없어서 못 도는 검사는 실패가 아니라 "건너뜀"이다. 하나라도 실패하면 1 로 끝난다.
@@ -18,17 +19,19 @@ cd "${ROOT_DIR}" || exit 1
 CI_MODE=0
 WITH_NETWORK=0
 VERBOSE=0
+WITH_LIVE=0
 for arg in "$@"; do
   case "${arg}" in
     --ci)          CI_MODE=1 ;;
     --network)     WITH_NETWORK=1 ;;
+    --live)        WITH_LIVE=1 ;;
     -v|--verbose)  VERBOSE=1 ;;
     -h|--help)
-      sed -n '3,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       echo "알 수 없는 옵션: ${arg}" >&2
-      echo "사용법: ./scripts/test.sh [--ci] [--network] [-v]" >&2
+      echo "사용법: ./scripts/test.sh [--ci] [--network] [--live] [-v]" >&2
       exit 1 ;;
   esac
 done
@@ -174,10 +177,15 @@ fi
 echo
 echo "${B}API 키가 필요한 검사${N}"
 
+# 계약서 5-D — 개발 중 음성 생성 금지. 타입캐스트는 종량제고 크레딧은 발표·촬영용이다.
+# 이 스위트가 기본으로 돌면 테스트를 한 번 돌릴 때마다 음성이 합성된다. 실제로 그렇게
+# 크레딧이 한 번 소진됐다. 이제 --live 로 명시해야만 외부 API 를 부른다.
 if [ "${CI_MODE}" = "1" ]; then
   skip_suite "라이브 API (TTS/STT/LLM)" "CI 모드 — 시크릿을 요구하지 않는다"
+elif [ "${WITH_LIVE}" != "1" ]; then
+  skip_suite "라이브 API (TTS/STT/LLM)" "기본 제외 (계약서 5-D 비용 규칙) — 포함하려면 --live"
 else
-  run_suite "라이브 API (TTS/STT/LLM)" "${PY}" -m scripts.tests.live_checks
+  run_suite "라이브 API (TTS/STT/LLM)" "${PY}" -m scripts.tests.live_checks --allow-tts
 fi
 
 # ── 요약 ─────────────────────────────────────────────────────────────

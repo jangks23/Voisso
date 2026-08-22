@@ -21,9 +21,11 @@ import argparse
 import json
 import os
 import re
+import shutil
 import socket
 import subprocess
 import sys
+import tempfile
 import time
 import urllib.error
 import urllib.request
@@ -325,13 +327,45 @@ def step_preconditions(host: str, port: int) -> dict:
     }
 
 
-def step_start_server(host: str, port: int, audio: bool, log_path: Path):
-    """서버를 띄우고 헬스체크가 통과할 때까지 기다린다."""
+def test_data_dir(port: int) -> Path:
+    """테스트 서버 전용 데이터 디렉터리를 만든다.
+
+    기본값 ``./data`` 를 그대로 쓰면 리허설이 만든 민원이 **사용자 발표 화면에
+    그대로 섞여 보인다.** 실제로 그렇게 됐다. 포트를 나누는 것만으로는 부족하고
+    데이터 디렉터리도 나눠야 한다.
+
+    부서 데이터는 읽기 전용이라 심볼릭 링크로 충분하다.
+
+    경로는 팀 규약대로 ``/tmp/voisso-<포트>`` 다. macOS 의 ``TMPDIR`` 를 쓰면
+    사람마다 경로가 달라져서 남이 찾거나 지우기 어렵다.
+    """
+    root = Path("/tmp") if os.path.isdir("/tmp") else Path(tempfile.gettempdir())
+    path = root / f"voisso-{port}"
+    path.mkdir(parents=True, exist_ok=True)
+    link = path / DATA_JSON.name
+    if link.is_symlink() or link.exists():
+        link.unlink()
+    link.symlink_to(DATA_JSON)
+    return path
+
+
+def step_start_server(host: str, port: int, allow_stt: bool, log_path: Path,
+                      data_dir: Path | None = None, allow_tts: bool = False):
+    """서버를 띄우고 헬스체크가 통과할 때까지 기다린다.
+
+    계약서 5-D: **음성 생성은 기본으로 꺼져 있다.** 타입캐스트는 종량제고
+    크레딧은 발표·촬영용이라 개발 중에 소진하면 안 된다. STT 도 마찬가지로
+    ``--audio`` 를 줄 때만 켠다.
+
+    데이터는 항상 테스트 전용 디렉터리에 쓴다. 사용자 발표 데이터
+    (``data/complaints`` · ``handoffs`` · ``callbacks``)를 건드리지 않는다.
+    """
     env = dict(os.environ)
-    if not audio:
-        # 텍스트 모드 고정. 리허설을 반복해도 외부 API 비용이 들지 않게 한다.
-        env["VOISSO_TTS_PROVIDER"] = "none"
-        env["VOISSO_STT_PROVIDER"] = "none"
+    env["VOISSO_TTS_PROVIDER"] = "typecast" if allow_tts else "none"
+    env["VOISSO_STT_PROVIDER"] = env.get("VOISSO_STT_PROVIDER") if allow_stt else "none"
+    if allow_stt and not env.get("VOISSO_STT_PROVIDER"):
+        env["VOISSO_STT_PROVIDER"] = "openai"
+    env["VOISSO_DATA_DIR"] = str(data_dir or test_data_dir(port))
 
     log_file = log_path.open("w", encoding="utf-8")
     process = subprocess.Popen(
@@ -1209,14 +1243,17 @@ def run_chaos(scenario: dict, host: str, port: int, log_dir: Path) -> dict:
     log_path = log_dir / f"chaos-{scenario['id']}.log"
     started = time.monotonic()
 
+    # 장애 주입도 사용자 발표 데이터에 쓰면 안 된다.
+    temp_data_dir_path = test_data_dir(port)
+
     saved_env = dict(os.environ)
     try:
         os.environ.update(scenario.get("env", {}))
 
         if scenario.get("empty_data_dir"):
-            import tempfile
+            # 부서 데이터가 아예 없는 상황을 재현한다 (심볼릭 링크도 없는 빈 폴더).
             temp_data_dir = tempfile.mkdtemp(prefix="voisso-nodata-")
-            os.environ["VOISSO_DATA_DIR"] = temp_data_dir
+            temp_data_dir_path = Path(temp_data_dir)
 
         proxy_mode = scenario.get("proxy")
         if proxy_mode == "refused":
@@ -1231,7 +1268,12 @@ def run_chaos(scenario: dict, host: str, port: int, log_dir: Path) -> dict:
             os.environ["HTTPS_PROXY"] = hole
             os.environ["HTTP_PROXY"] = hole
 
-        process, _ = step_start_server(host, port, audio=True, log_path=log_path)
+        # 장애 주입은 시나리오 env 가 프로바이더를 직접 지정한다. 여기서 음성을
+        # 켜면 안 된다 — 시나리오를 하나 추가하며 none 을 빠뜨리는 순간 크레딧이 샌다.
+        process, _ = step_start_server(
+            host, port, allow_stt=bool(scenario.get("audio")), log_path=log_path,
+            data_dir=temp_data_dir_path, allow_tts=False,
+        )
         base = f"http://{host}:{port}"
 
         clips = None
@@ -1310,7 +1352,8 @@ def run_chaos(scenario: dict, host: str, port: int, log_dir: Path) -> dict:
 # --------------------------------------------------------------------------
 
 def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path,
-             audio_clips: dict[str, dict] | None = None) -> dict:
+             audio_clips: dict[str, dict] | None = None,
+             allow_tts: bool = False, data_dir: Path | None = None) -> dict:
     base = f"http://{host}:{port}"
     log_path = log_dir / f"server-run{run_no}.log"
     process = None
@@ -1336,14 +1379,18 @@ def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path,
         pre = step_preconditions(host, port)
         facts["preconditions"] = pre
         active = [name for name, present in pre["keys"].items() if present]
-        mode = "텍스트 모드" if not audio else "음성 포함"
+        mode = "STT 실경로" if audio else "텍스트 모드"
+        mode += " · TTS 켬" if allow_tts else " · TTS 끔(5-D)"
         record(1, time.monotonic() - tick, True,
                f"부서 {pre['departments']}개 · 포트 {port} 사용 가능 · "
                f"{mode} · 키 {len(active)}/{len(pre['keys'])}개")
 
         # 2
         tick = time.monotonic()
-        process, health = step_start_server(host, port, audio, log_path)
+        process, health = step_start_server(
+            host, port, allow_stt=audio, log_path=log_path,
+            data_dir=data_dir, allow_tts=allow_tts,
+        )
         facts["health"] = health
         tts_on = (health.get("tts") or {}).get("provider", "none") not in ("none", "", None)
         stt_on = (health.get("stt") or {}).get("provider", "none") not in ("none", "", None)
@@ -1700,9 +1747,12 @@ def main() -> int:
                         help=f"기본 {P3_PORT} (P3 배정 포트). 8000·8111 은 쓸 수 없다")
     audio_group = parser.add_mutually_exclusive_group()
     audio_group.add_argument("--audio", action="store_true",
-                             help="TTS/STT 를 켜고 돈다 (외부 API 비용 발생)")
+                             help="STT 실경로로 돈다 (캐시된 음성 사용, 새 합성 없음)")
     audio_group.add_argument("--no-audio", action="store_true",
                              help="텍스트 모드로 돈다 (기본값)")
+    parser.add_argument("--allow-tts", action="store_true",
+                        help="음성 합성을 실제로 호출한다 — 타입캐스트 크레딧 소모. "
+                             "계약서 5-D 에 따라 발표·촬영 준비 때만 쓴다")
     parser.add_argument("--chaos", action="store_true",
                         help="장애를 주입하고도 완주하는지 검증한다 "
                              "(docs/FALLBACK_REPORT.md 시나리오)")
@@ -1719,45 +1769,52 @@ def main() -> int:
 
     load_dotenv()
     audio = args.audio          # --no-audio 는 기본값과 같으므로 명시용이다
+    allow_tts = args.allow_tts
     runs = max(1, args.runs)
 
     log_dir = ROOT / "data" / "rehearsal-logs"
     log_dir.mkdir(parents=True, exist_ok=True)
+    # 사용자 발표 데이터와 완전히 분리한다 (data/complaints 등에 쓰지 않는다).
+    data_dir = test_data_dir(args.port)
 
     print(f"Voisso 통합 리허설 — {runs}회")
-    print(f"  모드   : {'음성 포함 (--audio, API 비용 발생)' if audio else '텍스트 모드 (기본)'}")
+    print(f"  모드   : {'STT 실경로 (--audio)' if audio else '텍스트 모드 (기본)'}")
+    print(f"  음성   : {'합성 켬 (--allow-tts, 크레딧 소모)' if allow_tts else '끔 — 계약서 5-D'}")
     print(f"  접속   : http://{args.host}:{args.port}")
+    print(f"  데이터 : {data_dir}  (발표용 data/ 와 분리)")
     print()
 
     audio_clips = None
     if audio:
-        # 리허설 프로세스에서 어르신 발화를 합성한다. 캐시가 있으면 API 를 안 부른다.
-        tts_off = (os.getenv("VOISSO_TTS_PROVIDER") or "none").lower() == "none"
+        # 계약서 5-D — 기본은 캐시만 쓴다. 새 합성은 --allow-tts 로만 열린다.
         try:
-            audio_clips = prepare_audio_clips(cache_only=tts_off)
+            audio_clips = prepare_audio_clips(cache_only=not allow_tts)
         except StepFailure as exc:
             print(f"  준비 실패: {exc}", file=sys.stderr)
             return 2
 
         usable = [c for c in audio_clips.values() if c["available"]]
         fresh = sum(1 for c in usable if not c["cached"])
-        if tts_off:
-            print(f"  발화 음성 : 캐시 {len(usable)}/{len(audio_clips)}개 사용 "
-                  f"(TTS 꺼짐 — 새로 합성하지 않는다)")
-            print("  TTS       : 건너뜀. STT 는 실제로 태운다.")
-        else:
+        if allow_tts:
             print(f"  발화 음성 : {len(audio_clips)}개 준비 "
                   f"(캐시 {len(usable) - fresh}개 재사용, 신규 합성 {fresh}개)")
+        else:
+            print(f"  발화 음성 : 캐시 {len(usable)}/{len(audio_clips)}개 사용 "
+                  f"(새로 합성하지 않는다 — 계약서 5-D)")
         if not usable:
-            print("  중단: 쓸 수 있는 음성이 하나도 없다. TTS 를 켜서 한 번 캐시를 만들어라.",
-                  file=sys.stderr)
+            print(
+                "  중단: 캐시된 음성이 없다. 새로 합성하려면 --allow-tts 가 필요하고,\n"
+                "        그건 발표용 크레딧을 쓰는 일이라 먼저 사용자에게 알려야 한다 (계약서 5-D).",
+                file=sys.stderr,
+            )
             return 2
         print()
 
     results = []
     for run_no in range(1, runs + 1):
         print(f"  [{run_no}/{runs}회차]")
-        result = run_once(run_no, args.host, args.port, audio, log_dir, audio_clips)
+        result = run_once(run_no, args.host, args.port, audio, log_dir, audio_clips,
+                          allow_tts=allow_tts, data_dir=data_dir)
         results.append(result)
         print()
         if run_no < runs:
@@ -1805,11 +1862,19 @@ def main() -> int:
     print(f"\n기록: {show_path(REHEARSAL_DOC)}")
 
     chaos_failed = [c for c in chaos_results if not c["ok"]]
+    clean = passed == len(results) and not chaos_failed
+
+    # 테스트 잔해를 남기지 않는다. 다만 실패했으면 들여다볼 수 있게 남긴다.
+    if clean:
+        shutil.rmtree(data_dir, ignore_errors=True)
+    else:
+        print(f"\n실패해서 테스트 데이터를 남겨 둔다: {data_dir}", file=sys.stderr)
+
     if passed != len(results):
-        print("\nH1 기준 미달 — 3회 연속 통과가 필요하다.", file=sys.stderr)
+        print("H1 기준 미달 — 3회 연속 통과가 필요하다.", file=sys.stderr)
         return 1
     if chaos_failed:
-        print("\n장애 주입에서 데모가 끊겼다:", file=sys.stderr)
+        print("장애 주입에서 데모가 끊겼다:", file=sys.stderr)
         for chaos in chaos_failed:
             print(f"  · {chaos['label']} ({chaos['ref']}) — {chaos['note'][:120]}", file=sys.stderr)
         return 1

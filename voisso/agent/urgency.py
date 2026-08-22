@@ -39,9 +39,8 @@ LOW = "낮음"
 REFERRAL_119 = {"number": "119", "label": "소방·구조"}
 REFERRAL_112 = {"number": "112", "label": "경찰"}
 
-# 응급 안내 문구. **표준어로 만든다** — 사투리 변환은 방언 사전이 맡는다.
-SAFETY_NOTICE_119 = "지금 위험하시면 먼저 119에 전화해 주세요. 민원은 제가 접수해 두겠습니다."
-SAFETY_NOTICE_112 = "지금 위험하시면 먼저 112에 전화해 주세요. 민원은 제가 접수해 두겠습니다."
+# 안내 문구는 session.py 가 **질문 형태**로 만든다("119에 연결해 드릴까요?").
+# 예전의 통보형("먼저 119에 전화해 주세요")은 어르신이 직접 걸어야 해서 걷어냈다.
 
 
 # (단계, 신호 이름, 패턴). 위에서부터 검사하고 가장 높은 단계가 이긴다.
@@ -312,15 +311,6 @@ def assess(
         pressure_count=pressure,
         reemphasize=reemphasize,
     )
-
-
-def safety_notice(urgency: Urgency) -> str:
-    """응급일 때 슬롯 채우기보다 **먼저** 할 안내. 표준어로 만든다."""
-    if not urgency.is_emergency or not urgency.safety_referral:
-        return ""
-    if urgency.safety_referral["number"] == "112":
-        return SAFETY_NOTICE_112
-    return SAFETY_NOTICE_119
 
 
 def revise(current: dict[str, Any], level: str, reason: str, by: str = "officer") -> dict[str, Any]:

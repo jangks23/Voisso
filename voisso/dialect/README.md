@@ -358,6 +358,24 @@ python -m voisso.dialect --roundtrip-report
 python -m unittest discover -s voisso/dialect/tests -t .
 ```
 
+> **비용·데이터 격리 (계약서 5-D·5-E)**
+> 이 모듈은 **TTS/STT 를 부르지 않고 `data/` 에 쓰지도 않는다.** 라우팅을 통해
+> `gb_departments.json` 을 읽기만 한다.
+> 유일한 외부 호출은 `llm.py`(Anthropic)이고 기본 꺼짐이다. 그나마도
+> **CLI 와 테스트는 `VOISSO_DIALECT_LLM` 을 강제로 끈다** — 셸이나 `.env` 에 켜져 있어도
+> 무시한다. 문서 생성 한 번이 46회 호출이 되기 때문이다. 켜려면 `--llm` 을 명시한다.
+>
+> 서버가 필요한 검증을 할 때는 이렇게 띄운다:
+> ```bash
+> VOISSO_TTS_PROVIDER=none VOISSO_DATA_DIR=/tmp/voisso-8022 \
+>   python3 -m server --port 8022
+> ```
+
+
+```bash
+python -m unittest discover -s voisso/dialect/tests -t .
+```
+
 `pytest` 없이 표준 라이브러리 `unittest` 로 돈다. 검사 항목:
 
 - 계약 시그니처, 빈 입력·초장문 방어

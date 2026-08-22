@@ -203,6 +203,7 @@ claude mcp add voisso-gb --env PYTHONPATH=$(pwd) -- python3 -m mcp_server
 | 1·2순위 격차 < 0.10 | 두 부서가 비등하다 — 사람이 골라야 한다 |
 | `grounded: false` | 민원인이 쓴 단어가 사무분장 원문에 아예 없다 (유사어로만 찾은 결과) |
 | 맥락 부족 | 같은 말이 맥락에 따라 소관이 갈린다 |
+| 관할 밖 | 119·시군 소관이라 도청 부서를 배정하지 않는다 |
 
 **맥락에 따라 소관이 갈리는 민원.** "집이 물에 잠겼어요"는 상시 배수 불량일 수도,
 호우 재난 피해일 수도 있다. 전자는 하수도(맑은물정책과), 후자는 자연재난과 소관이다.
@@ -271,7 +272,7 @@ JVM·사전 설치가 필요해 "README만으로 실행"을 깨뜨리므로 쓰�
 ### 검증된 라우팅 결과
 
 수집된 실데이터(96개 부서)로 확인한 결과다.
-회귀 테스트는 `python3 -m mcp_server.regression` 로 재현한다 (**132케이스 100% 통과**).
+회귀 테스트는 `python3 -m mcp_server.regression` 로 재현한다 (**150케이스 100% 통과**).
 그중 13개가 *같은 민원의 표현 변형이 전부 같은 부서로 가는지* 보는 일관성 그룹이다 —
 "표현이 달라도 결과가 같다"가 이 엔진의 품질 기준이다.
 `./scripts/test.sh` 통합 러너에 물려 있어 라우팅이 퇴행하면 러너가 실패한다.
@@ -327,6 +328,27 @@ JVM·사전 설치가 필요해 "README만으로 실행"을 깨뜨리므로 쓰�
 `normalize_dialect` / `to_dialect` 는 `voisso.dialect` 에 위임한다. 모듈이 아직
 없어도 서버는 죽지 않고 원문을 그대로 돌려주며 `available: false` 와 안내 문구를
 싣는다. 모듈이 생기면 매 호출마다 import를 재시도하므로 재시작 없이 붙는다.
+
+## 개발 중 비용·데이터 규칙 (계약서 5-D)
+
+**이 MCP 서버와 라우팅 엔진은 유료 API 를 전혀 쓰지 않는다.** 표준 라이브러리만으로
+동작하고, 네트워크 호출이 한 줄도 없다. 셀프테스트가 매 실행마다 이를 확인한다.
+
+방언 툴(`normalize_dialect` / `to_dialect`)만 `voisso.dialect` 에 위임하는데,
+그쪽은 `VOISSO_DIALECT_LLM=1` + `ANTHROPIC_API_KEY` 가 동시에 있을 때만 LLM 을 탄다.
+**셀프테스트는 `use_llm=False` 로 못 박아** `.env` 를 source 한 셸에서 돌려도 과금되지 않는다.
+
+셀프테스트는 시작할 때 다음을 강제한다.
+
+```
+VOISSO_TTS_PROVIDER=none     VOISSO_STT_PROVIDER=none     VOISSO_DIALECT_LLM=0
+VOISSO_COMPLAINTS_DIR / VOISSO_HANDOFFS_DIR / VOISSO_CALLBACKS_DIR
+    → $TMPDIR/voisso-8021/mcp-selftest-*  (P4 전용, 끝나면 삭제)
+```
+
+읽기는 `data/gb_departments.json` 그대로 쓰고 **쓰기만** 옮긴다.
+`data/complaints`·`handoffs`·`callbacks` 는 사용자 발표용이라 실행 전후 파일 목록이
+바뀌지 않았는지 셀프테스트가 직접 대조한다.
 
 ## 환경변수
 

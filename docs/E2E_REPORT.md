@@ -147,8 +147,8 @@ NotAllowedError: play() failed because the user didn't interact with the documen
 > 아래 재현 절차는 **P7 전용 포트 8024 하나만** 쓴다.
 
 ```bash
-# 1) 내 전용 포트로 서버를 띄운다 (키는 .env)
-python3 -m server --port 8024 &
+# 1) 내 전용 포트로 서버를 띄운다 — **음성은 끈다** (계약 5-D, 종량제 비용)
+VOISSO_TTS_PROVIDER=none python3 -m server --port 8024 &
 MY_SERVER=$!                                  # 내가 띄운 PID 만 기억했다가 나중에 정리한다
 curl -s localhost:8024/api/health | python3 -m json.tool   # degraded:false 확인
 

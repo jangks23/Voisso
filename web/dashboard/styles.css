@@ -137,22 +137,8 @@ body {
 .wfbar, .wfbar-at, .wfbar-label,
 .alt, .alt-main, .alt-name, .alt-ev, .alt-right,
 .hist-row, .hist-when, .hist-who, .hist-what, .hist-ev,
-.tr-cell, .tr-who, .tr-head span,
+.tr-cell, .tr-who,
 .kv dt, .kv dd,
-.ho-head, .ho-who, .ho-who b, .ho-who span, .ho-msg, .ho-text, .ho-raw,
-.ho-idle-text, .ho-field, .ho-bridge, .ho-bridge-k, .ho-bridge-d,
-.field, .field input, .field select,
-.ev-list li, .ev-text, .evidence,
-.note, .evidence-src, .pane-head, .toolbar {
-  min-width: 0;
-}
-
-/* 잘못 들어온 초장문 토큰이 있어도 칸 밖으로 나가지 않게 한다 */
-.card-summary, .card-dept, .d-summary, .assign-name, .alt-name, .alt-ev,
-.hist-what, .hist-ev, .tr-cell, .ho-text, .ho-raw, .evidence, .ev-list li, .ev-text,
-.kv dd, .stat-sub, .summary, .note {
-  overflow-wrap: anywhere;
-}
 h1, h2, h3, h4 { margin: 0; font-weight: 600; letter-spacing: -.01em; }
 ul, ol { margin: 0; padding: 0; list-style: none; }
 button { font: inherit; color: inherit; }
@@ -237,7 +223,6 @@ code { font-family: var(--mono); font-size: .92em; }
 .stat-label { font-size: 12px; color: var(--text-3); font-weight: 600; letter-spacing: .02em; }
 .stat-value { font-size: 24px; font-weight: 700; line-height: 1.15; font-variant-numeric: tabular-nums; }
 .stat-value--warn { color: var(--warn); }
-.stat-value--info { color: var(--accent); }
 .stat-value--ok   { color: var(--ok); }
 .stat-value--live { color: var(--live); }
 .stat-value--emergency { color: var(--emg); }
@@ -271,7 +256,6 @@ code { font-family: var(--mono); font-size: .92em; }
 .dist { display: flex; flex-direction: column; gap: 3px; margin-top: 4px; }
 .dist li { display: grid; grid-template-columns: 1fr 42px; align-items: center; gap: 8px; font-size: 12px; }
 .dist-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; color: var(--text-2); }
-.dist-bar { position: relative; height: 100%; }
 .dist-track {
   height: 5px; border-radius: 3px; background: var(--bg-sunken); overflow: hidden; margin-top: 2px;
 }
@@ -329,6 +313,8 @@ code { font-family: var(--mono); font-size: .92em; }
   background: var(--border-soft);
 }
 .pane { background: var(--bg); min-height: 0; min-width: 0; display: flex; flex-direction: column; }
+/* 목록 패널 폭을 기준으로 안쪽 요소가 배치를 바꿀 수 있게 한다(컨테이너 쿼리 기준점). */
+.pane--list { container-type: inline-size; container-name: list; }
 .pane-head { flex: 0 0 auto; }
 .list { flex: 1 1 auto; min-height: 0; }
 .pane-head {
@@ -359,9 +345,23 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 
 /* 연결 대기 알림 띠 — "지금 나를 기다리는 사람이 있다" */
+/*
+ * 배치를 grid 로 못박는다.
+ * flex + flex-wrap 으로는 가운데 설명이 0 까지 줄어들어 줄바꿈 임계에 못 가고
+ * 글자 단위로 쪼개진다(nowrap 형제 + 줄어드는 가운데 조합의 전형적인 증상).
+ *
+ * 기준은 **뷰포트가 아니라 이 띠가 놓인 목록 패널의 폭**이다.
+ * 넓은 화면에서도 목록 패널은 300~380px 라, 미디어쿼리로는 이 문제를 못 잡는다.
+ * 그래서 기본을 2행으로 두고, 패널이 넉넉할 때만 컨테이너 쿼리로 1행으로 편다.
+ *   기본   :  [건수            ] [동작]
+ *             [설명                   ]
+ *   넓을 때:  [건수] [설명            ] [동작]
+ */
 .wait-band {
-  display: flex; align-items: center; gap: 10px; flex-wrap: wrap;
-  width: 100%; margin: 8px 8px 0; width: calc(100% - 16px);
+  display: grid; align-items: center; gap: 3px 10px;
+  grid-template-columns: minmax(0, 1fr) auto;
+  grid-template-areas: "n act" "msg msg";
+  width: calc(100% - 16px); margin: 8px 8px 0;
   padding: 10px 13px; min-height: 44px;
   border: 1px solid var(--warn); border-left: 4px solid var(--warn);
   border-radius: 8px; background: var(--warn-soft);
@@ -375,11 +375,28 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 .wait-band.is-emergency .wait-n { color: var(--emg); font-size: 16px; }
 .wait-band.is-emergency .wait-msg { color: var(--text); font-weight: 600; }
-.wait-n { font-size: 14.5px; font-weight: 800; color: var(--warn); white-space: nowrap; }
-.wait-msg { font-size: 12.5px; color: var(--text-2); min-width: 0; flex: 1; }
+.wait-n {
+  grid-area: n; font-size: 14.5px; font-weight: 800; color: var(--warn);
+  white-space: nowrap; min-width: 0; overflow: hidden; text-overflow: ellipsis;
+}
+.wait-msg {
+  grid-area: msg; font-size: 12.5px; color: var(--text-2); min-width: 0;
+  /* 아무리 좁아도 두 줄까지만. 글자 단위로 쪼개지지 않는다. */
+  display: -webkit-box; -webkit-line-clamp: 2; -webkit-box-orient: vertical; overflow: hidden;
+}
 .wait-act {
-  font-size: 12px; font-weight: 700; color: var(--accent); white-space: nowrap;
-  text-decoration: underline;
+  grid-area: act; font-size: 12px; font-weight: 700; color: var(--accent);
+  white-space: nowrap; text-decoration: underline; justify-self: end;
+}
+
+/* 목록 패널이 넉넉하면 한 줄로 편다. 설명 칸에 최소 200px 를 보장한다. */
+@container list (min-width: 560px) {
+  .wait-band {
+    grid-template-columns: auto minmax(200px, 1fr) auto;
+    grid-template-areas: "n msg act";
+    gap: 10px;
+  }
+  .wait-msg { -webkit-line-clamp: 1; }
 }
 
 /* ---------- 민원 카드 ---------- */
@@ -452,7 +469,6 @@ code { font-family: var(--mono); font-size: .92em; }
 .card.urg-emergency { border-left-width: 6px; border-left-color: var(--emg); }
 .card.urg-high { border-left-width: 4px; border-left-color: var(--warn); }
 .tag--mock     { color: var(--warn); background: var(--warn-soft); border-color: transparent; }
-.badge--urgent     { color: var(--danger); background: var(--danger-soft); }
 .badge--new {
   color: #fff; background: var(--danger); letter-spacing: .04em;
   font-size: 12px; padding: 1.5px 7px;
@@ -640,14 +656,6 @@ code { font-family: var(--mono); font-size: .92em; }
   cursor: pointer; text-decoration: underline;
 }
 /* 표준어 → 사투리 안내 (연결 전에도 보여 준다) */
-.ho-bridge-inline {
-  display: block; margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55;
-}
-.ho-bridge-inline b { color: var(--quote-text); }
-.ho--form .ho-bridge-inline {
-  margin: 0 0 12px; padding: 9px 12px; border-radius: 8px;
-  background: var(--quote-bg); border-left: 3px solid var(--quote-line);
-}
 
 /* 연결 폼 */
 .ho--form { padding: 16px 18px; }
@@ -680,12 +688,6 @@ code { font-family: var(--mono); font-size: .92em; }
 .ho-close { margin-left: auto; }
 
 /* 통역 안내 — 이 기능의 핵심 가치를 화면에 못박는다 */
-.ho-bridge {
-  margin: 0; padding: 10px 16px; border-bottom: 1px solid var(--border-soft);
-  display: flex; flex-direction: column; gap: 2px; background: var(--quote-bg);
-}
-.ho-bridge-k { font-size: 14px; font-weight: 700; color: var(--quote-text); }
-.ho-bridge-d { font-size: 12px; color: var(--text-2); }
 
 .ho-notice {
   margin: 0; padding: 8px 16px; font-size: 12.5px; font-weight: 600;
@@ -708,17 +710,6 @@ code { font-family: var(--mono); font-size: .92em; }
 .ho-msg.is-caller .ho-role { color: var(--accent); }
 .ho-at { font-size: 12px; color: var(--text-3); font-variant-numeric: tabular-nums; }
 .ho-text { margin: 0; font-size: 14.5px; line-height: 1.55; }
-.ho-raw-toggle {
-  margin-top: 5px; padding: 4px 0; border: 0; background: none; cursor: pointer;
-  display: inline-flex; align-items: center; min-height: 32px;
-  font-size: 12px; font-weight: 700; color: var(--accent);
-}
-.ho-raw-toggle:hover { text-decoration: underline; }
-.ho-raw {
-  margin: 4px 0 0; padding: 7px 10px; border-radius: 6px;
-  background: var(--quote-bg); border-left: 3px solid var(--quote-line);
-  font-size: 13.5px; color: var(--quote-text); line-height: 1.55;
-}
 
 /* 입력 */
 .ho-input {
@@ -772,22 +763,15 @@ code { font-family: var(--mono); font-size: .92em; }
 .cb--form .cb-pstn { margin: 12px -18px -16px; border-radius: 0; }
 
 /* 원문 ↔ 사투리 대조 — "내가 쓴 대로 전달됐는가" */
-.cb-brief {
-  display: grid; grid-template-columns: minmax(0,1fr) auto minmax(0,1fr);
-  gap: 12px; align-items: stretch; padding: 14px 16px;
-  border-bottom: 1px solid var(--border-soft);
-}
-.cb-brief-col {
-  min-width: 0; padding: 11px 13px; border-radius: 8px;
-  background: var(--bg-sunken); border: 1px solid var(--border-soft);
-}
-.cb-brief-col.is-dialect { background: var(--quote-bg); border-color: var(--quote-line); }
+.cb-brief { padding: 14px 16px; border-bottom: 1px solid var(--border-soft); min-width: 0; }
+.cb-sent { margin-top: 8px; }
+.cb-sent summary { cursor: pointer; font-size: 12px; color: var(--text-3); min-height: 32px; padding: 6px 0; }
+.cb-sent p { margin: 4px 0 0; padding: 8px 11px; border-radius: 6px;
+  background: var(--quote-bg); color: var(--quote-text); font-size: 13.5px; line-height: 1.55; }
 .cb-brief-label {
   display: block; font-size: 12px; font-weight: 700; color: var(--text-3); margin-bottom: 4px;
 }
-.cb-brief-col.is-dialect .cb-brief-label { color: var(--quote-text); }
 .cb-brief-text { margin: 0; font-size: 14.5px; line-height: 1.6; overflow-wrap: anywhere; }
-.cb-brief-arrow { align-self: center; color: var(--text-3); font-size: 18px; }
 .cb-verify {
   margin: 0; padding: 8px 16px; font-size: 12.5px; color: var(--text-2);
   border-bottom: 1px solid var(--border-soft);
@@ -815,7 +799,6 @@ code { font-family: var(--mono); font-size: .92em; }
 }
 .cb-q-text { margin: 0; font-size: 14.5px; line-height: 1.55; overflow-wrap: anywhere; }
 .cb-q-meta { display: flex; gap: 10px; flex-wrap: wrap; margin-top: 4px; font-size: 12px; color: var(--text-3); }
-.cb-q-raw { overflow-wrap: anywhere; }
 
 .cb-log { padding: 0 16px 12px; }
 .cb-log summary { cursor: pointer; font-size: 13px; color: var(--text-2); padding: 8px 0; min-height: 36px; }
@@ -934,42 +917,18 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
 .tag--prev { color: var(--accent); border-color: var(--accent-line); background: var(--accent-soft); }
 
 /* 전사 */
-.tr-toolbar { display: flex; align-items: center; gap: 6px; margin-bottom: 8px; flex-wrap: wrap; }
-.seg { display: inline-flex; flex-wrap: wrap; border: 1px solid var(--border); border-radius: 6px; overflow: hidden; }
-.seg button {
-  border: 0; background: var(--bg-elev); min-height: 44px; padding: 0 14px;
-  font-size: 13px; cursor: pointer; color: var(--text-2);
-  border-right: 1px solid var(--border);
-}
-.seg button:last-child { border-right: 0; }
-.seg button.is-on { background: var(--accent); color: #fff; font-weight: 600; }
-:root[data-theme="dark"] .seg button.is-on { color: #0d1218; }
-@media (prefers-color-scheme: dark) { :root:not([data-theme="light"]) .seg button.is-on { color: #0d1218; } }
 
 /* 표가 아무리 좁아져도 페이지 전체가 가로로 밀리면 안 된다.
    넘칠 때는 이 컨테이너 안에서만 가로 스크롤한다. */
 .scroll-x { overflow-x: auto; max-width: 100%; -webkit-overflow-scrolling: touch; }
 .transcript { border: 1px solid var(--border); border-radius: 8px; overflow: hidden; background: var(--bg-elev); min-width: 0; }
-.tr-head, .tr-row { display: grid; grid-template-columns: 62px minmax(0,1fr) minmax(0,1fr); }
-.tr-head { background: var(--bg-sunken); border-bottom: 1px solid var(--border); }
-.tr-head span { padding: 6px 12px; font-size: 12px; font-weight: 700; color: var(--text-3); }
-.tr-head span + span { border-left: 1px solid var(--border); }
+.tr-row { display: grid; grid-template-columns: 62px minmax(0, 1fr); }
 .tr-row { border-bottom: 1px solid var(--border-soft); }
 .tr-row:last-child { border-bottom: 0; }
 .tr-row.is-agent { background: var(--bg-sunken); }
 .tr-who { padding: 9px 12px; font-size: 12px; font-weight: 700; color: var(--text-3); }
 .tr-row.is-caller .tr-who { color: var(--accent); }
-.tr-cell { padding: 9px 12px; border-left: 1px solid var(--border-soft); font-size: 13.5px; line-height: 1.6; }
-.tr-cell--dialect { color: var(--text); }
-.tr-cell--standard { color: var(--text-2); }
-.transcript.mode-dialect  .tr-cell--standard,
-.transcript.mode-dialect  .tr-head span:nth-child(3) { display: none; }
-.transcript.mode-standard .tr-cell--dialect,
-.transcript.mode-standard .tr-head span:nth-child(2) { display: none; }
-.transcript.mode-dialect  .tr-head, .transcript.mode-dialect  .tr-row,
-.transcript.mode-standard .tr-head, .transcript.mode-standard .tr-row {
-  grid-template-columns: 62px minmax(0,1fr);
-}
+.tr-cell { padding: 9px 12px; border-left: 1px solid var(--border-soft); font-size: 14.5px; line-height: 1.6; min-width: 0; overflow-wrap: anywhere; }
 
 /* 신고자 */
 .kv { display: grid; grid-template-columns: max-content 1fr; gap: 5px 18px; font-size: 13.5px; align-items: baseline; }
@@ -1000,7 +959,9 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
  * 머리 영역만 880px 를 먹고 목록·상세가 0px 로 뭉개졌다.
  * 그래서 좁거나 낮으면 머리 영역을 한 줄짜리 요약 띠로 압축한다.
  */
-@media (max-width: 1180px), (max-height: 940px) {
+/* 세로 임계를 넉넉히 잡는다. 발표용 iframe 은 1920 화면에서도 높이가 1000px 아래로 내려간다
+   (상단 바를 빼기 때문). 폭만 보고 판단하면 넓은데 낮은 상자를 놓친다. */
+@media (max-width: 1180px), (max-height: 1040px) {
   .stats {
     display: flex; flex-wrap: nowrap; overflow-x: auto; gap: 0;
     scrollbar-width: thin;
@@ -1087,7 +1048,6 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
 }
 @media (max-width: 860px) {
   .cb-brief { grid-template-columns: minmax(0,1fr); }
-  .cb-brief-arrow { transform: rotate(90deg); }
   .ho-msg { max-width: 100%; }
   .ho--idle { flex-direction: column; align-items: stretch; }
   .hist-row { grid-template-columns: 1fr; gap: 2px; }
@@ -1096,11 +1056,5 @@ blockquote.evidence > :last-child  { margin-bottom: 0; }
 @media (max-width: 860px) {
   .layout { grid-template-columns: 1fr; }
   .pane--list { max-height: 44vh; }
-  .tr-head, .tr-row { grid-template-columns: 56px minmax(0,1fr) !important; }
-  .transcript.mode-both .tr-head span:nth-child(3) { display: none; }
-  .transcript.mode-both .tr-cell--standard {
-    grid-column: 2; border-left: 0; padding-top: 0; font-size: 12.5px;
-  }
-  .transcript.mode-both .tr-row { grid-template-rows: auto auto; }
   .detail { padding: 14px 16px 32px; }
 }

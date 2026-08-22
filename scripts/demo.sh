@@ -4,6 +4,10 @@
 #
 #   ./scripts/demo.sh                # 데이터 준비 -> 서버 기동 -> 브라우저 열기
 #   ./scripts/demo.sh --no-browser   # 브라우저는 열지 않는다 (원격/CI)
+#   ./scripts/demo.sh --voice        # 음성(TTS)을 켠다 — 발표·촬영 전용
+#
+# 기본은 음성 없음이다. 타입캐스트는 종량제고 크레딧은 발표·촬영용이라
+# 개발 중에 소진하면 안 된다 (계약서 5-D).
 #
 # 발표장 네트워크가 끊겨도 data/gb_departments.json 이 이미 있으면 데모는 돈다.
 # 각 단계가 무엇을 하는지 화면에 출력한다. 실패하면 다음에 뭘 해야 하는지 알려준다.
@@ -16,15 +20,17 @@ ROOT_DIR="$(cd -- "${SCRIPT_DIR}/.." && pwd)"
 cd "${ROOT_DIR}" || exit 1
 
 OPEN_BROWSER=1
+ALLOW_TTS=0
 for arg in "$@"; do
   case "${arg}" in
     --no-browser) OPEN_BROWSER=0 ;;
+    --voice)      ALLOW_TTS=1 ;;
     -h|--help)
-      sed -n '3,10p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
+      sed -n '3,11p' "${BASH_SOURCE[0]}" | sed 's/^# \{0,1\}//'
       exit 0 ;;
     *)
       echo "알 수 없는 옵션: ${arg}" >&2
-      echo "사용법: ./scripts/demo.sh [--no-browser]" >&2
+      echo "사용법: ./scripts/demo.sh [--no-browser] [--voice]" >&2
       exit 1 ;;
   esac
 done
@@ -242,10 +248,24 @@ if STATUS="$(health)"; then
   info "${STATUS}"
   info "이 서버는 스크립트를 종료해도 계속 돈다"
 else
-  info "기동 명령: ${PY} -m server --host ${HOST} --port ${PORT}"
+  # 계약서 5-D — 기본은 음성 없음. .env 의 typecast 설정을 그대로 태우면
+  # 데모를 띄울 때마다 발표용 크레딧이 깎인다. --voice 로만 연다.
+  if [ "${ALLOW_TTS}" = "1" ]; then
+    TTS_ENV=""
+    warn "음성(TTS)을 켠다 — 타입캐스트 크레딧이 소모된다 (발표·촬영용)"
+  else
+    TTS_ENV="VOISSO_TTS_PROVIDER=none"
+    info "음성 없이 띄운다 (계약서 5-D). 발표·촬영 때는 --voice 를 붙여라."
+  fi
+  info "기동 명령: ${TTS_ENV} ${PY} -m server --host ${HOST} --port ${PORT}"
   info "로그 파일: ${LOG_FILE}"
   : > "${LOG_FILE}"
-  "${PY}" -m server --host "${HOST}" --port "${PORT}" >>"${LOG_FILE}" 2>&1 &
+  if [ "${ALLOW_TTS}" = "1" ]; then
+    "${PY}" -m server --host "${HOST}" --port "${PORT}" >>"${LOG_FILE}" 2>&1 &
+  else
+    VOISSO_TTS_PROVIDER=none \
+      "${PY}" -m server --host "${HOST}" --port "${PORT}" >>"${LOG_FILE}" 2>&1 &
+  fi
   SERVER_PID=$!
   STARTED_BY_US=1
 

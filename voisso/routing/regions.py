@@ -146,6 +146,20 @@ def detect(text: str) -> Region | None:
     return None
 
 
+# 검색어에서 걸러낼 지명 조각. 부서 사무분장에는 지명이 없다.
+_PLACE_TOKENS: frozenset[str] = frozenset(
+    [r.name for r in REGIONS]
+    + [r.stem for r in REGIONS]
+    + [r.stem + suffix for r in REGIONS for suffix in ("시청", "군청", "시내", "읍", "면")]
+    + ["경상북도", "경북", "경북도", "도청", "군위", "군위군"]
+)
+
+
+def is_place_token(token: str) -> bool:
+    """검색에서 빼야 할 지명 어절인가."""
+    return token in _PLACE_TOKENS
+
+
 def detect_transferred(text: str) -> tuple[str, str] | None:
     """경북에서 빠져나간 시군(군위)을 언급했는지."""
     if not text:

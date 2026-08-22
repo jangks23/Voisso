@@ -35,7 +35,7 @@ from dataclasses import dataclass, field
 from typing import Any
 
 from . import tokenizer
-from . import concepts
+from . import concepts, regions
 from .lexicon import expand_query
 from .privacy import scrub
 
@@ -174,6 +174,12 @@ class RoutingIndex:
     def _query_vector(self, query: str) -> tuple[Counter, dict[str, float], float, list[str], set[str], set[str]]:
         """(가중 tf, 코사인 벡터, 노름, 원어절, 접지된 항, 개념 사전이 확인한 항)"""
         base_tokens = tokenizer.analyze(query)
+
+        # 지명은 검색에서 뺀다. 96개 부서 사무분장에 지명은 없으므로
+        # 점수에 기여할 수 없고, 조각만 남아 오탐을 만든다 —
+        # "안동시" 의 '동시' 가 맑은물정책과에 걸리던 경로가 그것이다.
+        base_tokens = [t for t in base_tokens if not regions.is_place_token(t)]
+
         expanded = expand_query(base_tokens)   # {어절: 가중치}, 원어절은 1.0
 
         # 개념 사전이 "물이 안 빠진다 = 하수도/배수" 같은 다리를 놓는다.

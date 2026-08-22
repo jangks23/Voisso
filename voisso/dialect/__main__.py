@@ -7,12 +7,22 @@
     python -m voisso.dialect --stats             사전 규모·도메인·출처 분포
     python -m voisso.dialect -d "접수해 드리겠습니다"   표준어 → 경북
     python -m voisso.dialect -n "어데서 물이 새노"      사투리 → 표준어
+
+비용 규칙 (계약서 5-D)
+----------------------
+이 CLI 는 **LLM 다듬기를 기본으로 끈다.** 셸이나 ``.env`` 에 ``VOISSO_DIALECT_LLM=1``
+이 있어도 무시한다. 문서 생성 한 번이 Anthropic API 를 수십 번 부르기 때문이다
+(``--samples`` 46회, ``--handoff`` 30회, ``--callback`` 34회).
+
+켜려면 명시적으로 ``--llm`` 을 준다. 방언 레이어는 TTS/STT 를 부르지 않으므로
+타입캐스트 크레딧과는 무관하다.
 """
 
 from __future__ import annotations
 
 import argparse
 import json
+import os
 import sys
 from collections import Counter
 
@@ -572,7 +582,16 @@ def main(argv: list[str] | None = None) -> int:
     parser.add_argument("--roundtrip-report", action="store_true", help="왕복 보존 통과율")
     parser.add_argument("--stats", action="store_true", help="사전 규모·분포")
     parser.add_argument("-v", "--verbose", action="store_true", help="적용된 규칙을 함께 표시")
+    parser.add_argument("--llm", action="store_true",
+                        help="LLM 다듬기를 켠다 (기본 꺼짐 — 계약서 5-D 비용 규칙)")
     args = parser.parse_args(argv)
+
+    # 계약서 5-D. 스크립트는 기본값이 "외부 호출 없음" 이어야 한다.
+    # 셸이나 .env 의 설정을 덮어쓴다 — 문서 생성 한 번에 수십 번 불릴 수 있다.
+    if not args.llm:
+        os.environ["VOISSO_DIALECT_LLM"] = "0"
+    else:
+        print("[비용 주의] LLM 다듬기를 켰다. Anthropic API 가 호출된다.", file=sys.stderr)
 
     if args.to_dialect:
         _convert_one(args.to_dialect, "to_dialect", args.verbose)

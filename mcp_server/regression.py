@@ -228,6 +228,110 @@ CASES: list[dict[str, Any]] = [
         "tag": "응급",
     },
 
+    # ── 119 소관 응급 — 억지 배정 대신 119 안내 ────────────────────
+    #
+    # 실사용에서 나온 오배정이다.
+    #   "안동시 옥동 주택 내 가스 냄새 발생" -> 안전행정실 사회재난과
+    #        근거 "승강기 시설 및 사업자 관리, 승강기 안전관리 지도/점검…"
+    #   "가스 냄새 및 인명 고립"             -> 기후환경국 환경관리과
+    #        근거 "배출업소 통합지도점검계획 수립…"
+    # 근거가 민원과 무관하다. 도청 사무분장에 화재·가스·붕괴·고립을 맡는 부서가
+    # 없으므로 **부서를 배정하지 않고** 119 를 안내하는 것이 정답이다.
+    # (접수 자체는 막지 않는다 — outcome 만 external_referral 이고 민원카드는 남는다.)
+    {
+        "id": "e119-gas-summary",
+        "text": "안동시 옥동 주택 내 가스 냄새 발생",
+        "expect": "external",
+        "note": "실사용 오배정 #0178 — 승강기 관리 근거로 배정됐던 건",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-gas-trapped",
+        "text": "가스 냄새 및 인명 고립",
+        "expect": "external",
+        "note": "실사용 오배정 #0145/0147/0151/0153/0155 — 배출업소 지도점검 근거",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-fire",
+        "text": "주택 화재 발생 및 인명 대피",
+        "expect": "external",
+        "note": "'대피'가 storm_damage 를 깨워 자연재난과로 0.89 가던 건",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-collapse",
+        "text": "건물 붕괴 위험으로 주민 대피",
+        "expect": "external",
+        "note": "'건물'의 물이 storm_damage 물 패턴에 걸리던 건",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-electric",
+        "text": "전선 단선으로 감전 위험 발생",
+        "expect": "external",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-sinkhole",
+        "text": "도로 지반 함몰 발생",
+        "expect": "external",
+        "tag": "119소관",
+    },
+    # 활용형 구멍으로 놓쳤던 것들 (발표 전 최종 점검에서 발견)
+    {
+        "id": "e119-smoke-formal",
+        "text": "옆집에서 연기가 납니다",
+        "expect": "external",
+        "note": "'납니다' 활용형이 빠져 no_match 였다",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-fire-past",
+        "text": "불이 났어요",
+        "expect": "external",
+        "note": "'불이 났' 사이의 조사 '이' 때문에 안 걸렸다",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-tilt",
+        "text": "건물이 기울었습니다",
+        "expect": "external",
+        "note": "붕괴 조짐에 '기울' 이 빠져 있었다",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-cannot-exit",
+        "text": "못 나오고 있어요",
+        "expect": "external",
+        "note": "'나오' 활용형 누락",
+        "tag": "119소관",
+    },
+
+    # ── 119 소관과 헷갈리면 안 되는 것들 (도청 소관이 맞다) ──────────────
+    {
+        "id": "e119-not-wall",
+        "text": "축대가 무너질 것 같습니더",
+        "expect": ["자연재난과"],
+        "note": "축대·옹벽·비탈면은 도청 급경사지정비 소관. 건물 붕괴(119)와 구분돼야 한다",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-not-storm",
+        "text": "태풍으로 침수돼 주민이 대피했습니다",
+        "expect": ["자연재난과"],
+        "note": "비·물 맥락이 있는 대피는 자연재난 소관이 맞다",
+        "tag": "119소관",
+    },
+    {
+        "id": "e119-not-drain",
+        "text": "안동시 옥동 주택가 배수 불량, 장마철부터 반복",
+        "expect": ["맑은물정책과"],
+        "require_confident": True,
+        "note": "민원카드 요약은 공문체다. '배수 불량' 같은 행정 문체도 잡아야 한다",
+        "tag": "119소관",
+    },
+
     # ── 홀드아웃 (파라미터 튜닝 후에 추가한 문장들) ────────────────────
     {
         "id": "hold-senior-center",
@@ -570,7 +674,10 @@ def judge(case: dict[str, Any]) -> dict[str, Any]:
     elif expect == "external":
         # 지자체 소관이 아니다. 부서를 배정하지 않고 제 기관으로 안내해야 한다.
         action = result.get("next_action", {})
+        # 부서를 배정하지 않았고(무관한 근거가 붙을 수 없다), 다음 행동이 있어야 한다.
         ok = outcome == "external_referral" and not matches and bool(action.get("instruction"))
+        if ok and "119" not in (action.get("instruction", "") + action.get("phone", "")):
+            ok = False
         got = ("관할밖 안내" if outcome == "external_referral"
                else (f"{top['full_name']} ({top['score']:.2f})" if top else "매칭 0건"))
     elif expect == "referral":
