@@ -345,6 +345,7 @@ STT 원문을 정규화 없이 바로 라우팅하는 경로가 있어 값이 �
 ### (8) 재현 가능하다
 
 ```bash
+python3 -m mcp_server.verify_connection # MCP 실연결 검증 (설정·로그·프로토콜 왕복)
 ./scripts/test.sh                       # 통합 러너 (회귀가 여기 물려 있다)
 python3 -m mcp_server.regression        # 라우팅 회귀 132케이스, 통과율 출력
 python3 -m mcp_server.regression --all  # 케이스별 근거까지

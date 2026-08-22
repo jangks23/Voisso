@@ -28,7 +28,7 @@ from . import integrations, prompts
 from .complaint import build_complaint
 from .engine import get_engines
 from .slots import SLOT_ORDER, Slots, looks_finished
-from .urgency import Urgency, assess, safety_notice
+from .urgency import Urgency, assess, has_pressure, safety_notice
 from .usage import PROCESS_TOTAL, Usage
 
 log = logging.getLogger("voisso.agent.session")
@@ -57,6 +57,21 @@ WRAPUP_QUESTION = "더 얘기하실 사항 있으실까요?"
 # 정보를 더 받아야 하는 턴인데 선언으로 끝났을 때 붙이는 질문.
 # 프롬프트로 지시해도 모델은 가끔 선언으로 끝낸다. 후처리로 확실히 막는다.
 NUDGE_QUESTION = "혹시 더 말씀해 주실 수 있을까요?"
+
+# ── 응급 모드 문구 ──────────────────────────────────────────────────────
+# 응급에서는 **질문이 아니라 상태**로 답한다. 물이 차오르는 사람에게
+# "더 하실 말씀 있으신가예?" 를 되묻는 것은 대화 실패가 아니라 안전 실패다.
+# 그래서 "항상 질문으로 끝내라" 규칙을 응급 경로에는 적용하지 않는다.
+# 재촉이 반복될 때 **같은 문장을 되풀이하면 시스템이 고장 난 것처럼 들린다.**
+# 뜻은 같고 표현만 바꾼 것들을 돌려 쓴다. 셋 다 "무엇이 되어 있는지 + 지금 뭘 하면
+# 되는지"를 담고, 처리 결과는 약속하지 않는다.
+EMERGENCY_STATUS_VARIANTS = (
+    "접수됐습니다. 담당자에게 바로 넘겼습니다. 위험하시면 지금 {number}를 눌러 주세요.",
+    "접수는 끝났습니다. 담당자가 지금 확인하고 있습니다. 위험하시면 {number}를 먼저 눌러 주세요.",
+    "담당자에게 전달해 두었습니다. 여기서 더 하실 일은 없습니다. 위험하시면 {number}를 눌러 주세요.",
+)
+# 위치는 출동에 필요하다. 응급에서 유일하게 계속 묻는 항목이고, 한 번에 하나만 묻는다.
+EMERGENCY_ASK_WHERE = "접수했습니다. 어디신지만 알려 주시겠어요?"
 # 슬롯별로 더 자연스러운 되물음.
 SLOT_NUDGE = {
     "what": "어떤 일 때문에 불편하신지 말씀해 주시겠어요?",
@@ -108,6 +123,15 @@ class ConversationSession:
         self.unclear_streak = 0
         # 슬롯이 다 찬 뒤 "더 하실 말씀?" 을 몇 번 물었는지.
         self.wrapup_rounds = 0
+        # 재촉이 나온 발화 수. 턴을 넘긴 반복만 센다.
+        self.pressure_turns = 0
+        # 응급 상태 안내를 몇 번 했는지. 문장을 돌려 쓰는 데 쓴다.
+        self.status_sent = 0
+        # 재강조로 안전 안내를 다시 붙인 적이 있는지. 매 턴 되풀이하지 않는다.
+        self.reemphasized_once = False
+        # 모델이 직전 턴에 한 말. 위험 인지 여부를 보는 데 쓴다.
+        # (우리가 앞에 붙이는 안전 안내는 제외한 **모델 원문**이다)
+        self.last_llm_reply = ""
         # 슬롯에 안 맞는 추가 정보. 민원카드 notes 로 나간다.
         self.notes: list[dict[str, Any]] = []
         # 긴급도는 통화 전체를 누적해서 판정한다. 뒤늦게 나오는 말이 더 위험할 수 있다.
@@ -218,6 +242,8 @@ class ConversationSession:
             {"role": "caller", "dialect": caller_dialect, "standard": caller_standard}
         )
         self.turn_count += 1
+        if has_pressure(caller_dialect) or has_pressure(caller_standard):
+            self.pressure_turns += 1
 
         self.last_rescoring = rescored
         caller_turn = self.build_caller_turn(
@@ -226,18 +252,31 @@ class ConversationSession:
         with _timed(timings, "llm_ms"):
             decision = self._decide()
         reply = self._apply_decision(decision)
-        done, reply = self._resolve_done(decision, caller_standard)
 
-        # 응급이면 안내를 응답 맨 앞에 붙인다. 접수보다 먼저다.
+        # **긴급도를 먼저 판정한다.** 종료 판단이 이 결과에 달려 있다.
+        # (예전에는 순서가 반대라 응급 분기가 한 턴 낡은 값을 봤다.)
         notice = self._update_urgency()
+
+        done, reply = self._resolve_done(decision, caller_standard)
+        emergency = self.urgency.is_emergency
+
+        # 안전 안내는 응답 맨 앞에 붙인다. 접수보다 먼저다.
         if notice:
             reply = f"{notice} {reply}".strip()
-            done = False  # 안전 안내를 한 턴에 통화를 끝내지 않는다
+            # 첫 안내 턴에는 통화를 끝내지 않는다. 다만 **재강조는 다르다** —
+            # 이미 안내한 상황에서 재촉이 반복되는 것이라, 접수 확정을 미루면
+            # 안 된다. 카드를 만들어 담당자에게 넘기는 편이 낫다.
+            if not self.urgency.reemphasize:
+                done = False
 
         # 아직 받을 정보가 남았으면 질문으로 끝낸다.
-        reply = self._ensure_question(reply, done=done, safety=bool(notice))
+        # **응급은 예외다** — 재촉에는 질문이 아니라 상태로 답해야 한다.
+        reply = self._ensure_question(
+            reply, done=done, safety=bool(notice) or emergency
+        )
 
-        if not done:
+        # 응급에서는 위치만 묻고 그 기록은 _emergency_reply 가 이미 했다.
+        if not done and not emergency:
             # 이번 응답이 어떤 슬롯을 물었는지 기록해 둔다.
             # 같은 것을 세 번 묻지 않기 위한 카운터다.
             pending = self.slots.next_slot()
@@ -334,6 +373,8 @@ class ConversationSession:
             {"role": "caller", "dialect": caller_dialect, "standard": caller_standard}
         )
         self.turn_count += 1
+        if has_pressure(caller_dialect) or has_pressure(caller_standard):
+            self.pressure_turns += 1
         self.last_rescoring = rescored
         caller_turn = self.build_caller_turn(
             caller_dialect, caller_standard, source, stt_raw, provider_name
@@ -379,10 +420,11 @@ class ConversationSession:
                     index += 1
 
         self._apply_decision(decision)
+        notice = self._update_urgency()
         done, _ = self._resolve_done(decision, caller_standard)
-        if self._update_urgency():
+        if notice and not self.urgency.reemphasize:
             done = False
-        if not done:
+        if not done and not self.urgency.is_emergency:
             pending = self.slots.next_slot()
             if pending:
                 self.slots.record_ask(pending)
@@ -409,6 +451,7 @@ class ConversationSession:
             "audio_mime": None,
             "done": bool(done),
             "slots": self.slots.as_dict(),
+            "urgency": self.urgency.as_dict(),
             "meta": {
                 "engine": self.engine_used,
                 "streamed": streamer is not None and bool(spoken),
@@ -560,6 +603,34 @@ class ConversationSession:
             if e.get("role") == "caller"
         )
 
+    def _emergency_reply(self, caller_text: str) -> tuple[bool, str]:
+        """응급 모드의 응답을 정한다. `(종료 여부, 할 말)`.
+
+        계약서 5-A: 응급으로 판정되면 대화 모드가 바뀐다.
+        - 슬롯 채우기 중단. 연락처·시점을 더 묻지 않는다.
+        - **위치만 예외** — 출동에 필요하다. 한 번에 하나만 묻는다.
+        - **마무리 질문을 하지 않는다.** 접수를 즉시 확정하고 넘긴다.
+        - 재촉에는 질문이 아니라 **지금 무엇이 되어 있는지**로 답한다.
+        """
+        number = (self.urgency.safety_referral or {}).get("number", "119")
+        variant = EMERGENCY_STATUS_VARIANTS[self.status_sent % len(EMERGENCY_STATUS_VARIANTS)]
+        status = variant.format(number=number)
+        self.status_sent += 1
+
+        if self.turn_count >= MAX_TURNS or self._check_budget():
+            return True, status
+
+        # 위치를 아직 못 받았고 두 번 넘게 묻지 않았으면 그것만 묻는다.
+        if not self.slots.is_filled("where") and "where" not in self.slots.given_up:
+            self.slots.record_ask("where")
+            if has_pressure(caller_text):
+                # 재촉 중이다. 상태를 먼저 알리고 위치만 덧붙인다.
+                return False, f"{status} {EMERGENCY_ASK_WHERE}"
+            return False, EMERGENCY_ASK_WHERE
+
+        # 더 물을 것이 없다. 마무리 질문 루프에 들어가지 않고 즉시 확정한다.
+        return True, status
+
     def _update_urgency(self) -> str:
         """긴급도를 다시 판정하고, 필요하면 안전 안내 문구를 돌려준다.
 
@@ -568,9 +639,23 @@ class ConversationSession:
         이 시스템의 가장 큰 위험이기 때문이다.
         """
         previous = self.urgency
-        self.urgency = assess(self._caller_text())
+        self.urgency = assess(
+            self._caller_text(),
+            pressure_turns=self.pressure_turns,
+            # 모델이 위험을 인지했는지 본다. 규칙이 못 잡은 위험을
+            # 모델이 알아채는 경우가 있다(안전 쪽으로만 올린다).
+            llm_reply=self.last_llm_reply,
+        )
         # 이력은 이어 간다.
         self.urgency.history = list(previous.history)
+
+        # 이미 응급인데 또 재촉이 오면 안내를 다시 강조한다.
+        # **다만 한 번만** 다시 읽어 준다 — 매 턴 같은 안내를 되풀이하면
+        # 고장 난 것처럼 들린다. 이후로는 reemphasize 플래그로 P7 이
+        # 화면의 119 버튼을 계속 강조한다.
+        if self.urgency.reemphasize and not self.reemphasized_once:
+            self.reemphasized_once = True
+            self.safety_announced = False
 
         if self.urgency.is_emergency and not self.safety_announced:
             self.safety_announced = True
@@ -591,6 +676,7 @@ class ConversationSession:
         말로 바꾼다.
         """
         self.engine_used = decision.engine
+        self.last_llm_reply = decision.reply or ""
 
         if decision.caller_unclear:
             self.unclear_streak += 1
@@ -643,6 +729,10 @@ class ConversationSession:
         반드시 한 번은 묻는다.** 어르신은 중요한 것을 나중에 말한다.
         """
         reply = decision.reply
+
+        # 응급이면 대화 모드가 다르다. 마무리 질문 루프에 들어가지 않는다.
+        if self.urgency.is_emergency:
+            return self._emergency_reply(caller_text)
 
         if self.turn_count >= MAX_TURNS or self._check_budget():
             return True, HANDOFF_CLOSING
@@ -790,6 +880,9 @@ class ConversationSession:
             "audio_mime": speech.mime,
             "done": bool(done),
             "slots": self.slots.as_dict(),
+            # **통화 중에** 긴급도를 알려 준다. 카드(end)에만 있으면 늦다 —
+            # 통화가 끝난 뒤 119 버튼이 떠봐야 소용이 없다.
+            "urgency": self.urgency.as_dict(),
             # 아래는 계약 외 진단 필드다. 소비자는 무시해도 된다.
             "meta": {
                 "engine": self.engine_used,
@@ -815,6 +908,7 @@ class ConversationSession:
                     "audio_mime": None,
                     "done": self.closed if done is None else done,
                     "slots": self.slots.as_dict(),
+                    "urgency": self.urgency.as_dict(),
                     "meta": {"engine": self.engine_used, "replayed": True},
                 }
         return self._say(prompts.opening_line(), done=False)

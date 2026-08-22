@@ -245,6 +245,7 @@ def call_start(payload: StartRequest | None = None) -> dict:
         "audio_mime": greeting.get("audio_mime"),
         "done": False,
         "slots": greeting["slots"],
+        "urgency": greeting.get("urgency"),
         "status": runtime_status(),
     }
 
@@ -464,6 +465,7 @@ def _handoff_notice(session) -> dict | None:
         "audio_mime": None,
         "done": True,
         "slots": session.slots.as_dict(),
+        "urgency": session.urgency.as_dict(),
         "meta": {"engine": "handoff", "handoff": handoff.as_dict()["status"]},
     }
 
@@ -809,6 +811,7 @@ def _mount_static(url_path: str, directory, title: str) -> None:
 
 _mount_static("/call", config.CALL_UI_DIR, "통화 화면")
 _mount_static("/dashboard", config.DASHBOARD_DIR, "담당자 대시보드")
+_mount_static("/demo", config.DEMO_DIR, "발표용 분할 화면")
 
 
 @app.on_event("startup")

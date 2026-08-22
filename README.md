@@ -22,6 +22,9 @@
         각각 자리를 잡아 두었다. 파일명을 바꾸면 세 군데를 모두 고쳐라.
      ═════════════════════════════════════════════════════════════════════ -->
 
+> 📄 **발표·소개용 쉬운 설명은 [`ABOUT.md`](ABOUT.md) 를 보세요.**
+> 어떤 공공데이터를 어떻게 썼는지, 전문용어 없이 정리했습니다.
+
 **English summary** — *Voisso* is an open-source voice complaint-routing system for
 Gyeongsangbuk-do Province, Korea. Elderly residents speak in the local Gyeongbuk
 dialect; Voisso normalizes the dialect, understands the complaint through

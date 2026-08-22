@@ -56,6 +56,8 @@ CALLBACKS_DIR = DATA_DIR / "callbacks"
 WEB_DIR = ROOT_DIR / "web"
 CALL_UI_DIR = WEB_DIR / "call"
 DASHBOARD_DIR = WEB_DIR / "dashboard"
+# 발표용 좌우 분할 화면 (P7 소유)
+DEMO_DIR = WEB_DIR / "demo"
 
 HOST = os.getenv("VOISSO_HOST", "127.0.0.1")
 PORT = int(os.getenv("VOISSO_PORT", "8000"))

@@ -1,12 +1,12 @@
 <!doctype html>
 <html lang="ko" data-theme="light" data-size="m" data-mode="elder">
 <head>
-<!-- ASSET_VERSION = 22 -->
+<!-- ASSET_VERSION = 25 -->
 <meta charset="utf-8">
 <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
 <title>Voisso — 경상북도 민원 통화</title>
 <meta name="description" content="사투리로 전화하면 AI가 민원을 정리해 담당 부서로 전달합니다.">
-<script>window.VOISSO_ASSET_VERSION = '22';</script>
+<script>window.VOISSO_ASSET_VERSION = '25';</script>
 <script>
 /* 첫 페인트 깜빡임 방지: 저장된 테마/글자크기를 CSS 로드 전에 확정한다. */
 (function () {
@@ -24,7 +24,7 @@
   } catch (e) {}
 })();
 </script>
-<link rel="stylesheet" href="styles.css?v=22">
+<link rel="stylesheet" href="styles.css?v=25">
 <link rel="icon" href="data:image/svg+xml,<svg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 100 100'><text y='.9em' font-size='90'>📞</text></svg>">
 </head>
 <body>
@@ -96,11 +96,8 @@
 
       <!-- 응급 판정 시 유일하게 강조하는 요소. 접수가 신고를 대체하지 않는다. -->
       <div class="safety-bar" id="safetyBar" hidden role="alert">
-        <p class="sb-head" id="safetyHead">지금 위험하시믄 먼저 119에 전화해 주이소</p>
-        <a class="sb-call" id="safetyCall" href="tel:119">
-          <svg viewBox="0 0 24 24" width="30" height="30" fill="currentColor" aria-hidden="true"><path d="M6.6 10.8a15.1 15.1 0 0 0 6.6 6.6l2.2-2.2c.3-.3.7-.4 1-.2 1.2.4 2.4.6 3.7.6.6 0 1 .4 1 1V20c0 .6-.4 1-1 1C11.3 21 3 12.7 3 2.9c0-.6.4-1 1-1h3.5c.6 0 1 .4 1 1 0 1.3.2 2.5.6 3.7.1.4 0 .8-.2 1l-2.3 2.2Z"/></svg>
-          <span id="safetyCallLabel">119 전화 걸기</span>
-        </a>
+        <p class="sb-head" id="safetyHead">지금 위험하시믄 눌러 주이소</p>
+        <div class="sb-calls" id="safetyCalls"></div>
         <p class="sb-sub">민원은 제가 접수해 둘게예. 신고는 따로 해 주셔야 합니더.</p>
       </div>
 
@@ -201,11 +198,11 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
-<script src="config.js?v=22"></script>
-<script src="dialect-hints.js?v=22"></script>
-<script src="mock-api.js?v=22"></script>
-<script src="speech.js?v=22"></script>
-<script src="api.js?v=22"></script>
-<script src="app.js?v=22"></script>
+<script src="config.js?v=25"></script>
+<script src="dialect-hints.js?v=25"></script>
+<script src="mock-api.js?v=25"></script>
+<script src="speech.js?v=25"></script>
+<script src="api.js?v=25"></script>
+<script src="app.js?v=25"></script>
 </body>
 </html>

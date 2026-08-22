@@ -56,11 +56,32 @@ _RULES: tuple[tuple[str, str, str], ...] = (
     (EMERGENCY, "지반 함몰", r"함몰|땅이\s*꺼|푹\s*꺼|지반\s*침하|싱크홀"),
     (EMERGENCY, "고립·갇힘", r"갇혔|갇히|고립|못\s*나가|못\s*나오|길이\s*끊"),
     (EMERGENCY, "감전 위험", r"감전|전기가\s*오|찌릿|누전.*물|전선이\s*끊|전선.*늘어"),
-    (EMERGENCY, "침수 진행 중", r"차오|차올|무릎까지|허리까지|가슴까지|잠겼|잠긴다|떠내려|휩쓸"),
+    # 침수. 어르신은 "차오른다"보다 **"물이 들어온다"** 를 훨씬 자주 쓴다.
+    # 부정형("물이 안 들어와요")은 단수(斷水)라 응급이 아니므로 룩어헤드로 배제한다.
+    (
+        EMERGENCY,
+        "침수 진행 중",
+        # 부사가 끼어드는 경우가 많다: "물이 **자꾸** 들어옵니더"
+        r"물[이가]?\s*(?:자꾸|계속|지금|막|또|마구|한참)?\s*"
+        r"(?![안못])(?:들어오|들어와|들어옵|넘어오|넘어와|밀려오|밀려와"
+        r"|차오|차올|차고|차서|잠기|잠겼|불어)"
+        r"|무릎까지|허리까지|가슴까지|발목까지"
+        r"|잠겼|잠긴다|떠내려|휩쓸|물바다|물난리|침수",
+    ),
+    # "지금/계속/자꾸" 가 붙으면 진행 중이라는 뜻이다.
+    (
+        EMERGENCY,
+        "침수 진행 중",
+        r"(?:지금|계속|자꾸|막|자꾸만)\s*(?:물[이가]?\s*)?(?:들어오|들어와|차오|차올|넘어오)",
+    ),
     (EMERGENCY, "인명 피해", r"다쳤|다치|쓰러졌|피가\s*나|숨을\s*못|의식이\s*없|사람이\s*빠"),
     (EMERGENCY, "범죄·위협", r"폭행|협박|위협|도둑|강도|맞았|때렸"),
     # ── 중요: 방치하면 피해가 커진다 ────────────────────────────────
-    (IMPORTANT, "단수", r"단수|물이\s*안\s*나오|수돗물이\s*안\s*나오|수도가\s*안\s*나오"),
+    (
+        IMPORTANT,
+        "단수",
+        r"단수|(?:물|수돗물|수도)[이가]?\s*안\s*(?:나오|나와|나옵|들어오|들어와|들어옵)",
+    ),
     (IMPORTANT, "상수도 파손", r"(상수도|수도관|수도)\s*(가\s*)?터|누수가\s*심"),
     (IMPORTANT, "하수 역류", r"역류|하수가\s*넘|오수가\s*넘|맨홀에서\s*(물|물이)\s*넘"),
     (IMPORTANT, "정전", r"정전|전기가\s*안\s*들어|전기가\s*나갔"),
@@ -78,6 +99,53 @@ _COMPILED = tuple((level, name, re.compile(pattern)) for level, name, pattern in
 # 112 로 안내할 신호. 나머지 응급은 119.
 _POLICE_SIGNALS = {"범죄·위협"}
 
+# 재촉·다급함 표현. **반복이 신호다.**
+# 단발 강조("큰일이라예")는 경북에서 흔한 말투라 1회로는 올리지 않는다.
+_PRESSURE_PATTERNS = (
+    r"빨리", r"퍼뜩", r"언능", r"어서", r"지금\s*(당장|바로)?", r"당장",
+    r"우짜노", r"우짭니꺼", r"우야노", r"야단났", r"큰일났", r"큰일이",
+    r"급해", r"급합니", r"급한데", r"살려", r"제발",
+)
+_PRESSURE_RE = re.compile("(" + "|".join(_PRESSURE_PATTERNS) + ")")
+# 느낌표 반복도 다급함의 신호다. "!!!" 는 한 번으로 세지 않는다.
+_BANG_RE = re.compile(r"[!！]{2,}")
+
+# **몇 개의 발화에서** 재촉이 나왔는가로 센다. 한 문장 안의 강조가 아니라
+# 턴을 넘긴 반복이 신호다 — "큰일이라예!!!" 한 번은 경북에서 흔한 말투다.
+PRESSURE_THRESHOLD = 2
+
+
+def has_pressure(text: str) -> bool:
+    """이 발화에 재촉·다급함이 담겼는가."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return False
+    return bool(_PRESSURE_RE.search(cleaned) or _BANG_RE.search(cleaned))
+
+
+# LLM 이 위험을 인지했을 때 답변에 나타나는 표현.
+# 규칙이 못 잡은 위험을 모델이 알아채는 경우가 실제로 있었다 —
+# 모델은 "안전한 곳으로 이동하시고 119에 신고하이소" 라고 답했는데
+# 규칙은 "위험 신호가 없어" 라고 판정해 **둘이 어긋났다.**
+# 계약서 5-A: LLM 은 규칙 결과를 **올릴 수만 있다.** 안전 쪽으로 치우친다.
+_LLM_RISK_RE = re.compile(
+    r"119|112|대피|안전한\s*곳|긴급\s*신고|즉시\s*신고|위험하니|위험합니다|"
+    r"몸을\s*피|밖으로\s*나오|자리를\s*피"
+)
+
+
+def llm_signals_risk(reply: str) -> bool:
+    """모델의 답변이 위험을 인지했는가."""
+    return bool(_LLM_RISK_RE.search(reply or ""))
+
+
+def count_pressure(text: str) -> int:
+    """재촉 신호의 총 개수. 강도 표시용이고 승급 판정에는 쓰지 않는다."""
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return 0
+    return len(_PRESSURE_RE.findall(cleaned)) + len(_BANG_RE.findall(cleaned))
+
 
 @dataclass
 class Urgency:
@@ -88,6 +156,11 @@ class Urgency:
     signals: list[str] = field(default_factory=list)
     decided_by: str = "rule"
     safety_referral: dict[str, str] | None = None
+    # 재촉 신호가 몇 번 나왔는지. 2회 이상이면 한 단계 올린다.
+    pressure_count: int = 0
+    # 이미 응급인데 또 재촉이 왔다. 더 올릴 곳이 없으니
+    # **안내를 다시, 더 강하게** 보여야 한다는 표시다(P7 이 버튼을 재강조).
+    reemphasize: bool = False
     # 담당자가 수정하면 원래 판정을 여기에 남긴다(계약서: 이력으로 남긴다).
     history: list[dict[str, Any]] = field(default_factory=list)
 
@@ -102,6 +175,8 @@ class Urgency:
             "signals": list(self.signals),
             "decided_by": self.decided_by,
             "safety_referral": self.safety_referral,
+            "pressure_count": self.pressure_count,
+            "reemphasize": self.reemphasize,
             "history": list(self.history),
         }
 
@@ -134,11 +209,14 @@ def assess(
     text: str,
     llm_level: str | None = None,
     llm_reason: str = "",
+    pressure_turns: int = 0,
+    llm_reply: str = "",
 ) -> Urgency:
     """긴급도를 판정한다.
 
     `text` 는 통화에서 어르신이 한 말을 이어 붙인 것이다(누적 판정).
     `llm_level` 은 LLM 의 제안이고, **규칙 결과보다 높을 때만** 채택된다.
+    `pressure_turns` 는 재촉이 나온 **발화 수**다. 2회 이상이면 한 단계 올린다.
     """
     matched = detect_signals(text)
 
@@ -159,6 +237,15 @@ def assess(
     elif matched:
         reason = "명확한 위험 신호는 없었습니다."
 
+    # 모델이 답변에서 위험을 인지했으면(119 안내·대피 권유 등) 응급으로 본다.
+    # 규칙이 표현을 못 잡았을 뿐 상황은 위험할 수 있다.
+    if llm_level is None and llm_signals_risk(llm_reply):
+        llm_level = EMERGENCY
+        llm_reason = (
+            "상담 응답에서 대피·긴급신고 안내가 나왔습니다(모델이 위험을 인지). "
+            "규칙 신호가 없어도 안전 쪽으로 올렸습니다."
+        )
+
     # LLM 은 올릴 수만 있다. 내리지 못한다.
     if llm_level in LEVEL_RANK and _rank(llm_level) > _rank(level):
         level = llm_level
@@ -169,6 +256,23 @@ def assess(
         # **비어 있으면 버그다.** 담당자가 납득 못 하는 표시는 무시된다.
         reason = "위험 신호가 없어 정상 처리 일정으로 분류했습니다."
 
+    # 재촉 반복은 상황이 악화되고 있다는 신호다. **턴을 넘긴 반복**만 센다.
+    pressure = count_pressure(text)
+    reemphasize = False
+    if pressure_turns >= PRESSURE_THRESHOLD:
+        if level == EMERGENCY:
+            # 더 올릴 곳이 없다. 대신 안내를 다시 강조한다.
+            reemphasize = True
+        else:
+            raised = LEVELS[min(_rank(level) + 1, len(LEVELS) - 1)]
+            if raised != level:
+                level = raised
+                decided_by = "rule"
+                reason = (
+                    f"{reason} 재촉 표현이 {pressure_turns}번의 발화에서 반복돼 "
+                    "한 단계 올렸습니다."
+                ).strip()
+
     referral = _referral_for(signals) if level == EMERGENCY else None
     return Urgency(
         level=level,
@@ -176,6 +280,8 @@ def assess(
         signals=signals,
         decided_by=decided_by,
         safety_referral=referral,
+        pressure_count=pressure,
+        reemphasize=reemphasize,
     )
 
 

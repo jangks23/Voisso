@@ -11,8 +11,7 @@
     phone: $('phone'),
     btnTheme: $('btnTheme'), btnSize: $('btnTextSize'), btnMode: $('btnMode'),
     demoBar: $('demoBar'), elderStatus: $('elderStatus'), micLabel: $('micLabel'),
-    safetyBar: $('safetyBar'), safetyHead: $('safetyHead'),
-    safetyCall: $('safetyCall'), safetyCallLabel: $('safetyCallLabel'),
+    safetyBar: $('safetyBar'), safetyHead: $('safetyHead'), safetyCalls: $('safetyCalls'),
     screens: { idle: $('screenIdle'), call: $('screenCall'), result: $('screenResult'),
                incoming: $('screenIncoming') },
     btnCall: $('btnCall'), modeChip: $('modeChip'),
@@ -576,7 +575,8 @@
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
     state.callerBubbles = []; state.slotRevisions = [];
-    state.safety = null; el.safetyBar.hidden = true;
+    state.safety = []; state.hurry = 0;
+    el.safetyBar.hidden = true; el.safetyBar.classList.remove('again'); el.safetyCalls.innerHTML = '';
     renderSlots({});
     setBusy(true);
 
@@ -698,7 +698,24 @@
       }
 
       renderSlots(normalizeSlots(r.slots));
-      if (r.urgency) applySafety(r.urgency);      // 응급이면 통화 중에 바로 안내한다
+
+      // ── 안전 안내 (계약 5-A) ───────────────────────────────
+      // 1순위: 서버의 구조화 판정. 없으면 답변·발화에서 직접 잡는다(안전 쪽으로 치우친다).
+      const u = r.urgency || null;
+      let shown = false;
+      if (u && u.safety_referral) shown = applySafety(u.safety_referral);
+      if (!shown) {
+        const guess = detectSafetyFallback(r.reply_text || r.reply_dialect, sent || dia);
+        if (guess.length) {
+          shown = applySafety(guess);
+          if (shown && !u) console.warn('[Voisso] 서버가 urgency 를 주지 않아 답변·발화에서 ' +
+            '안전 안내를 추론했습니다: ' + guess.join(', '));
+        }
+      }
+      // 다급함이 반복되면 이미 떠 있는 버튼을 다시 강조한다.
+      state.hurry = (state.hurry || 0) + countHurry(sent || dia);
+      if (state.hurry >= 2) { pulseSafety(); state.hurry = 0; }
+
       renderDemoBar();
       playAudio(r.audio_b64, r.audio_mime);
       if (!state.handoff.open) say('말씀해 주이소');
@@ -800,28 +817,96 @@
      긴급도 자체는 담당자용이라 어르신에게 보여주지 않는다("응급입니다"는 불안만 준다).
      단 하나의 예외가 이것 — 응급 판정 시 서버가 safety_referral 을 내려보내면
      크고 명확하게, 그리고 **접수가 신고를 대체하지 않는다**는 것을 함께 알린다. */
-  function applySafety(urgency) {
-    const sr = urgency && urgency.safety_referral;
-    if (!sr || !sr.number) return false;
-    const num = String(sr.number).replace(/[^0-9*#+]/g, '');
-    if (!num) return false;
-    el.safetyHead.textContent = '지금 위험하시믄 먼저 ' + num + '에 전화해 주이소';
-    el.safetyCall.href = 'tel:' + num;
-    el.safetyCallLabel.textContent = num + (sr.label ? ' (' + sr.label + ')' : '') + ' 전화 걸기';
-    el.safetyCall.setAttribute('aria-label', num + '에 전화 걸기');
+  const KNOWN_NUMBERS = { '119': '소방·구조', '112': '경찰', '110': '민원상담', '1522-0120': '경상북도청' };
+
+  /* 화면에 119·112 버튼을 띄운다.
+     말로만 안내하면 어르신이 번호를 외워 다시 걸어야 한다 — 그건 실패다.
+     한 번 뜨면 통화가 끝날 때까지 내리지 않는다. */
+  function applySafety(list) {
+    const refs = normalizeReferrals(list);
+    if (!refs.length) return false;
+
+    // 이미 떠 있는 번호는 유지하고, 새 번호만 더한다(내리지 않는다).
+    const have = (state.safety || []).map((x) => x.number);
+    const merged = (state.safety || []).slice();
+    let added = false;
+    refs.forEach((r) => { if (have.indexOf(r.number) === -1) { merged.push(r); added = true; } });
+    state.safety = merged;
+
+    el.safetyHead.textContent = merged.length > 1
+      ? '지금 위험하시믄 눌러 주이소'
+      : '지금 위험하시믄 ' + merged[0].number + ' 눌러 주이소';
+
+    el.safetyCalls.innerHTML = merged.map((r, i) =>
+      '<a class="sb-call' + (i > 0 ? ' secondary' : '') + '" href="tel:' + esc(r.number) + '"' +
+      ' aria-label="' + esc(r.number) + '번으로 전화 걸기' + (r.label ? ', ' + esc(r.label) : '') + '">' +
+      '<span class="sb-num">' + esc(r.number) + '</span>' +
+      '<span>' + (r.label ? '(' + esc(r.label) + ') ' : '') + '전화 걸기</span></a>').join('');
+
     el.safetyBar.hidden = false;
-    state.safety = { number: num, label: sr.label || '' };
+    if (added) pulseSafety();
     return true;
   }
 
+  // {number,label} / [{...}] / "119" 무엇으로 오든 받는다.
+  function normalizeReferrals(v) {
+    if (!v) return [];
+    const arr = Array.isArray(v) ? v : [v];
+    const out = [];
+    arr.forEach((x) => {
+      if (!x) return;
+      const raw = typeof x === 'string' ? x : (x.number || x.tel || '');
+      const num = String(raw).replace(/[^0-9*#+-]/g, '');
+      if (!num) return;
+      if (out.some((y) => y.number === num)) return;
+      out.push({ number: num, label: (typeof x === 'object' && x.label) || KNOWN_NUMBERS[num] || '' });
+    });
+    return out;
+  }
+
+  // 다급함이 반복되면 다시 눈에 들어오게. 깜빡임 같은 과한 효과는 쓰지 않는다.
+  function pulseSafety() {
+    if (el.safetyBar.hidden) return;
+    el.safetyBar.classList.add('again');
+    clearTimeout(pulseSafety._t);
+    pulseSafety._t = setTimeout(() => el.safetyBar.classList.remove('again'), 2500);
+  }
+
+  /* 안전망 — 서버가 urgency 를 안 줘도 위험 신호는 놓치지 않는다.
+     실사용에서 서버가 답변으로는 "119에 전화해 주이소" 라고 하면서
+     urgency 는 null 로 보내 버튼이 뜨지 않은 사고가 있었다. */
+  const DANGER_WORDS = ['가스', '불이 나', '불났', '화재', '무너지', '붕괴', '함몰', '갇혔', '고립',
+    '감전', '떠내려', '차올', '물이 차', '잠기고 있', '쓰러지', '다쳤', '피가', '숨이',
+    '연기가', '폭발', '누전'];
+  const HURRY_WORDS = ['빨리', '빨랑', '지금 당장', '당장', '급해', '급합', '야단났', '큰일났', '우짜노'];
+
+  function detectSafetyFallback(replyText, callerText) {
+    const found = [];
+    const reply = String(replyText || '');
+    // 1) 상담원이 이미 번호를 말했다면 그 번호를 버튼으로 만든다.
+    (reply.match(/\b(119|112|110)\b/g) || []).forEach((n) => found.push(n));
+    // 2) 발화 자체에 명백한 위험 신호가 있으면 119 를 띄운다(안전 쪽으로 치우친다).
+    const said = String(callerText || '');
+    if (!found.length && DANGER_WORDS.some((w) => said.includes(w))) found.push('119');
+    return found;
+  }
+
+  function countHurry(text) {
+    const t = String(text || '');
+    let n = HURRY_WORDS.filter((w) => t.includes(w)).length;
+    if (/!{2,}/.test(t)) n++;
+    return n;
+  }
+
   function safetyHTML() {
-    if (!state.safety) return '';
-    const n = esc(state.safety.number);
+    const refs = state.safety || [];
+    if (!refs.length) return '';
     return '<div class="safety-bar" role="alert">' +
-      '<p class="sb-head">지금 위험하시믄 먼저 ' + n + '에 전화해 주이소</p>' +
-      '<a class="sb-call" href="tel:' + n + '" aria-label="' + n + '에 전화 걸기">' + n +
-      (state.safety.label ? ' (' + esc(state.safety.label) + ')' : '') + ' 전화 걸기</a>' +
-      '<p class="sb-sub">민원은 접수해 뒀습니더. 신고는 따로 해 주셔야 합니더.</p></div>';
+      '<p class="sb-head">지금 위험하시믄 눌러 주이소</p><div class="sb-calls">' +
+      refs.map((r, i) => '<a class="sb-call' + (i > 0 ? ' secondary' : '') + '" href="tel:' + esc(r.number) +
+        '" aria-label="' + esc(r.number) + '번으로 전화 걸기"><span class="sb-num">' + esc(r.number) +
+        '</span><span>' + (r.label ? '(' + esc(r.label) + ') ' : '') + '전화 걸기</span></a>').join('') +
+      '</div><p class="sb-sub">민원은 접수해 뒀습니더. 신고는 따로 해 주셔야 합니더.</p></div>';
   }
 
   // 긴급도 상세는 시연 모드에서만 (CSS 로 숨긴다. 데이터는 항상 들어 있다)
@@ -1157,7 +1242,7 @@
   /* ── 민원카드 ──────────────────────────────────────────── */
   function renderCard(c) {
     c = c || {};
-    if (c.urgency) applySafety(c.urgency);
+    if (c.urgency && c.urgency.safety_referral) applySafety(c.urgency.safety_referral);
     const a = c.assigned || {};
     const caller = c.caller || {};
     const alts = Array.isArray(c.alternatives) ? c.alternatives : [];
@@ -1611,6 +1696,8 @@
   el.btnAgain.addEventListener('click', goIdle);
 
   /* ── 초기화 ───────────────────────────────────────────── */
+  // 발표용 분할 화면(web/demo)이 리로드 없이 모드를 바꿀 수 있도록 노출한다.
+  window.VoissoSetMode = setMode;
   setMode(document.documentElement.dataset.mode || 'elder');
   el.btnMode.addEventListener('click', () => setMode(isDemo() ? 'elder' : 'demo'));
 

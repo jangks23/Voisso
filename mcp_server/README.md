@@ -110,7 +110,17 @@ VOISSO_DATA_FILE=mcp_server/fixtures/sample_departments.json python3 -m mcp_serv
 
 Windows 는 `"command": "python"` 과 백슬래시 경로(`C:\\path\\to\\junctionX`)를 쓴다.
 
-**연결 확인** — 앱을 완전히 종료(⌘Q)했다가 재시작한 뒤 로그를 본다.
+**연결 확인** — 검증기를 돌리면 설정·로그·프로토콜 왕복을 한 번에 확인한다.
+
+```bash
+python3 -m mcp_server.verify_connection
+```
+
+최근 실행 결과는 [VERIFICATION.md](./VERIFICATION.md) 에 그대로 붙여 두었다.
+Claude Desktop 이 없는 환경이면 설정·로그 검사는 건너뛰고 stdio 왕복만 돌아간다 —
+그것만으로도 표준 MCP 클라이언트가 붙을 수 있다는 근거가 된다.
+
+직접 로그를 보려면 앱을 완전히 종료(⌘Q)했다가 재시작한 뒤:
 
 ```bash
 grep "connected successfully" ~/Library/Logs/Claude/mcp.log

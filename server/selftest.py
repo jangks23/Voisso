@@ -14,6 +14,7 @@
   6. 마스킹이 번호를 훼손하지 않는가 (자릿수·뒤 4자리 보존)
   7. 긴급도 판정이 기대 단계와 맞는가 · reason 이 비지 않는가
   8. 응급이면 119/112 안내가 접수보다 먼저 나가는가
+  9. 응급에서 마무리 질문 루프에 빠지지 않는가 (실사용 안전 결함)
 """
 
 from __future__ import annotations
@@ -180,7 +181,95 @@ def check_safety_first() -> None:
     check("안전 안내 턴에 통화를 끝내지 않았다", result["done"] is False)
 
     again = session.turn(text="안동시 옥동입니더")
-    check("같은 안내를 반복하지 않았다", "119" not in again["reply_text"], again["reply_text"][:44])
+    # 응급 상태 응답에는 번호가 의도적으로 들어간다("위험하시면 지금 119를 눌러 주세요").
+    # 반복하면 안 되는 것은 **첫 안내 문장** 쪽이다.
+    check(
+        "첫 안내 문장을 되풀이하지 않았다",
+        "먼저 119에 전화해" not in again["reply_text"],
+        again["reply_text"][:52],
+    )
+
+
+# 실사용에서 확인된 안전 결함의 재현 시나리오.
+# 집에 물이 차오르는 민원인에게 "더 하실 말씀 있으신가예?" 를 세 번 물었다.
+EMERGENCY_SCRIPT = (
+    # 어르신은 "차오른다"보다 "물이 들어온다"를 훨씬 자주 쓴다.
+    # 이 표현을 규칙이 못 잡아 긴급도가 '중요' 로 떨어진 적이 있다.
+    "집에 물이 들어와요",
+    "지금 들어와요",
+    "010-0000-4755",
+    "빨리와요!!!",
+    "빨리와요!!!",
+    "그냥 빨리!!!!!",
+)
+
+
+def check_emergency_mode() -> None:
+    """응급 대화 모드 — 마무리 질문 루프 금지, 상태로 응답, 즉시 접수."""
+    print("\n응급 대화 모드")
+    session = ConversationSession()
+    session.greet()
+
+    replies = []
+    for line in EMERGENCY_SCRIPT:
+        result = session.turn(text=line)
+        replies.append(result)
+
+    texts = [r["reply_text"] for r in replies]
+
+    # 첫 발화만으로 응급이어야 한다. "물이 들어와요" 를 못 잡으면 여기서 걸린다.
+    first = replies[0].get("urgency") or {}
+    check("첫 발화에서 응급으로 판정됐다", first.get("level") == "응급", str(first.get("level")))
+    check("침수 신호를 잡았다", bool(first.get("signals")), str(first.get("signals")))
+
+    # **매 턴** 응답에 긴급도와 안내 번호가 실려야 한다.
+    # 통화가 끝난 뒤에 119 버튼이 떠봐야 소용이 없다.
+    missing = [i for i, r in enumerate(replies, 1) if not (r.get("urgency") or {}).get("safety_referral")]
+    check("매 턴 응답에 safety_referral 이 실렸다", not missing, f"빠진 턴 {missing}")
+
+    # 같은 문장을 연달아 되풀이하면 고장 난 것처럼 들린다.
+    consecutive = [i for i in range(1, len(texts)) if texts[i] == texts[i - 1]]
+    check("같은 응답을 연달아 반복하지 않았다", not consecutive, f"반복 위치 {consecutive}")
+
+    # (a) 마무리 질문 루프에 들어가지 않는다
+    wrapup = [t for t in texts if "더 하실 말씀" in t or "더 얘기하실" in t]
+    check(
+        "마무리 질문을 하지 않았다",
+        not wrapup,
+        f"{len(wrapup)}회 물음: {wrapup[:1]}" if wrapup else "0회",
+    )
+    check("마무리 루프 카운터가 돌지 않았다", session.wrapup_rounds == 0, str(session.wrapup_rounds))
+
+    # (b) safety_referral 이 유지되고 재촉 반복에 재강조된다
+    check("응급이 유지됐다", session.urgency.is_emergency, session.urgency.level)
+    check(
+        "safety_referral 이 남아 있다",
+        bool(session.urgency.safety_referral),
+        str(session.urgency.safety_referral),
+    )
+    check(
+        "재촉 반복이 재강조로 이어졌다",
+        session.urgency.reemphasize,
+        f"재촉 {session.pressure_turns}턴",
+    )
+    reannounced = sum(1 for t in texts if "119" in t)
+    check("119 안내가 여러 번 나갔다", reannounced >= 2, f"{reannounced}회")
+
+    # (c) 접수가 즉시 확정된다
+    check("재촉 반복 뒤 접수가 확정됐다", replies[-1]["done"] is True, str(replies[-1]["done"]))
+
+    # 재촉에는 질문이 아니라 상태로 답한다
+    check(
+        "재촉 턴에 상태를 알렸다",
+        any("접수" in t for t in texts[1:]),
+        texts[1][:48],
+    )
+
+    # 응급에서는 연락처·시점을 더 묻지 않는다
+    asked_contact = any("전화번호" in t for t in texts)
+    asked_when = any("언제부터" in t for t in texts)
+    check("연락처를 묻지 않았다", not asked_contact)
+    check("시점을 묻지 않았다", not asked_when)
 
 
 def main() -> int:
@@ -206,6 +295,7 @@ def main() -> int:
     check_masking()
     check_urgency()
     check_safety_first()
+    check_emergency_mode()
 
     print("\n검증")
 

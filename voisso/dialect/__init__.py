@@ -51,7 +51,14 @@ from .core import (
     source_counts,
 )
 from .llm import refine
-from .risk import RISK_PATH, detect_risk, load_risk_signals
+from .risk import (
+    RISK_PATH,
+    detect_pressure,
+    detect_risk,
+    detect_tense,
+    load_risk_signals,
+    pressure_data,
+)
 
 __all__ = [
     "normalize",
@@ -61,6 +68,9 @@ __all__ = [
     "explain",
     "closing_cues",
     "detect_risk",
+    "detect_pressure",
+    "detect_tense",
+    "pressure_data",
     "load_risk_signals",
     "officer_to_dialect",
     "briefing_to_dialect",

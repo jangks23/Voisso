@@ -847,20 +847,33 @@ button { cursor: pointer; border: 0; background: none; }
   margin: 0; font-size: 1.2rem; font-weight: 800; line-height: 1.45;
   color: var(--alert-ink); word-break: keep-all; text-align: center;
 }
+.sb-calls { display: flex; flex-direction: column; gap: 10px; }
 .sb-call {
   display: flex; align-items: center; justify-content: center; gap: 10px;
-  min-height: 72px; border-radius: 16px; text-decoration: none;
+  min-height: 84px; border-radius: 16px; text-decoration: none;
   background: var(--danger); color: #fff;
-  font-size: 1.3rem; font-weight: 800; letter-spacing: -.02em;
+  font-size: 1.4rem; font-weight: 800; letter-spacing: -.02em;
+  word-break: keep-all; text-align: center; padding: 10px 14px;
 }
+.sb-call .sb-num { font-size: 1.25em; font-variant-numeric: tabular-nums; }
+.sb-call.secondary { background: var(--surface); color: var(--danger); border: 3px solid var(--danger); }
 :root[data-theme="dark"] .sb-call { color: #260b08; }
 .sb-call:active { transform: scale(.99); }
 .sb-sub {
   margin: 0; font-size: .92rem; font-weight: 700; color: var(--alert-ink);
   text-align: center; word-break: keep-all;
 }
-:root[data-mode="elder"] .sb-head { font-size: 1.3rem; }
-:root[data-mode="elder"] .sb-call { min-height: 84px; font-size: 1.45rem; }
+/* 어르신 모드에서 이 버튼은 화면에서 가장 커야 한다. 말하기 버튼(96px)보다 크게. */
+:root[data-mode="elder"] .safety-bar { border-width: 4px; padding: 16px; }
+:root[data-mode="elder"] .sb-head { font-size: 1.4rem; }
+:root[data-mode="elder"] .sb-call { min-height: 112px; font-size: 1.6rem; }
+:root[data-mode="elder"] .sb-sub { font-size: 1rem; }
+
+/* 다급함이 반복되면 한 번 더 눈에 들어오게. 깜빡이지 않는다. */
+.safety-bar.again { box-shadow: 0 0 0 6px var(--alert-soft), 0 0 0 8px var(--danger); }
+@media (prefers-reduced-motion: no-preference) {
+  .safety-bar.again { transition: box-shadow .25s ease; }
+}
 
 /* 민원카드 안 안전 안내 */
 .card .safety-bar { margin: 0 0 14px; }

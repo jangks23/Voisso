@@ -70,6 +70,19 @@ PROMISE_QUESTION = "그라모 언제쯤 다 고쳐 주능교? 다음 달까지 �
 #: 이미 확정된 사실. 이건 답해도 된다.
 FACT_QUESTION = "접수번호가 몇 번이라예?"
 
+#: 긴급도(계약서 5-A). 응급으로 판정돼야 하고 119 안내가 붙어야 한다.
+EMERGENCY_SCENARIO = [
+    "집에 가스 냄새가 나고 사람이 갇혔어예",
+    "안동시 옥동입니더",
+    "방금부터예",
+    "010-1234-5678 이라예",
+]
+URGENCY_LEVELS = ("응급", "중요", "보통", "낮음")
+
+#: 슬롯이 덜 찼는데 질문으로 끝나지 않으면 어르신이 무엇을 말해야 할지 모른다.
+#: 안전 안내(119·112)와 종료 인사는 예외다.
+SAFETY_NUMBERS = ("119", "112")
+
 #: 대시보드(web/dashboard/app.js)의 폴링 주기. 이 안에 안 뜨면 "실시간"이 아니다.
 DASHBOARD_POLL_SEC = 4.0
 
@@ -430,6 +443,104 @@ def step_run_call(
     }
 
 
+def check_question_rule(turns: list[dict]) -> int:
+    """슬롯이 덜 찬 턴의 응답은 질문으로 끝나야 한다.
+
+    어르신은 "무엇을 말해야 하는지" 를 들어야 다음 말을 한다. 서술로 끝나면
+    침묵이 생기고 통화가 멈춘다. 안전 안내(119·112)와 종료 인사는 예외다.
+    """
+    checked = 0
+    for index, turn in enumerate(turns, start=1):
+        slots = turn.get("slots") or {}
+        if turn.get("done") or slots.get("complete"):
+            continue                      # 마무리·종료 단계는 규칙 대상이 아니다
+        reply = (turn.get("reply_text") or "").strip()
+        if any(number in reply for number in SAFETY_NUMBERS):
+            continue                      # 안전 안내가 우선한다
+        checked += 1
+        if not reply.endswith(("?", "?")):
+            raise StepFailure(
+                f"{index}번째 턴은 슬롯이 덜 찼는데 응답이 질문으로 끝나지 않는다.\n"
+                f"  slots={ {k: v for k, v in slots.items() if k in REQUIRED_SLOTS} }\n"
+                f"  응답: {reply[:80]!r}"
+            )
+    return checked
+
+
+def check_urgency(card: dict, expect_level: str | None = None) -> dict:
+    """긴급도(계약서 5-A). 담당자가 무엇을 먼저 볼지 정해 주는 값이다."""
+    urgency = card.get("urgency")
+    if not isinstance(urgency, dict):
+        raise StepFailure(f"민원카드에 urgency 가 없다 (키={sorted(card)})")
+
+    level = str(urgency.get("level") or "").strip()
+    reason = str(urgency.get("reason") or "").strip()
+    if not level:
+        raise StepFailure(f"urgency.level 이 비었다: {urgency}")
+    if level not in URGENCY_LEVELS:
+        raise StepFailure(f"urgency.level 이 정의된 4단계가 아니다: {level!r}")
+    if not reason:
+        raise StepFailure(
+            f"urgency.reason 이 비었다 — 담당자가 '왜 {level}인가' 를 납득 못 하면 "
+            "그 표시는 무시된다 (계약서 5-A)"
+        )
+    if urgency.get("decided_by") not in ("rule", "llm"):
+        raise StepFailure(f"urgency.decided_by 가 rule|llm 이 아니다: {urgency.get('decided_by')!r}")
+
+    referral = urgency.get("safety_referral")
+    if level == "응급":
+        # 사람이 위험한 상황을 접수하고 끝내는 것이 이 시스템의 가장 큰 위험이다.
+        if not isinstance(referral, dict) or not str(referral.get("number") or "").strip():
+            raise StepFailure(
+                "응급으로 판정됐는데 safety_referral 이 없다 — "
+                "119·112 안내 없이 접수만 하고 끝냈다는 뜻이다 (계약서 5-A)"
+            )
+    if expect_level and level != expect_level:
+        raise StepFailure(
+            f"긴급도가 {expect_level!r} 로 나와야 하는데 {level!r} 이다. "
+            f"signals={urgency.get('signals')} reason={reason!r}"
+        )
+    return urgency
+
+
+def check_evidence_is_source_text(card: dict) -> str:
+    """assigned.evidence 가 실제 도청 사무분장 원문인지 대조한다.
+
+    비어 있지 않은 것만으로는 부족하다. AI 가 지어낸 문장이면 담당자가
+    "우리 소관이 아닌데" 라고 판단할 근거가 사라진다.
+    """
+    assigned = card.get("assigned") or {}
+    evidence = str(assigned.get("evidence") or "").strip()
+    department_id = str(assigned.get("department_id") or "")
+
+    try:
+        payload = json.loads(DATA_JSON.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise StepFailure(f"부서 데이터셋을 읽을 수 없다: {exc}") from exc
+
+    department = next(
+        (d for d in payload.get("departments", []) if d.get("id") == department_id), None
+    )
+    if department is None:
+        raise StepFailure(
+            f"배정된 부서 id 가 데이터셋에 없다: {department_id!r} "
+            f"({assigned.get('full_name')!r})"
+        )
+
+    sources = list(department.get("duties") or [])
+    sources += [str(m.get("duty") or "") for m in department.get("staff") or []]
+    normalized = re.sub(r"\s+", " ", evidence)
+    for source in sources:
+        if normalized and normalized in re.sub(r"\s+", " ", source):
+            return evidence
+    raise StepFailure(
+        "assigned.evidence 가 해당 부서의 사무분장·담당업무 원문에 없다 — "
+        "AI 가 지어낸 문장일 수 있다 (계약서 5절)\n"
+        f"  부서: {assigned.get('full_name')} ({department_id})\n"
+        f"  evidence: {evidence[:120]!r}"
+    )
+
+
 def step_verify_card(call: dict, audio: bool = False) -> dict:
     """H1 4단계를 민원카드로 확인한다."""
     card = call["card"]
@@ -448,6 +559,9 @@ def step_verify_card(call: dict, audio: bool = False) -> dict:
             )
         raise StepFailure(f"{detail}\n  slots={slots}")
 
+    # ② 슬롯이 덜 찬 턴은 질문으로 끝나야 한다 (신규 규칙)
+    questioned = check_question_rule(call["turns"])
+
     # ③ 사무분장 원문이 근거로 붙었는가 — 계약서가 명시한 버그 조건
     assigned = card.get("assigned") or {}
     evidence = str(assigned.get("evidence") or "").strip()
@@ -455,6 +569,10 @@ def step_verify_card(call: dict, audio: bool = False) -> dict:
         raise StepFailure(f"assigned.evidence 가 비었다 (assigned={assigned})")
     if not str(assigned.get("full_name") or "").strip():
         raise StepFailure("배정 부서명이 비었다")
+    check_evidence_is_source_text(card)
+
+    # 긴급도 (계약서 5-A)
+    urgency = check_urgency(card)
 
     # 개인정보 — 계약서 3절
     caller = card.get("caller") or {}
@@ -480,9 +598,47 @@ def step_verify_card(call: dict, audio: bool = False) -> dict:
         "complaint_id": card.get("id"),
         "department": assigned.get("full_name"),
         "evidence": evidence,
+        "urgency": f"{urgency['level']} ({urgency['decided_by']})",
+        "questioned_turns": questioned,
         "normalized_turns": len(normalized),
         "category": card.get("category"),
         "alternatives": len(card.get("alternatives") or []),
+    }
+
+
+def step_verify_emergency(base: str) -> dict:
+    """응급 판정 경로 — 가장 위험한 실패 지점이라 매 회차 확인한다.
+
+    사람이 위험한 상황을 그냥 민원으로 접수하고 끊으면 안 된다.
+    119 안내가 붙는지, 규칙이 결정적으로 잡는지를 본다.
+    """
+    started = request_json(base + "/api/call/start", {})
+    session_id = started["session_id"]
+    safety_shown = False
+    for utterance in EMERGENCY_SCENARIO:
+        reply = request_json(
+            base + "/api/call/turn", {"session_id": session_id, "text": utterance}, timeout=180
+        )
+        text = f"{reply.get('reply_text') or ''} {reply.get('reply_dialect') or ''}"
+        if any(number in text for number in SAFETY_NUMBERS):
+            safety_shown = True
+        if reply.get("done"):
+            break
+
+    ended = request_json(base + "/api/call/end", {"session_id": session_id}, timeout=180)
+    card = ended.get("complaint") or {}
+    urgency = check_urgency(card, expect_level="응급")
+
+    if not safety_shown:
+        raise StepFailure(
+            "응급 상황인데 통화 중 119·112 안내가 한 번도 나오지 않았다 — "
+            "접수가 신고를 대체한다고 오해하게 만든다 (계약서 5-A)"
+        )
+    return {
+        "complaint_id": card.get("id"),
+        "level": urgency["level"],
+        "signals": urgency.get("signals") or [],
+        "referral": (urgency.get("safety_referral") or {}).get("number"),
     }
 
 
@@ -602,6 +758,20 @@ def step_verify_handoff(base: str, complaint_id: str, department: str, card: dic
     messages = channel.get("messages") or []
     if len(messages) < 2:
         raise StepFailure(f"양쪽 메시지가 다 안 보인다 (messages={len(messages)}건)")
+
+    # 한 번 보낸 메시지가 두 번 저장되면 담당자 화면에 같은 말이 겹쳐 뜬다.
+    for label, sent in (("담당자", OFFICER_STANDARD), ("어르신", CALLER_DIALECT)):
+        hits = [m for m in messages if sent in (m.get("text"), m.get("standard"), m.get("dialect"))]
+        if len(hits) != 1:
+            raise StepFailure(
+                f"{label} 메시지가 {len(hits)}건 저장됐다 (1건이어야 한다) — "
+                f"중복 저장이면 화면에 같은 말이 두 번 뜬다\n  {sent!r}"
+            )
+    if len(messages) != 2:
+        raise StepFailure(
+            f"메시지가 2건이어야 하는데 {len(messages)}건이다: "
+            f"{[m.get('role') for m in messages]}"
+        )
     for message in messages:
         missing = [f for f in ("role", "text", "dialect", "standard") if f not in message]
         if missing:
@@ -1100,8 +1270,12 @@ def run_once(run_no: int, host: str, port: int, audio: bool, log_dir: Path,
         tick = time.monotonic()
         verified = step_verify_card(call, audio=audio and tts_on)
         facts["card"] = verified
+        emergency = step_verify_emergency(base)
+        facts["emergency"] = emergency
         record(4, time.monotonic() - tick, True,
-               f"슬롯 4/4 · 배정 {verified['department']} · 마스킹 OK")
+               f"슬롯 4/4 · 질문형 응답 {verified['questioned_turns']}턴 · "
+               f"긴급도 {verified['urgency']} · 근거 원문 대조 OK · "
+               f"응급경로 {emergency['level']}→{emergency['referral']} 안내")
 
         # 5
         tick = time.monotonic()
@@ -1215,6 +1389,20 @@ def append_record(results: list[dict], audio: bool, host: str, port: int,
             f"- 핸드오프: 양방향 통역 {handoff['messages']}건 · "
             f"AI {handoff['ai_state']} (계약서 5-B)"
         )
+    urg = next((r["facts"].get("card", {}).get("urgency") for r in results
+                if (r["facts"].get("card") or {}).get("urgency")), None)
+    emg = next((r["facts"].get("emergency") for r in results if r["facts"].get("emergency")), None)
+    if urg or emg:
+        parts = []
+        if urg:
+            parts.append(f"일반 민원 {urg}")
+        if emg:
+            parts.append(
+                f"응급 경로 {emg['level']} → {emg['referral']} 안내 "
+                f"(신호: {', '.join(emg['signals']) or '—'})"
+            )
+        lines.append(f"- 긴급도: {' · '.join(parts)} (계약서 5-A)")
+
     cb = next((r["facts"].get("callback") for r in results if r["facts"].get("callback")), None)
     if cb:
         lines.append(
@@ -1288,7 +1476,12 @@ def append_record(results: list[dict], audio: bool, host: str, port: int,
                 f"> {sample['evidence']}",
                 "",
                 f"분류: {sample.get('category', '—')} · 대안 후보 {sample.get('alternatives', 0)}곳 "
-                f"· 정규화된 발화 {sample.get('normalized_turns', 0)}개",
+                f"· 정규화된 발화 {sample.get('normalized_turns', 0)}개 "
+                f"· 질문형 응답 {sample.get('questioned_turns', 0)}턴",
+                "",
+                "`evidence` 는 비어 있지 않은지만 보지 않는다. **경상북도청 부서 데이터셋의 "
+                "사무분장·담당업무 원문에 실제로 존재하는 문장인지** 대조한다. "
+                "AI 가 지어낸 문장이면 담당자가 배정을 검증할 근거가 사라진다.",
             ]
         hand = results[0]["facts"].get("handoff")
         if hand:

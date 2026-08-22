@@ -59,13 +59,16 @@ def _hits(patterns: list[str], *texts: str) -> str | None:
     return None
 
 
-def detect_risk(text: str, *, standard: str | None = None) -> dict[str, Any]:
+def detect_risk(text: str, *, standard: str | None = None,
+                history: list[str] | None = None) -> dict[str, Any]:
     """위험 신호를 찾아 **근거와 함께** 돌려준다.
 
     Args:
         text: 어르신 발화 원문(사투리 그대로도 된다).
         standard: :func:`~voisso.dialect.normalize` 를 거친 표준어. 주면 둘 다 본다.
             생략하면 내부에서 정규화한다.
+        history: **이전 턴들의 어르신 발화.** 주면 재촉 반복을 함께 본다.
+            "빨리와요!!!" 를 세 번 되풀이하는 상황은 단발 문장만 봐서는 절대 잡히지 않는다.
 
     Returns:
         딕셔너리::
@@ -98,10 +101,21 @@ def detect_risk(text: str, *, standard: str | None = None) -> dict[str, Any]:
             standard = convert(text, "to_standard")
         data = load_risk_signals()
 
+        # 위험 표현은 **통화 전체**에서 찾는다. 어르신이 1턴에 "물이 차올라예" 라 하고
+        # 이후 "빨리와요"만 되풀이하면, 현재 문장만 봐서는 위험이 사라진 것처럼 보인다.
+        # 실사용 결함이 정확히 이 지점이었다.
+        from .core import convert as _convert
+        pairs: list[tuple[str, str]] = [(t, _convert(t, "to_standard"))
+                                        for t in (history or []) if t and t.strip()]
+        pairs.append((text, standard))
+        flat: list[str] = [part for pair in pairs for part in pair]
+
         matched: list[dict[str, Any]] = []
+        seen_ids: set[str] = set()
         for signal in data.get("signals", []):
-            hit = _hits(signal.get("patterns", []), text, standard)
-            if hit:
+            hit = _hits(signal.get("patterns", []), *flat)
+            if hit and signal["id"] not in seen_ids:
+                seen_ids.add(signal["id"])
                 matched.append({
                     "id": signal["id"], "category": signal["category"],
                     "level": signal["level"], "standard": signal["standard"],
@@ -111,29 +125,45 @@ def detect_risk(text: str, *, standard: str | None = None) -> dict[str, Any]:
 
         escalators: list[dict[str, str]] = []
         for esc in data.get("escalators", []):
-            hit = _hits(esc.get("patterns", []), text, standard)
+            hit = _hits(esc.get("patterns", []), *flat)
             if hit:
                 escalators.append({"id": esc["id"], "label": esc["label"], "matched_text": hit})
 
         ambiguous: list[dict[str, str]] = []
         for amb in data.get("ambiguous", []):
-            hit = _hits(amb.get("patterns", []), text, standard)
+            hit = _hits(amb.get("patterns", []), *flat)
             if hit:
                 ambiguous.append({
                     "label": amb["label"], "matched_text": hit,
                     "why": amb["why"], "disambiguate": amb["disambiguate"],
                 })
 
-        admin = bool(_hits(data.get("admin_context", []), text, standard))
-        return _decide(matched, escalators, ambiguous, admin)
+        admin = bool(_hits(data.get("admin_context", []), *flat))
+        pressure = detect_pressure(list(history or []) + [text])
+        # 시제는 **가장 최근 발화**로 본다. 앞 턴이 과거여도 지금 진행 중일 수 있다.
+        tense = detect_tense(text)
+        return _decide(matched, escalators, ambiguous, admin, pressure, tense)
     except Exception:  # noqa: BLE001 - 안전 판정이 통화를 끊게 두지 않는다
         log.exception("위험 신호 탐지 실패 — 보통으로 돌려준다")
         return empty
 
 
-def _decide(matched, escalators, ambiguous, admin) -> dict[str, Any]:
+def _decide(matched, escalators, ambiguous, admin, pressure=None, tense=None) -> dict[str, Any]:
     """등급과 근거 문장을 만든다. 올리는 쪽으로만 움직인다."""
+    pressure = pressure or {"escalate": False, "signals": [], "reason": "", "strength": None}
+    tense = tense or {"verdict": "불명", "progress": [], "past": [], "past_ending": []}
+
     if not matched:
+        # 상황 신호가 없어도 다급함이 반복되면 그냥 두면 안 된다.
+        # 다만 무엇이 위험한지 모르므로 응급까지는 올리지 않는다 — 119 안내는 근거가 필요하다.
+        if pressure["escalate"]:
+            return {
+                "level": "중요",
+                "reason": f"구체적 위험 표현은 없지만 다급함이 반복된다. {pressure['reason']}",
+                "signals": pressure["signals"], "safety_referral": None,
+                "matched": [], "escalators": escalators, "ambiguous": ambiguous,
+                "admin_context": admin, "pressure": pressure, "tense": tense,
+            }
         reason = "위험 신호 없음"
         if ambiguous:
             reason = (f"'{ambiguous[0]['matched_text']}' 가 나왔지만 구체적 위험 표현이 없다 — "
@@ -141,7 +171,7 @@ def _decide(matched, escalators, ambiguous, admin) -> dict[str, Any]:
         return {
             "level": "보통", "reason": reason, "signals": [], "safety_referral": None,
             "matched": [], "escalators": escalators, "ambiguous": ambiguous,
-            "admin_context": admin,
+            "admin_context": admin, "pressure": pressure, "tense": tense,
         }
 
     base = max(matched, key=lambda m: LEVEL_ORDER[m["level"]])
@@ -162,6 +192,11 @@ def _decide(matched, escalators, ambiguous, admin) -> dict[str, Any]:
     if level == "중요":
         if progression:
             level, raised, escalating = "응급", True, progression
+        elif pressure["escalate"]:
+            # 상황 신호 + 다급함 반복. 실사용 결함이 정확히 이 조합이었다.
+            level, raised = "응급", True
+            escalating = [{"id": "pressure", "label": "다급함 반복",
+                           "matched_text": (pressure["matched"] or [{}])[0].get("matched_text", "")}]
         elif situation and (person or alone):
             level, raised, escalating = "응급", True, (person or [])
             if alone:
@@ -180,17 +215,208 @@ def _decide(matched, escalators, ambiguous, admin) -> dict[str, Any]:
     if raised:
         labels = ", ".join(dict.fromkeys(e["label"] for e in escalating))
         reason += f" 여기에 {labels} 신호가 겹쳐 등급을 올렸다."
+    # 과거 신고를 응급으로 두면 진짜 응급이 묻힌다. 다만 내리는 조건은 아주 좁게 잡는다.
+    lowered = False
+    if (level == "응급" and tense["verdict"] == "과거" and not pressure["escalate"]
+            and matched and all(m["id"] in _TENSE_DOWNGRADABLE for m in matched)):
+        level, lowered = "중요", True
+
     if ambiguous and level == "응급":
         reason += " (일상 강조 표현도 함께 있으나 구체적 위험 표현이 우선한다.)"
+    if pressure["escalate"] and pressure.get("signals"):
+        reason += f" {pressure['reason']}"
+    if lowered:
+        reason += (f" 다만 과거 표현({', '.join(tense['past'])})과 과거 서술어가 함께 있어 "
+                   "이미 지나간 일로 보고 한 단계 내렸다. 진행 중이면 다시 올려야 한다.")
+    elif tense["verdict"] == "진행" and level == "응급":
+        reason += f" 진행 중 신호({', '.join(tense['progress'])})가 있다."
 
     return {
         "level": level,
         "reason": reason,
-        "signals": [m["standard"] for m in matched],
+        "signals": [m["standard"] for m in matched] + list(pressure.get("signals") or []),
         "safety_referral": ({"number": referral, "label": "소방·구조" if referral == "119" else "신고"}
                             if level == "응급" and referral else None),
         "matched": matched,
         "escalators": escalators,
         "ambiguous": ambiguous,
         "admin_context": admin,
+        "pressure": pressure,
+        "tense": tense,
     }
+
+# --------------------------------------------------------------------------- #
+# 재촉·다급함 (반복이 신호다)
+# --------------------------------------------------------------------------- #
+
+_STRENGTH_ORDER = {"약": 0, "중": 1, "강": 2}
+
+
+def pressure_data() -> dict[str, Any]:
+    """재촉 표현 사전 (표현·가산신호·임계값)."""
+    return load_risk_signals().get("pressure", {})
+
+
+@lru_cache(maxsize=1)
+def _intensity_patterns() -> list[tuple[str, str, Any]]:
+    import re
+    out = []
+    for item in pressure_data().get("intensity", []):
+        try:
+            out.append((item["id"], item["label"], re.compile(item["regex"])))
+        except Exception:  # noqa: BLE001 - 사전 오타가 통화를 죽이지 않는다
+            log.warning("재촉 가산 신호 정규식 오류: %s", item.get("id"))
+    return out
+
+
+def detect_pressure(turns: str | list[str]) -> dict[str, Any]:
+    """어르신의 재촉·다급함을 센다. **반복이 신호다.**
+
+    실사용 결함에서 나온 기능이다. 집에 물이 차오르는 민원인이 "빨리와요!!!" 를 세 번
+    반복했는데 시스템이 긴급도를 올리지 못했다. 단발 문장만 보면 이걸 잡을 수 없다.
+
+    강도 설계가 핵심이다. "큰일이라예"는 경북에서 아주 흔한 일상 강조라 1회로 올리면
+    오탐이 쏟아지고, **오탐이 쏟아지면 진짜 응급이 묻힌다.** 그래서 표현마다 단독 강도를
+    두고 반복 횟수로 판정한다.
+
+    Args:
+        turns: 어르신 발화 하나 또는 **여러 턴의 목록**. 목록을 주어야 반복을 센다.
+
+    Returns:
+        딕셔너리::
+
+            {
+              "escalate": True,             # 긴급도를 올려야 하는가
+              "strength": "강"|"중"|"약",   # 관측된 최고 단독 강도
+              "count": 3,                   # 재촉 표현이 나온 횟수(턴 기준)
+              "distinct": 1,                # 서로 다른 표현 수
+              "repeated_turns": 3,          # 거의 같은 말을 되풀이한 턴 수
+              "intensity": [...],           # 느낌표 반복 등 가산 신호
+              "reason": "...",              # urgency.reason 에 이어 붙일 수 있다
+              "signals": ["재촉 3회 반복"], # urgency.signals 에 그대로
+              "matched": [...]              # 어느 턴에서 무엇이 걸렸는지
+            }
+
+    예외를 던지지 않는다. 실패하면 ``escalate=False`` 를 돌려준다.
+    """
+    empty = {"escalate": False, "strength": None, "count": 0, "distinct": 0,
+             "repeated_turns": 0, "intensity": [], "reason": "재촉 표현 없음",
+             "signals": [], "matched": []}
+    if not turns:
+        return empty
+    texts = [turns] if isinstance(turns, str) else [t for t in turns if t and t.strip()]
+    if not texts:
+        return empty
+
+    try:
+        data = pressure_data()
+        expressions = data.get("expressions", [])
+        thresholds = data.get("thresholds", {"강": 1, "중": 2, "약": 3})
+
+        matched: list[dict[str, Any]] = []
+        for index, text in enumerate(texts):
+            # 정규화 전후를 둘 다 본다. 사투리 그대로 들어와도 걸려야 한다.
+            from .core import convert
+            standard = convert(text, "to_standard")
+            for expr in expressions:
+                hit = _hits(expr.get("patterns", []), text, standard)
+                if hit:
+                    matched.append({
+                        "turn": index, "id": expr["id"], "strength": expr["strength"],
+                        "standard": expr["standard"], "note": expr["note"],
+                        "matched_text": hit, "text": text,
+                    })
+
+        intensity = []
+        for iid, label, pattern in _intensity_patterns():
+            for index, text in enumerate(texts):
+                if pattern.search(text):
+                    intensity.append({"id": iid, "label": label, "turn": index})
+                    break
+
+        # 거의 같은 말을 되풀이했는가. 공백·문장부호를 지우고 비교한다.
+        import re
+        stripped = [re.sub(r"[\s!?.…~ㅠㅜ]+", "", t) for t in texts]
+        repeated = sum(1 for i, a in enumerate(stripped)
+                       if a and any(a == b for j, b in enumerate(stripped) if j != i))
+
+        return _decide_pressure(matched, intensity, repeated, thresholds, len(texts))
+    except Exception:  # noqa: BLE001 - 안전 판정이 통화를 끊게 두지 않는다
+        log.exception("재촉 탐지 실패")
+        return empty
+
+
+def _decide_pressure(matched, intensity, repeated, thresholds, turn_count) -> dict[str, Any]:
+    if not matched:
+        return {"escalate": False, "strength": None, "count": 0, "distinct": 0,
+                "repeated_turns": repeated, "intensity": intensity,
+                "reason": "재촉 표현 없음", "signals": [], "matched": []}
+
+    strongest = max(matched, key=lambda m: _STRENGTH_ORDER[m["strength"]])["strength"]
+    turns_with = len({m["turn"] for m in matched})
+    distinct = len({m["id"] for m in matched})
+
+    # 가산 신호는 횟수 1회분으로 친다. 느낌표 반복과 되풀이는 목소리가 높아졌다는 뜻이다.
+    effective = turns_with + (1 if intensity else 0) + (1 if repeated >= 2 else 0)
+    needed = thresholds.get(strongest, 2)
+    escalate = effective >= needed
+
+    parts = [f"재촉 표현이 {turns_with}개 턴에서 나왔다"]
+    if distinct > 1:
+        parts.append(f"서로 다른 표현 {distinct}가지")
+    if repeated >= 2:
+        parts.append(f"같은 말을 {repeated}번 되풀이했다")
+    if intensity:
+        parts.append(", ".join(dict.fromkeys(i["label"] for i in intensity)))
+    quoted = ", ".join(f"'{m['matched_text']}'" for m in matched[:3])
+    reason = (f"{'. '.join(parts)}({quoted}). "
+              f"단독 강도 '{strongest}' 기준 {needed}회에서 올린다 — "
+              f"환산 {effective}회로 {'넘었다' if escalate else '아직 못 넘었다'}.")
+
+    signals = []
+    if escalate:
+        signals.append(f"다급함 반복 {turns_with}회")
+        if repeated >= 2:
+            signals.append("같은 말 되풀이")
+        if intensity:
+            signals.append(intensity[0]["label"])
+
+    return {
+        "escalate": escalate, "strength": strongest, "count": turns_with,
+        "distinct": distinct, "repeated_turns": repeated, "intensity": intensity,
+        "reason": reason, "signals": signals, "matched": matched,
+    }
+
+# --------------------------------------------------------------------------- #
+# 진행 여부 (과거 신고 vs 지금 위험)
+# --------------------------------------------------------------------------- #
+
+#: 시제로 등급을 내려도 되는 신호. 침수 계열만이다.
+#: 불·가스·붕괴·부상은 과거형이어도 현장이 그대로일 수 있어 내리지 않는다.
+_TENSE_DOWNGRADABLE = {"flood-ingress", "flood-filling", "flood-submerged",
+                       "flood-overflow", "flood-washed-away"}
+
+
+def detect_tense(text: str) -> dict[str, Any]:
+    """진행 중인지 지나간 일인지 가르는 수식어를 찾는다.
+
+    같은 "물이 들어온다" 라도 "어제 들어왔어예"(과거 피해 신고)와 "지금 들어와요"
+    (지금 사람이 위험함)는 등급이 달라야 한다.
+
+    Returns:
+        ``{"progress": [...], "past": [...], "past_ending": [...], "verdict": "진행"|"과거"|"불명"}``
+
+    ``"과거"`` 는 **과거 수식어와 과거 서술어가 함께 있고 진행 수식어가 없을 때만** 나온다.
+    "어제부터 물이 들어옵니더" 는 어제가 붙어도 서술어가 현재형이라 ``"진행"`` 이 아닌
+    ``"불명"`` 으로 두고 등급을 내리지 않는다. 내리는 판단은 보수적이어야 한다.
+    """
+    data = load_risk_signals().get("tense", {})
+    found = {key: [p for p in data.get(key, []) if p and p in (text or "")]
+             for key in ("progress", "past", "past_ending")}
+    if found["progress"]:
+        verdict = "진행"
+    elif found["past"] and found["past_ending"]:
+        verdict = "과거"
+    else:
+        verdict = "불명"
+    return {**found, "verdict": verdict}

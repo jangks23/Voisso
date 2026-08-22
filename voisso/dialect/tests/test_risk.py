@@ -35,6 +35,16 @@ MUST_BE_EMERGENCY = [
     "숨을 몬 쉬겠어예",
     "사람 살리 주이소",
     "지금 당장 좀 와 주이소",
+    # ── 2026-08-22 실사용 실패에서 추가 ─────────────────────────────────────
+    # "물이 차오른다"는 잡는데 "물이 들어온다"를 못 잡아 응급이 "중요"로 접수됐다.
+    "집에 물이 들어와요", "물이 들어옵니더", "물이 들어와예", "물이 들어온다",
+    "방에 물이 들어옵니더", "마당에 물이 들어와예", "물이 들어오는데예",
+    "물이 넘어와예", "물이 밀려옵니더", "물이 찹니더", "물이 찬다", "물이 차고 있어예",
+    "발목까지 왔어예", "무릎까지 찼어예", "물이 잠깁니더", "도랑이 넘칩니더",
+    "비가 억수로 와가 물이 넘어예",
+    "타는 것 같아예", "뭔가 탑니더",
+    "질이 꺼졌습니더",
+    "길이 끊겼어예", "일어나지를 못하겠어예", "움직이지를 못하겠어예", "못 나가겠어예",
 ]
 
 #: 위험 신호가 아닌데 응급으로 올리면 안 되는 발화.
@@ -123,6 +133,41 @@ class EscalationTest(unittest.TestCase):
         """normalize 전후 어디에 매칭해도 걸려야 한다."""
         self.assertEqual("응급", detect_risk("몬 일어납니더")["level"])
         self.assertEqual("응급", detect_risk("못 일어납니다")["level"])
+
+
+class TenseTest(unittest.TestCase):
+    """같은 표현이라도 진행 중인지 지나간 일인지 가른다."""
+
+    def test_progress_stays_emergency(self):
+        for text in ["지금 물이 들어와요", "계속 물이 들어옵니더", "자꾸 물이 들어와예",
+                     "아직도 물이 들어옵니더", "점점 물이 차오릅니더"]:
+            with self.subTest(text=text):
+                result = detect_risk(text)
+                self.assertEqual("응급", result["level"])
+                self.assertEqual("진행", result["tense"]["verdict"])
+
+    def test_past_flood_is_lowered(self):
+        """과거 피해 신고를 응급으로 두면 진짜 응급이 묻힌다."""
+        result = detect_risk("어제 물이 들어왔어예")
+        self.assertEqual("중요", result["level"])
+        self.assertEqual("과거", result["tense"]["verdict"])
+
+    def test_past_marker_alone_does_not_lower(self):
+        """'어제부터 물이 들어옵니더' 는 어제가 붙어도 진행 중이다."""
+        self.assertEqual("응급", detect_risk("어제부터 물이 들어옵니더")["level"])
+
+    def test_fire_and_collapse_never_lowered(self):
+        """불·붕괴·부상은 과거형이어도 현장이 그대로일 수 있다. 내리지 않는다."""
+        for text in ["어제 불이 났어예", "저번에 담이 무너졌어예",
+                     "어제 넘어져가 몬 일어났어예"]:
+            with self.subTest(text=text):
+                self.assertEqual("응급", detect_risk(text)["level"])
+
+    def test_pressure_blocks_lowering(self):
+        """다급함이 반복되면 과거 표현이어도 내리지 않는다."""
+        result = detect_risk("어제 물이 들어왔어예",
+                             history=["빨리와요!!!", "빨리와요!!!", "빨리와요!!!"])
+        self.assertEqual("응급", result["level"])
 
 
 class RiskSchemaTest(unittest.TestCase):
