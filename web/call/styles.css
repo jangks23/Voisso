@@ -901,3 +901,47 @@ button { cursor: pointer; border: 0; background: none; }
 .demo-bar > span { flex: 1 1 auto; overflow-x: auto; white-space: nowrap; scrollbar-width: none; }
 .demo-bar > span::-webkit-scrollbar { display: none; }
 .sim-inline { flex: 0 0 auto; min-height: 34px; padding: 4px 10px; font-size: .74rem; border-radius: 10px; }
+
+/* 담당자를 기다리는 동안에도 말을 걸 수 있다. 침묵하는 화면 앞에 세워두지 않는다. */
+.hw-say { display: flex; gap: 8px; }
+.hw-in {
+  flex: 1 1 auto; min-width: 0; min-height: 56px; padding: 0 14px;
+  border-radius: 14px; border: 2px solid var(--line);
+  background: var(--surface); color: var(--text); font-size: 1rem;
+}
+.hw-in::placeholder { color: var(--muted); opacity: 1; }
+.hw-in:focus { outline: none; border-color: var(--officer); }
+.hw-send {
+  flex: 0 0 auto; min-height: 56px; padding: 0 16px; border-radius: 14px;
+  background: var(--officer); color: var(--officer-soft);
+  font-size: .98rem; font-weight: 800;
+}
+.hw-queue { list-style: none; margin: 0; padding: 0; display: grid; gap: 6px; }
+.hw-queue:empty { display: none; }
+.hw-queue li {
+  padding: 8px 12px; border-radius: var(--r-sm);
+  background: var(--surface); border: 1px solid var(--officer-line);
+  font-size: .95rem; word-break: keep-all; overflow-wrap: anywhere;
+}
+.hw-queue li::before { content: "전할 말씀 · "; font-weight: 800; color: var(--officer); font-size: .82rem; }
+:root[data-mode="elder"] .hw-in { min-height: 64px; font-size: 1.05rem; }
+:root[data-mode="elder"] .hw-send { min-height: 64px; font-size: 1.05rem; }
+
+/* ── 어르신이 말로 동의했을 때 ─────────────────────────
+   카운트다운도, 취소 모달도 없다. AI 가 말로 물어보고 어르신이 "예" 라고 하면
+   그때 단추 하나만 화면 한가운데에 크게 띄운다.
+   AI 안내("화면에 큰 단추가 나왔습니더. 그거 한 번만 눌러 주이소")와 화면이 일치해야 한다. */
+.safety-bar.confirmed {
+  position: absolute; left: 12px; right: 12px; top: 50%;
+  transform: translateY(-50%); z-index: 20;
+  margin: 0; padding: 20px; border-width: 5px;
+  box-shadow: 0 24px 60px rgba(16, 32, 52, .28);
+}
+:root[data-theme="dark"] .safety-bar.confirmed { box-shadow: 0 24px 60px rgba(0, 0, 0, .6); }
+.safety-bar.confirmed .sb-head { font-size: 1.6rem; margin-bottom: 4px; }
+.safety-bar.confirmed .sb-call { min-height: 172px; font-size: 2rem; border-radius: 22px; }
+.safety-bar.confirmed .sb-call .sb-num { font-size: 1.5em; }
+.safety-bar.confirmed .sb-sub { font-size: 1rem; }
+:root[data-mode="elder"] .safety-bar.confirmed .sb-head { font-size: 1.75rem; }
+:root[data-mode="elder"] .safety-bar.confirmed .sb-call { min-height: 200px; font-size: 2.2rem; }
+.safety-bar.confirmed .sb-call:focus-visible { outline: 5px solid var(--text); outline-offset: 4px; }

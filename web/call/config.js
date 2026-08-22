@@ -58,6 +58,9 @@ window.VOISSO_CONFIG = {
 
   /* 방언 사전 재점수화: 표준어 기준 1순위 대신 '경북 사투리 민원처럼 들리는' 후보를 고른다.
      사전은 dialect-hints.js (voisso/dialect/lexicon.json 에서 생성). */
+  // 응급(안전 안내가 뜬 상태)에서 서버가 done 을 주면 이만큼 뒤에 자동으로 접수한다.
+  // 위험한 사람을 마무리 질문 루프에 붙잡아 두지 않기 위한 것이다. 0 이면 끈다.
+  EMERGENCY_AUTO_END_MS: 2000,
   HANDOFF_POLL_MS: 3000,               // 통화 종료 후 담당자 연결을 확인하는 주기 (계약 5-B)
   RESCORE_WITH_DIALECT: true,
   VOICE_REVEAL_MS: 700,                // 음성 발화의 정규화 결과를 보여주고 나서 상담원 답변을 띄우는 간격

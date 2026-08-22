@@ -201,6 +201,8 @@ EMERGENCY_SCRIPT = (
     "빨리와요!!!",
     "빨리와요!!!",
     "그냥 빨리!!!!!",
+    "옆집도 물이 찼어예",
+    "안동시 옥동입니더",
 )
 
 
@@ -231,6 +233,27 @@ def check_emergency_mode() -> None:
     consecutive = [i for i in range(1, len(texts)) if texts[i] == texts[i - 1]]
     check("같은 응답을 연달아 반복하지 않았다", not consecutive, f"반복 위치 {consecutive}")
 
+    from collections import Counter
+
+    # 고정 문구를 돌려쓰면 여덟 턴에 같은 문장이 두 번 나온다.
+    # 방금 하신 말을 되짚으면 반복이 사라진다. **동일 응답 0회**가 기준이다.
+    duplicates = [t for t, n in Counter(texts).items() if n > 1]
+    check(
+        f"{len(texts)}턴 중 동일 응답이 없다",
+        not duplicates,
+        f"중복 {len(texts) - len(set(texts))}회: {duplicates[:1]}",
+    )
+
+    # 119 는 첫 안내 한 번이면 된다. 화면에 버튼이 고정돼 있다.
+    spoken_119 = sum(1 for t in texts if "119" in t)
+    check("119 를 말로 되풀이하지 않았다", spoken_119 <= 2, f"{spoken_119}회 언급")
+
+    # 접수가 확정된 뒤의 발화는 버리지 않고 담당자에게 넘긴다.
+    check("접수 확정 후 대화가 종료 상태로 유지된다", all(r["done"] for r in replies[2:]))
+    carried = [n for n in session.notes if n["source"] == "caller_after_intake"]
+    check("접수 후 발화가 담당자 메모로 쌓였다", bool(carried), str([n["text"] for n in carried]))
+    check("접수 확정 표시가 켜졌다", session.intake_closed is True)
+
     # (a) 마무리 질문 루프에 들어가지 않는다
     wrapup = [t for t in texts if "더 하실 말씀" in t or "더 얘기하실" in t]
     check(
@@ -252,8 +275,13 @@ def check_emergency_mode() -> None:
         session.urgency.reemphasize,
         f"재촉 {session.pressure_turns}턴",
     )
-    reannounced = sum(1 for t in texts if "119" in t)
-    check("119 안내가 여러 번 나갔다", reannounced >= 2, f"{reannounced}회")
+    # 예전에는 "여러 번 안내"를 요구했지만, 반복이 오히려 고장처럼 들린다는
+    # 실사용 피드백으로 뒤집혔다. 말은 한 번, 화면 버튼은 계속 — 이 조합이다.
+    check(
+        "재강조 신호가 화면용으로 유지된다",
+        (replies[-1].get("urgency") or {}).get("reemphasize") is True,
+        str((replies[-1].get("urgency") or {}).get("reemphasize")),
+    )
 
     # (c) 접수가 즉시 확정된다
     check("재촉 반복 뒤 접수가 확정됐다", replies[-1]["done"] is True, str(replies[-1]["done"]))

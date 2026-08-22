@@ -14,6 +14,7 @@ from __future__ import annotations
 import logging
 import base64
 import os
+import re
 import time
 import uuid
 from contextlib import contextmanager
@@ -27,8 +28,15 @@ from ..voice.vocabulary import score_transcript
 from . import integrations, prompts
 from .complaint import build_complaint
 from .engine import get_engines
-from .slots import SLOT_ORDER, Slots, looks_finished
-from .urgency import Urgency, assess, has_pressure, safety_notice
+from .slots import (
+    SLOT_ORDER,
+    Slots,
+    extract_contact,
+    extract_location,
+    is_meaningless,
+    looks_finished,
+)
+from .urgency import Urgency, assess, confirm_intent, has_pressure
 from .usage import PROCESS_TOTAL, Usage
 
 log = logging.getLogger("voisso.agent.session")
@@ -65,13 +73,69 @@ NUDGE_QUESTION = "혹시 더 말씀해 주실 수 있을까요?"
 # 재촉이 반복될 때 **같은 문장을 되풀이하면 시스템이 고장 난 것처럼 들린다.**
 # 뜻은 같고 표현만 바꾼 것들을 돌려 쓴다. 셋 다 "무엇이 되어 있는지 + 지금 뭘 하면
 # 되는지"를 담고, 처리 결과는 약속하지 않는다.
-EMERGENCY_STATUS_VARIANTS = (
-    "접수됐습니다. 담당자에게 바로 넘겼습니다. 위험하시면 지금 {number}를 눌러 주세요.",
-    "접수는 끝났습니다. 담당자가 지금 확인하고 있습니다. 위험하시면 {number}를 먼저 눌러 주세요.",
-    "담당자에게 전달해 두었습니다. 여기서 더 하실 일은 없습니다. 위험하시면 {number}를 눌러 주세요.",
+# 응급 접수 확정 한 줄. **119 는 여기서 말하지 않는다** —
+# 첫 안내에서 이미 말했고, 화면에 버튼이 고정돼 있다.
+# 다급한 사람에게 긴 문장은 들리지 않는다. 짧게 끝낸다.
+EMERGENCY_CONFIRM = "접수됐습니다. 담당자에게 바로 넘겼습니다."
+
+# ── 119 연결 제안 ────────────────────────────────────────────────────────
+# **통보가 아니라 질문이다.** 예전에는 "위험하시면 먼저 119에 전화해 주이소"
+# 라고 통보했고, 어르신이 직접 걸어야 했다. 이제는 우리가 걸어 드리겠다고 묻는다.
+# 어르신은 버튼보다 말이 편하다 — 이 프로젝트의 전제 그 자체다.
+SAFETY_OFFER = "지금 많이 위험하신 것 같습니다. 제가 {number}에 연결해 드릴까요?"
+SAFETY_OFFER_AGAIN = "{number}에 연결해 드릴까요? 예, 아니오만 말씀해 주세요."
+
+# 브라우저는 사용자 조작 없이 tel: 을 실행하지 못한다. 말로 "네" 한 것은
+# 브라우저 입장에서 조작이 아니다. 그래서 확정 뒤에도 화면 버튼이 필요하다.
+# **실제 전화망 연동(H3)에서는 이 제약이 사라지고 바로 전환된다.**
+SAFETY_CONFIRMED = (
+    "예, 지금 {number}로 연결하겠습니다. "
+    "화면에 큰 단추가 나왔습니다. 그거 한 번만 눌러 주세요."
+)
+SAFETY_DECLINED = "예, 알겠습니다. 위험해지시면 언제든 말씀해 주세요."
+# 두 번 물어도 불분명하면 더 묻지 않는다. 공포를 주면 안 된다.
+SAFETY_FALLBACK = "화면에 {number} 단추를 띄워 뒀습니다. 위험하시면 그거 눌러 주세요."
+
+# 한 통화에 연결 질문은 최대 이만큼. 계속 물으면 공포를 준다.
+MAX_SAFETY_OFFERS = 2
+
+# 접수가 끝난 뒤에도 어르신이 말을 이어갈 때의 대답.
+#
+# **고정 문구를 돌려쓰지 않는다.** 방금 하신 말을 짧게 되짚는다 —
+# 반복이 사라지고, 어르신도 자기 말이 전달되고 있다는 걸 안다.
+# 되짚을 거리가 없을 때만 아래 폴백을 쓰고, 직전에 쓴 것은 다시 쓰지 않는다.
+POST_INTAKE_ACKS = (
+    "예, 같이 전하겠습니다.",
+    "적어 뒀습니다.",
+    "예, 그것도 적었습니다.",
+    "말씀 담아 뒀습니다.",
+    "예, 담당자에게 전하겠습니다.",
+    "그 내용도 적어 뒀습니다.",
+    "예, 알겠습니다. 적었습니다.",
+    "담당자에게 같이 넘기겠습니다.",
+)
+
+# 다급한 분께는 더 짧게. 긴 문장은 들리지 않는다.
+POST_INTAKE_ACKS_URGENT = (
+    "적어 뒀습니다.",
+    "예, 전하겠습니다.",
+    "같이 넘기겠습니다.",
+    "예, 적었습니다.",
+)
+
+# 재촉을 되짚는 말. "빨리와요" 가 반복돼도 문장은 달라진다.
+# 감사·마무리 인사. 민원 내용이 아니므로 받아 적었다고 답하면 어색하다.
+_COURTESY_RE = re.compile(r"고맙|감사|수고하|애쓰|잘\s*부탁")
+
+PRESSURE_ACKS = (
+    "빨리 와 달라고 하신 것도 전하겠습니다.",
+    "급하신 상황이라고 같이 적었습니다.",
+    "서둘러 달라고 전하겠습니다.",
+    "급하다고 담당자에게 강조하겠습니다.",
 )
 # 위치는 출동에 필요하다. 응급에서 유일하게 계속 묻는 항목이고, 한 번에 하나만 묻는다.
-EMERGENCY_ASK_WHERE = "접수했습니다. 어디신지만 알려 주시겠어요?"
+# 상태 문장과 붙여 쓰므로 여기서 "접수"를 또 말하지 않는다.
+EMERGENCY_ASK_WHERE = "어디신지만 알려 주시겠어요?"
 # 슬롯별로 더 자연스러운 되물음.
 SLOT_NUDGE = {
     "what": "어떤 일 때문에 불편하신지 말씀해 주시겠어요?",
@@ -125,10 +189,20 @@ class ConversationSession:
         self.wrapup_rounds = 0
         # 재촉이 나온 발화 수. 턴을 넘긴 반복만 센다.
         self.pressure_turns = 0
-        # 응급 상태 안내를 몇 번 했는지. 문장을 돌려 쓰는 데 쓴다.
-        self.status_sent = 0
+        # 접수가 확정됐는가. 확정 뒤에는 대화를 끌지 않고 담당자에게 넘긴다.
+        self.intake_closed = False
+        # 접수 확정 뒤에 들어온 발화 수. 폴백 문구를 고르는 데 쓴다.
+        self.post_intake_turns = 0
+        # 이미 쓴 대답들. 통화 전체에서 같은 말을 두 번 하지 않기 위해 기억한다.
+        # (직전 것만 기억하면 한 칸 건너뛴 중복이 그대로 남는다)
+        self.used_acks: set[str] = set()
         # 재강조로 안전 안내를 다시 붙인 적이 있는지. 매 턴 되풀이하지 않는다.
         self.reemphasized_once = False
+        # 119 연결 제안 상태.
+        self.safety_offers = 0          # 몇 번 물었는가 (최대 MAX_SAFETY_OFFERS)
+        self.safety_pending = False     # 대답을 기다리는 중인가
+        self.safety_confirmed = False   # 연결하겠다고 하셨는가
+        self.safety_declined = False    # 거절하셨는가
         # 모델이 직전 턴에 한 말. 위험 인지 여부를 보는 데 쓴다.
         # (우리가 앞에 붙이는 안전 안내는 제외한 **모델 원문**이다)
         self.last_llm_reply = ""
@@ -249,6 +323,27 @@ class ConversationSession:
         caller_turn = self.build_caller_turn(
             caller_dialect, caller_standard, source, stt_raw, provider_name
         )
+
+        # 접수가 확정된 뒤다. **같은 안내를 되풀이하지 않는다.**
+        # 어르신 말은 버리지 않고 담당자에게 전할 메모로 쌓는다.
+        if self.intake_closed:
+            self.add_note(caller_standard, source="caller_after_intake")
+            # 말로는 되풀이하지 않지만 **긴급도는 계속 갱신한다.**
+            # 재촉이 이어지면 P7 이 화면의 119 버튼을 계속 강조해야 한다.
+            self._update_urgency()
+            ack = self._post_intake_ack(caller_standard)
+            self.post_intake_turns += 1
+            return self._say(
+                ack,
+                done=True,
+                stt_error=stt_error,
+                rescored=rescored,
+                timings=timings,
+                started=turn_started,
+                want_audio=want_audio,
+                caller_turn=caller_turn,
+            )
+
         with _timed(timings, "llm_ms"):
             decision = self._decide()
         reply = self._apply_decision(decision)
@@ -284,6 +379,10 @@ class ConversationSession:
                 self.slots.record_ask(pending)
                 # 포기 처리로 남은 슬롯이 없어졌다면 이제 마무리해도 된다.
                 done = self.slots.is_complete()
+
+        if done:
+            # 이 턴으로 접수가 확정됐다. 다음 발화부터는 담당자에게 넘긴다.
+            self.intake_closed = True
 
         return self._say(
             reply,
@@ -379,7 +478,34 @@ class ConversationSession:
         caller_turn = self.build_caller_turn(
             caller_dialect, caller_standard, source, stt_raw, provider_name
         )
+
+
         yield {"type": "heard", "caller_turn": caller_turn, **caller_turn}
+
+        # 접수 확정 뒤에는 LLM 을 부르지 않고 짧게 받아 적기만 한다.
+        if self.intake_closed:
+            self.add_note(caller_standard, source="caller_after_intake")
+            # 말로는 되풀이하지 않지만 **긴급도는 계속 갱신한다.**
+            # 재촉이 이어지면 P7 이 화면의 119 버튼을 계속 강조해야 한다.
+            self._update_urgency()
+            ack = self._post_intake_ack(caller_standard)
+            self.post_intake_turns += 1
+            dialect = integrations.to_dialect(ack)
+            self.transcript.append({"role": "agent", "standard": ack, "dialect": dialect})
+            yield {
+                "type": "final",
+                "session_id": self.id,
+                "reply_text": ack,
+                "reply_dialect": dialect,
+                "caller_turn": caller_turn,
+                "audio_b64": None,
+                "audio_mime": None,
+                "done": True,
+                "slots": self.slots.as_dict(),
+                "urgency": self.urgency.as_dict(),
+                "meta": {"engine": "post_intake", "turn": self.turn_count},
+            }
+            return
 
         llm, rule = get_engines()
         streamer = getattr(llm, "respond_stream", None) if llm is not None else None
@@ -424,6 +550,8 @@ class ConversationSession:
         done, _ = self._resolve_done(decision, caller_standard)
         if notice and not self.urgency.reemphasize:
             done = False
+        if done:
+            self.intake_closed = True
         if not done and not self.urgency.is_emergency:
             pending = self.slots.next_slot()
             if pending:
@@ -451,7 +579,7 @@ class ConversationSession:
             "audio_mime": None,
             "done": bool(done),
             "slots": self.slots.as_dict(),
-            "urgency": self.urgency.as_dict(),
+            "urgency": self._urgency_payload(),
             "meta": {
                 "engine": self.engine_used,
                 "streamed": streamer is not None and bool(spoken),
@@ -595,6 +723,23 @@ class ConversationSession:
             "stt_provider": stt_provider,
         }
 
+    def _urgency_payload(self) -> dict[str, Any]:
+        """응답에 실을 긴급도. **연결 확정 여부를 함께 담는다.**
+
+        브라우저는 사용자 조작 없이 tel: 을 실행하지 못한다. 말로 "네" 하신 것은
+        브라우저 입장에서 조작이 아니므로, P7 이 이 값을 보고 큰 버튼을 띄운다.
+        실제 전화망 연동(H3)에서는 이 제약이 사라지고 바로 전환된다.
+        """
+        payload = self.urgency.as_dict()
+        referral = payload.get("safety_referral")
+        if referral:
+            referral = dict(referral)
+            referral["confirmed"] = self.safety_confirmed
+            referral["declined"] = self.safety_declined
+            referral["asked"] = self.safety_offers
+            payload["safety_referral"] = referral
+        return payload
+
     def _caller_text(self) -> str:
         """어르신이 한 말 전체. 긴급도는 누적 판정한다."""
         return " ".join(
@@ -613,9 +758,34 @@ class ConversationSession:
         - 재촉에는 질문이 아니라 **지금 무엇이 되어 있는지**로 답한다.
         """
         number = (self.urgency.safety_referral or {}).get("number", "119")
-        variant = EMERGENCY_STATUS_VARIANTS[self.status_sent % len(EMERGENCY_STATUS_VARIANTS)]
-        status = variant.format(number=number)
-        self.status_sent += 1
+
+        # 1) 연결 여부를 물어 놓고 대답을 기다리는 중이다.
+        if self.safety_pending:
+            answer = confirm_intent(caller_text)
+            if answer == "yes":
+                self.safety_pending = False
+                self.safety_confirmed = True
+                log.warning("119 연결 확정 session=%s 번호=%s", self.id, number)
+                return False, SAFETY_CONFIRMED.format(number=number)
+            if answer == "no":
+                self.safety_pending = False
+                self.safety_declined = True
+                return False, SAFETY_DECLINED
+            # 불분명하다. **부정으로 단정하지 않는다.** 한 번 더 짧게 묻는다.
+            if self.safety_offers < MAX_SAFETY_OFFERS:
+                self.safety_offers += 1
+                return False, SAFETY_OFFER_AGAIN.format(number=number)
+            # 두 번 물어도 불분명하면 화면 버튼 안내로 넘어간다.
+            self.safety_pending = False
+            return False, SAFETY_FALLBACK.format(number=number)
+
+        # 2) 아직 안 물어봤거나, 거절 뒤 상황이 나빠졌다.
+        if self._should_offer_safety():
+            self.safety_offers += 1
+            self.safety_pending = True
+            return False, SAFETY_OFFER.format(number=number)
+
+        status = EMERGENCY_CONFIRM
 
         if self.turn_count >= MAX_TURNS or self._check_budget():
             return True, status
@@ -630,6 +800,20 @@ class ConversationSession:
 
         # 더 물을 것이 없다. 마무리 질문 루프에 들어가지 않고 즉시 확정한다.
         return True, status
+
+    def _should_offer_safety(self) -> bool:
+        """지금 119 연결을 물어봐야 하는가.
+
+        처음 응급으로 판정됐을 때 한 번 묻는다. 거절하셨으면 **강요하지 않는다** —
+        다만 상황이 더 나빠지는 신호(재촉 반복)가 오면 한 번 더 물어도 된다.
+        어느 경우든 한 통화에 두 번을 넘지 않는다. 계속 물으면 공포를 준다.
+        """
+        if self.safety_confirmed or self.safety_offers >= MAX_SAFETY_OFFERS:
+            return False
+        if not self.safety_declined:
+            return True
+        # 거절 뒤에도 재촉이 이어지면 상황이 악화되고 있다는 뜻이다.
+        return self.urgency.reemphasize
 
     def _update_urgency(self) -> str:
         """긴급도를 다시 판정하고, 필요하면 안전 안내 문구를 돌려준다.
@@ -665,7 +849,8 @@ class ConversationSession:
                 ", ".join(self.urgency.signals),
                 (self.urgency.safety_referral or {}).get("number"),
             )
-            return safety_notice(self.urgency)
+        # 안내 문구는 _emergency_reply 가 **질문 형태로** 만든다.
+        # 여기서 통보성 문장을 앞에 붙이지 않는다.
         return ""
 
     def _apply_decision(self, decision) -> str:
@@ -778,6 +963,64 @@ class ConversationSession:
             return question
         return f"{text} {question}"
 
+    def _post_intake_ack(self, caller_standard: str) -> str:
+        """접수 확정 뒤의 대답을 만든다.
+
+        **방금 하신 말을 되짚는 것이 기본이다.** 고정 문구를 돌려쓰면
+        여덟 턴에 같은 문장이 두 번 나오고, 어르신은 시스템이 고장 났다고
+        느낀다. 되짚을 거리가 없을 때만 폴백을 쓰고, 그때도 직전 문구는
+        다시 쓰지 않는다.
+        """
+        text = (caller_standard or "").strip()
+        urgent = self.urgency.is_emergency
+        candidates: list[str] = []
+
+        # 인사·마무리 표현은 "적어 뒀습니다" 로 받으면 어색하다. 인사로 받는다.
+        # (감사 인사는 P5 의 종료 신호 목록에 없어서 여기서 따로 본다)
+        if looks_finished(text) or _COURTESY_RE.search(text):
+            for phrase in (
+                "예, 전화 주셔서 고맙습니다.",
+                "예, 담당자가 곧 연락드릴 겁니다.",
+                "예, 편히 계세요.",
+                "예, 들어가세요.",
+            ):
+                if phrase not in self.used_acks:
+                    self.used_acks.add(phrase)
+                    return phrase
+
+        # 1) 무엇을 받아 적었는지 되짚는다.
+        contact = extract_contact(text)
+        if contact:
+            candidates.append("연락처 받았습니다.")
+
+        location = extract_location(text)
+        if location:
+            candidates.append(f"{location}이라고 적었습니다.")
+
+        if has_pressure(text):
+            candidates.append(
+                PRESSURE_ACKS[self.post_intake_turns % len(PRESSURE_ACKS)]
+            )
+
+        if not candidates and text and not is_meaningless(text):
+            # 하신 말을 그대로 짧게 인용한다. 지어내지 않으니 틀릴 일이 없다.
+            quoted = text.rstrip(" .!?\u2026")
+            if len(quoted) > 22:
+                quoted = quoted[:22] + "…"
+            candidates.append(f"'{quoted}' 적어 뒀습니다.")
+
+        # 2) 폴백 — 직전과 다른 것을 고른다.
+        pool = POST_INTAKE_ACKS_URGENT if urgent else POST_INTAKE_ACKS
+        for offset in range(len(pool)):
+            candidates.append(pool[(self.post_intake_turns + offset) % len(pool)])
+
+        for candidate in candidates:
+            if candidate not in self.used_acks:
+                self.used_acks.add(candidate)
+                return candidate
+        # 준비한 문구를 다 썼다. 통화가 그만큼 길어졌다는 뜻이다.
+        return candidates[0]
+
     def _record_stt(self, result) -> None:
         if result.provider == "none":
             return
@@ -882,7 +1125,7 @@ class ConversationSession:
             "slots": self.slots.as_dict(),
             # **통화 중에** 긴급도를 알려 준다. 카드(end)에만 있으면 늦다 —
             # 통화가 끝난 뒤 119 버튼이 떠봐야 소용이 없다.
-            "urgency": self.urgency.as_dict(),
+            "urgency": self._urgency_payload(),
             # 아래는 계약 외 진단 필드다. 소비자는 무시해도 된다.
             "meta": {
                 "engine": self.engine_used,
@@ -908,7 +1151,7 @@ class ConversationSession:
                     "audio_mime": None,
                     "done": self.closed if done is None else done,
                     "slots": self.slots.as_dict(),
-                    "urgency": self.urgency.as_dict(),
+                    "urgency": self._urgency_payload(),
                     "meta": {"engine": self.engine_used, "replayed": True},
                 }
         return self._say(prompts.opening_line(), done=False)

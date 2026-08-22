@@ -25,6 +25,7 @@
     delivery: $('delivery'), card: $('card'), btnAgain: $('btnAgain'),
     handoffWait: $('handoffWait'), btnAnswer: $('btnAnswer'),
     hwElapsed: $('hwElapsed'), hwNo: $('hwNo'),
+    hwIn: $('hwIn'), btnHwSend: $('btnHwSend'), hwQueue: $('hwQueue'),
     btnSimOfficer: $('btnSimOfficer'), btnSimOfficerMsg: $('btnSimOfficerMsg'),
     demoBarText: $('demoBarText'), btnSimMsg2: $('btnSimMsg2'),
     incomingTitle: $('incomingTitle'), incomingSub: $('incomingSub'), incomingNote: $('incomingNote'),
@@ -574,9 +575,12 @@
     el.hint.classList.remove('alert');
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
-    state.callerBubbles = []; state.slotRevisions = [];
-    state.safety = []; state.hurry = 0;
-    el.safetyBar.hidden = true; el.safetyBar.classList.remove('again'); el.safetyCalls.innerHTML = '';
+    state.callerBubbles = []; state.slotRevisions = []; state.pending = [];
+    if (el.hwQueue) el.hwQueue.innerHTML = '';
+    state.safety = []; state.hurry = 0; state.safetyConfirmed = false;
+    el.safetyBar.hidden = true;
+    el.safetyBar.classList.remove('again', 'confirmed');
+    el.safetyCalls.innerHTML = '';
     renderSlots({});
     setBusy(true);
 
@@ -724,6 +728,14 @@
         state.done = true;
         el.btnEnd.classList.add('ready');
         el.hint.textContent = '필요한 내용은 다 들었니더. 아래 버튼을 누르면 접수됩니더.';
+        // 응급이면 같은 안내를 반복하며 붙잡아 두지 않는다. 바로 접수하고 담당자에게 넘긴다.
+        // (119 버튼은 화면에 고정돼 있고, 상태는 글자로 계속 보인다)
+        if ((state.safety || []).length && !state.ended) {
+          say('접수하고 있습니더');
+          el.hint.textContent = '접수하고 담당자한테 바로 넘길게예.';
+          setTimeout(() => { if (!state.ended) endCall(); },
+                     CFG.EMERGENCY_AUTO_END_MS == null ? 2000 : CFG.EMERGENCY_AUTO_END_MS);
+        }
       }
       setBusy(false);
     } catch (e) {
@@ -827,23 +839,47 @@
     if (!refs.length) return false;
 
     // 이미 떠 있는 번호는 유지하고, 새 번호만 더한다(내리지 않는다).
-    const have = (state.safety || []).map((x) => x.number);
     const merged = (state.safety || []).slice();
     let added = false;
-    refs.forEach((r) => { if (have.indexOf(r.number) === -1) { merged.push(r); added = true; } });
+    refs.forEach((r) => {
+      const i = merged.findIndex((y) => y.number === r.number);
+      if (i === -1) { merged.push(r); added = true; }
+      else { merged[i] = Object.assign({}, merged[i], r); }   // 확인 표시 갱신
+    });
     state.safety = merged;
 
-    el.safetyHead.textContent = merged.length > 1
-      ? '지금 위험하시믄 눌러 주이소'
-      : '지금 위험하시믄 ' + merged[0].number + ' 눌러 주이소';
+    // 어르신이 말로 동의했는가. 브라우저는 tel: 을 자동 실행하지 못하므로
+    // 마지막 한 번의 누름은 필요하다 — 그 누름을 최대한 쉽게 만든다.
+    const confirmed = merged.filter((r) => r.confirmed);
+    const declined = refs.some((r) => r.declined);
+    const show = confirmed.length ? confirmed.slice(0, 1) : merged;   // 확인되면 화면에 하나만
 
-    el.safetyCalls.innerHTML = merged.map((r, i) =>
+    el.safetyHead.textContent = confirmed.length
+      ? '여기 한 번만 눌러 주이소'
+      : (show.length > 1 ? '지금 위험하시믄 눌러 주이소'
+                         : '지금 위험하시믄 ' + show[0].number + ' 눌러 주이소');
+
+    el.safetyCalls.innerHTML = show.map((r, i) =>
       '<a class="sb-call' + (i > 0 ? ' secondary' : '') + '" href="tel:' + esc(r.number) + '"' +
       ' aria-label="' + esc(r.number) + '번으로 전화 걸기' + (r.label ? ', ' + esc(r.label) : '') + '">' +
       '<span class="sb-num">' + esc(r.number) + '</span>' +
       '<span>' + (r.label ? '(' + esc(r.label) + ') ' : '') + '전화 걸기</span></a>').join('');
 
     el.safetyBar.hidden = false;
+    el.safetyBar.classList.toggle('confirmed', confirmed.length > 0);
+
+    if (confirmed.length && !state.safetyConfirmed) {
+      state.safetyConfirmed = true;
+      const a = el.safetyCalls.querySelector('.sb-call');
+      if (a) { try { a.focus({ preventScroll: true }); } catch (e) { a.focus(); } }
+      say('여기 한 번만 눌러 주이소');
+    }
+    // 거절하면 크기만 되돌린다. 버튼 자체는 화면에서 없애지 않는다.
+    if (declined && !confirmed.length) {
+      state.safetyConfirmed = false;
+      el.safetyBar.classList.remove('confirmed');
+    }
+
     if (added) pulseSafety();
     return true;
   }
@@ -859,9 +895,31 @@
       const num = String(raw).replace(/[^0-9*#+-]/g, '');
       if (!num) return;
       if (out.some((y) => y.number === num)) return;
-      out.push({ number: num, label: (typeof x === 'object' && x.label) || KNOWN_NUMBERS[num] || '' });
+      out.push({
+        number: num,
+        label: (typeof x === 'object' && x.label) || KNOWN_NUMBERS[num] || '',
+        confirmed: isConfirmed(x),
+        declined: isDeclined(x),
+      });
     });
     return out;
+  }
+
+  /* 어르신이 "예" 라고 말하면 서버가 확인 표시를 실어 보낸다.
+     P6 과 필드명이 확정되기 전까지 흔한 형태를 모두 받는다.
+     확정되면 이 목록을 줄이면 된다. */
+  function isConfirmed(x) {
+    if (!x || typeof x !== 'object') return false;
+    if (x.confirmed === true || x.accepted === true || x.agreed === true) return true;
+    if (x.confirmed_at) return true;
+    return /^(confirmed|accepted|agreed|yes)$/i.test(String(x.status || x.state || ''));
+  }
+
+  function isDeclined(x) {
+    if (!x || typeof x !== 'object') return false;
+    if (x.confirmed === false && (x.asked || x.declined || x.status)) return !!(x.declined || /declin|refus|no/i.test(String(x.status || '')));
+    if (x.declined === true || x.refused === true) return true;
+    return /^(declined|refused|no)$/i.test(String(x.status || x.state || ''));
   }
 
   // 다급함이 반복되면 다시 눈에 들어오게. 깜빡임 같은 과한 효과는 쓰지 않는다.
@@ -946,6 +1004,30 @@
   }
 
   // 민원카드를 보여준 뒤에도 화면을 닫지 않고 담당자 연결을 기다린다.
+  /* 담당자가 붙기 전에 한 말은 큐에 쌓았다가, 연결되는 순간 그대로 전달한다. */
+  function queueForOfficer(text) {
+    const t = String(text || '').trim();
+    if (!t) return;
+    state.pending = (state.pending || []).concat([t]);
+    renderQueue();
+    toast('적어 뒀습니더. 담당자가 연결되면 바로 전해 드릴게예.', 3200);
+  }
+
+  function renderQueue() {
+    const q = state.pending || [];
+    el.hwQueue.innerHTML = q.map((t) => '<li>' + esc(t) + '</li>').join('');
+  }
+
+  async function flushQueue() {
+    const q = (state.pending || []).slice();
+    state.pending = [];
+    renderQueue();
+    for (const t of q) {
+      try { await API.handoffSay(state.handoff.id, t); } catch (e) { /* 다음 것 계속 */ }
+    }
+    return q.length;
+  }
+
   function stopWaitClock() {
     if (state.waitTimer) { clearInterval(state.waitTimer); state.waitTimer = 0; }
   }
@@ -1043,6 +1125,14 @@
     setBusy(false);
     toast('담당자가 연결됐습니더.', 4000);
     renderHandoff(h);
+    // 기다리는 동안 적어 둔 말씀을 그대로 전달한다.
+    if ((state.pending || []).length) {
+      flushQueue().then((n) => {
+        if (!n) return;
+        addNotice('기다리시는 동안 적어 두신 말씀 ' + n + '건을 담당자한테 전했습니더.');
+        API.handoffGet(state.handoff.id).then(renderHandoff).catch(() => {});
+      });
+    }
   }
 
   function renderHandoff(h) {
@@ -1653,6 +1743,16 @@
   el.btnEnd.addEventListener('click', () => (btnEndAction ? btnEndAction() : endCall()));
   el.btnAnswer.addEventListener('click', answerCallback);
 
+  function hwSubmit() {
+    const t = el.hwIn.value.trim();
+    if (!t) { el.hwIn.focus(); return; }
+    el.hwIn.value = '';
+    if (state.handoff.open) { sendHandoff(t); return; }   // 이미 연결됐으면 바로 보낸다
+    queueForOfficer(t);
+  }
+  el.btnHwSend.addEventListener('click', hwSubmit);
+  el.hwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); hwSubmit(); } });
+
   /* 시연 트리거 — 대시보드를 따로 열지 않고 한 화면에서 6단계를 흐르게 한다.
      어르신 모드에서는 CSS 로 숨겨져 있고, 시연 모드에서만 보인다. */
   el.btnSimOfficer.addEventListener('click', async () => {
@@ -1693,6 +1793,26 @@
 
   el.btnSimOfficerMsg.addEventListener('click', () => simOfficerMessage(el.btnSimOfficerMsg));
   el.btnSimMsg2.addEventListener('click', () => simOfficerMessage(el.btnSimMsg2));
+
+  /* 발표용 분할 화면(web/demo)이 담당자 역할을 대신 눌러 줄 수 있게 노출한다.
+     어르신 모드에서는 화면의 버튼이 숨겨져 있으므로, 상단 바가 이 함수를 쓴다. */
+  window.VoissoSimOfficer = {
+    canConnect: () => !!state.handoff.id && !state.handoff.open,
+    isOpen: () => !!state.handoff.open,
+    connect: async () => {
+      if (!state.handoff.id) return { ok: false, why: '아직 접수 전입니더' };
+      try { await API.handoffStartAsOfficer(state.handoff.id); return { ok: true }; }
+      catch (e) { return { ok: false, why: String(e.message || e) }; }
+    },
+    message: async (text) => {
+      if (!state.handoff.id) return { ok: false, why: '아직 접수 전입니더' };
+      try {
+        await API.handoffSayAsOfficer(state.handoff.id,
+          text || OFFICER_LINES[officerLineIdx++ % OFFICER_LINES.length]);
+        return { ok: true };
+      } catch (e) { return { ok: false, why: String(e.message || e) }; }
+    },
+  };
   el.btnAgain.addEventListener('click', goIdle);
 
   /* ── 초기화 ───────────────────────────────────────────── */

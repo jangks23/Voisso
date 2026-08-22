@@ -358,6 +358,13 @@ code { font-family: var(--mono); font-size: .92em; }
   font: inherit; text-align: left; cursor: pointer;
 }
 .wait-band:hover { filter: brightness(.98); }
+/* 응급이 대기 중이면 더 강하게. 깜빡이지 않고 굵기·크기·색으로만 올린다. */
+.wait-band.is-emergency {
+  border-color: var(--emg); border-left-width: 6px; border-width: 2px;
+  background: var(--emg-soft); padding: 13px 15px;
+}
+.wait-band.is-emergency .wait-n { color: var(--emg); font-size: 16px; }
+.wait-band.is-emergency .wait-msg { color: var(--text); font-weight: 600; }
 .wait-n { font-size: 14.5px; font-weight: 800; color: var(--warn); white-space: nowrap; }
 .wait-msg { font-size: 12.5px; color: var(--text-2); min-width: 0; flex: 1; }
 .wait-act {
@@ -613,6 +620,24 @@ code { font-family: var(--mono); font-size: .92em; }
 .ho-idle-text b { font-size: 15px; }
 .ho-idle-text span { font-size: 13px; color: var(--text-3); }
 .btn-lg { min-height: 48px; padding: 0 22px; font-size: 15px; }
+
+/* 원클릭 연결 */
+.ho-connect { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.ho-asme { font-size: 12.5px; color: var(--text-3); }
+.ho-change {
+  border: 0; background: none; padding: 4px 2px; min-height: 32px;
+  font: inherit; font-size: 12.5px; color: var(--accent); font-weight: 700;
+  cursor: pointer; text-decoration: underline;
+}
+/* 표준어 → 사투리 안내 (연결 전에도 보여 준다) */
+.ho-bridge-inline {
+  display: block; margin: 0; font-size: 13px; color: var(--text-2); line-height: 1.55;
+}
+.ho-bridge-inline b { color: var(--quote-text); }
+.ho--form .ho-bridge-inline {
+  margin: 0 0 12px; padding: 9px 12px; border-radius: 8px;
+  background: var(--quote-bg); border-left: 3px solid var(--quote-line);
+}
 
 /* 연결 폼 */
 .ho--form { padding: 16px 18px; }

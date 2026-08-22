@@ -26,10 +26,11 @@
   // TODO(P6): 서버에 쓰기 API(PATCH /api/complaints/{id})가 생기면 이 자리를 서버로 옮긴다.
   //           지금은 브라우저 localStorage 에만 남는다 — README 에 명시.
   var LS_BOOK = "voisso.dashboard.casebook.v1";
-  // 계약 5-B: 담당자 실명을 저장하지 않는다.
-  // 이름은 이 탭의 메모리에만 두고(새로고침하면 사라진다) 어디에도 기록하지 않는다.
-  // 부서는 개인정보가 아니므로 다음 연결 때 자동으로 채워지도록 브라우저에 남긴다.
+  // 담당자 이름·부서는 **이 브라우저에만** 남긴다. 급할 때 매번 입력하게 하면 못 쓴다.
+  // 서버에는 계약 5-B 대로 start 요청에 실어 보내지만, 서버가 마스킹해서만 저장한다(홍○○).
+  // 민원카드·CSV 어디에도 담당자 이름은 남지 않는다.
   var LS_OFFICER_DEPT = "voisso.dashboard.officer.department.v1";
+  var LS_OFFICER_NAME = "voisso.dashboard.officer.name.v1";
   var LS_SORT = "voisso.dashboard.sort.v1";
   var LS_REASSIGN_V1 = "voisso.dashboard.reassign.v1"; // 이전 버전 마이그레이션용
   var LS_THEME = "voisso.dashboard.theme";
@@ -113,7 +114,10 @@
     expanded: {},        // 상세에서 펼쳐 둔 근거 블록
     handoff: {},           // id -> {status, officer, messages, ...} 마지막으로 받은 상태
     handoffApi: null,      // true=실서버, false=목, null=아직 판정 전
-    officer: { name: "", department: localStorage.getItem(LS_OFFICER_DEPT) || "" },
+    officer: {
+      name: localStorage.getItem(LS_OFFICER_NAME) || "",
+      department: localStorage.getItem(LS_OFFICER_DEPT) || ""
+    },
     handoffDialect: {},    // 상세에서 사투리 원문을 펼쳐 둔 메시지
     handoffBusy: false,
     callback: {},          // id -> 마지막으로 받은 콜백 상태
@@ -1039,16 +1043,39 @@
 
   function renderWaitBand() {
     if (!el.waitBand) return;
-    var n = awaitingList().length;
-    if (!n) { el.waitBand.hidden = true; return; }
-    el.waitBand.hidden = false;
+    var waiting = awaitingList();
+    var n = waiting.length;
+    if (!n) { el.waitBand.hidden = true; el.waitBand.className = "wait-band"; return; }
+
+    // 응급이 기다리고 있으면 더 강하게 — 사람이 위험한 건을 방치하면 안 된다.
+    var emg = waiting.filter(isEmergency);
     var filtered = state.filter.status === "ho:waiting";
-    el.waitBand.innerHTML =
-      '<span class="wait-n">연결 대기 ' + n + "건</span>" +
-      '<span class="wait-msg">어르신이 화면 앞에서 담당자 연결을 기다리고 있을 수 있습니다.</span>' +
+    el.waitBand.hidden = false;
+    el.waitBand.className = "wait-band" + (emg.length ? " is-emergency" : "");
+
+    var lead = emg.length
+      ? '<span class="wait-n">❗ 응급 ' + emg.length + "건이 연결을 기다립니다</span>"
+      : '<span class="wait-n">연결 대기 ' + n + "건</span>";
+    var msg = emg.length
+      ? "지금 위험할 수 있는 민원입니다. 먼저 통화를 이어 주세요." +
+        (n > emg.length ? " (그 밖 대기 " + (n - emg.length) + "건)" : "")
+      : "어르신이 화면 앞에서 담당자 연결을 기다리고 있을 수 있습니다.";
+
+    el.waitBand.innerHTML = lead +
+      '<span class="wait-msg">' + esc(msg) + "</span>" +
       '<span class="wait-act">' + (filtered ? "전체 보기" : "이 건만 보기") + "</span>";
     el.waitBand.setAttribute("aria-label",
-      "연결 대기 " + n + "건. 눌러서 " + (filtered ? "전체 목록으로 돌아갑니다." : "대기 건만 봅니다."));
+      (emg.length ? "응급 " + emg.length + "건 포함 " : "") + "연결 대기 " + n + "건. 눌러서 " +
+      (filtered ? "전체 목록으로 돌아갑니다." : "대기 건만 봅니다."));
+
+    // 응급이 새로 대기열에 들어오면 스크린리더로도 알린다(같은 건을 반복해 읽지는 않는다).
+    var key = emg.map(function (c) { return c.id; }).sort().join(",");
+    if (key && key !== state.lastEmergencyAlert) {
+      state.lastEmergencyAlert = key;
+      announce("응급 민원 " + emg.length + "건이 담당자 연결을 기다립니다.");
+    } else if (!key) {
+      state.lastEmergencyAlert = null;
+    }
   }
 
   function renderList() {
@@ -1490,30 +1517,57 @@
 
     // ── 아직 연결 전
     if (status === "none") {
-      if (state.handoffForm === raw.id) {
+      var known = String(state.officer.name || "").trim();
+      var knownDept = String(state.officer.department || dept || "").trim();
+
+      // 이름을 이미 아는 경우 — **한 번 클릭으로 연결한다.** 급할 때 폼을 채우게 하면 못 쓴다.
+      if (known && state.handoffForm !== raw.id) {
+        return head + '<div class="ho ho--idle">' +
+          '<div class="ho-idle-text"><b>어르신이 담당자 연결을 기다리고 있을 수 있습니다.</b>' +
+            '<span class="ho-bridge-inline">담당자는 <b>표준어로 입력</b>하시면 됩니다 — ' +
+              '어르신께는 사투리로 전달됩니더.</span>' +
+          "</div>" +
+          '<div class="ho-connect">' +
+            '<button class="btn btn-primary btn-lg" data-act="ho-quick">☎ 통화 잇기</button>' +
+            '<span class="ho-asme">' + esc(known) + " · " + esc(knownDept || "부서 미지정") +
+              ' <button type="button" class="ho-change" data-act="ho-open">변경</button></span>' +
+          "</div></div></div>";
+      }
+
+      // 아직 이름을 모르는데 폼도 열지 않은 상태 — 버튼만 보여 준다.
+      // (카드마다 입력칸이 펼쳐져 있으면 목록이 시끄러워진다.)
+      if (!known && state.handoffForm !== raw.id) {
+        return head + '<div class="ho ho--idle">' +
+          '<div class="ho-idle-text"><b>어르신이 담당자 연결을 기다리고 있을 수 있습니다.</b>' +
+            '<span class="ho-bridge-inline">담당자는 <b>표준어로 입력</b>하시면 됩니다 — ' +
+              '어르신께는 사투리로 전달됩니더.</span>' +
+          "</div>" +
+          '<button class="btn btn-primary btn-lg" data-act="ho-open">☎ 통화 잇기</button>' +
+          "</div></div>";
+      }
+
+      // 처음 한 번만 이름을 묻는다. 다음부터는 이 브라우저가 기억해 바로 연결된다.
+      if (state.handoffForm === raw.id || !known) {
         return head + '<div class="ho ho--form">' +
           '<p class="ho-lead">이 민원의 신고자와 직접 통화합니다. 연결하면 AI 응대는 멈춥니다.</p>' +
+          '<p class="ho-bridge-inline"><b>표준어로 입력하시면 어르신께 사투리로 전달됩니더.</b> ' +
+            '사투리를 치실 필요가 없습니다.</p>' +
           '<div class="ho-fields">' +
             '<label class="ho-field"><span>담당자 이름</span>' +
               '<input id="ho-name" type="text" maxlength="20" placeholder="예: 홍길동" value="' +
               esc(state.officer.name) + '" autocomplete="off"></label>' +
             '<label class="ho-field"><span>부서</span>' +
               '<input id="ho-dept" type="text" maxlength="60" value="' +
-              esc(state.officer.department || dept) + '"></label>' +
+              esc(knownDept) + '"></label>' +
           "</div>" +
           '<p class="ho-privacy">이름은 <b>어르신 화면에 표시하기 위한 용도</b>입니다. ' +
-            '서버는 마스킹된 형태로만 기록하고, 민원카드·CSV 에는 남지 않습니다. ' +
-            '이 브라우저에도 저장하지 않습니다(새로고침하면 지워집니다).</p>' +
+            '이 브라우저에만 기억해 두고(다음부터는 바로 연결됩니다), ' +
+            '서버는 마스킹된 형태로만 기록합니다. 민원카드·CSV 에는 남지 않습니다.</p>' +
           '<div class="ho-actions">' +
             '<button class="btn btn-primary" data-act="ho-confirm">통화 연결</button>' +
-            '<button class="btn btn-ghost" data-act="ho-cancel">취소</button>' +
+            (known ? '<button class="btn btn-ghost" data-act="ho-cancel">취소</button>' : "") +
           "</div></div></div>";
       }
-      return head + '<div class="ho ho--idle">' +
-        '<div class="ho-idle-text"><b>아직 담당자가 연결되지 않았습니다.</b>' +
-          '<span>신고자는 접수 후 담당자 연결을 기다리고 있습니다.</span></div>' +
-        '<button class="btn btn-primary btn-lg" data-act="ho-open">☎ 통화 잇기</button>' +
-        "</div></div>";
     }
 
     // ── 연결됨 / 종료됨
@@ -1762,11 +1816,15 @@
       if (b) b.addEventListener("click", fn);
     };
 
+    on("ho-quick", function () {
+      // 기억한 이름·부서로 즉시 연결한다. 클릭 한 번.
+      startHandoff(raw, state.officer.name, state.officer.department || deptOf(raw) || "");
+    });
     on("ho-open", function () {
       state.handoffForm = raw.id;
       renderDetail();
       var f = document.getElementById("ho-name");
-      if (f) f.focus();
+      if (f) { f.focus(); f.select && f.select(); }
     });
     on("ho-cancel", function () { state.handoffForm = null; renderDetail(); });
 
@@ -1797,7 +1855,13 @@
       ta.addEventListener("keydown", function (e) {
         if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); sendHandoff(raw); }
       });
-      if (state.handoffFocus) { ta.focus(); state.handoffFocus = false; }
+      if (state.handoffFocus) {
+        // 연결되자마자 바로 타이핑할 수 있어야 한다. 패널을 보이는 데까지 올리고 커서를 둔다.
+        var panel = ta.closest(".ho");
+        if (panel && panel.scrollIntoView) panel.scrollIntoView({ block: "nearest" });
+        ta.focus();
+        state.handoffFocus = false;
+      }
     }
     var log = document.getElementById("ho-log");
     if (log) log.scrollTop = log.scrollHeight;
@@ -1807,7 +1871,10 @@
     // 이름은 어르신 화면 표시용으로 서버에 보내고(서버가 마스킹해 저장한다),
     // 이 탭의 메모리에만 남긴다. localStorage 에는 부서만 저장한다.
     state.officer = { name: name, department: dept };
-    try { localStorage.setItem(LS_OFFICER_DEPT, dept); } catch (e) {}
+    try {
+      localStorage.setItem(LS_OFFICER_DEPT, dept);
+      localStorage.setItem(LS_OFFICER_NAME, name);
+    } catch (e) {}
 
     hoPost(raw.id, "start", { officer_name: name, department: dept }).then(function () {
       state.handoffForm = null;
@@ -1819,7 +1886,7 @@
       return refreshHandoff(raw.id, { render: true });
     }).then(function () {
       render();
-      toast("통화를 연결했습니다. 지금부터 담당자가 직접 응대합니다.");
+      toast("연결됐습니다. 표준어로 입력하시면 사투리로 전달됩니더.");
       announce("접수번호 " + raw.id + " 담당자 통화가 연결되었습니다.");
     }).catch(function (err) {
       toast("연결 실패: " + (err && err.message ? err.message : "잠시 후 다시 시도하세요."));

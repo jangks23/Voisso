@@ -53,6 +53,8 @@ from .core import (
 from .llm import refine
 from .risk import (
     RISK_PATH,
+    consent_prompts,
+    detect_consent,
     detect_pressure,
     detect_risk,
     detect_tense,
@@ -68,7 +70,9 @@ __all__ = [
     "explain",
     "closing_cues",
     "detect_risk",
+    "detect_consent",
     "detect_pressure",
+    "emergency_lines",
     "detect_tense",
     "pressure_data",
     "load_risk_signals",
@@ -303,3 +307,33 @@ def deflection_line(index: int = 0) -> str:
         return briefing_to_dialect(lines[index % len(lines)])
     except LexiconError:
         return "담당자에게 여쭤보고 다시 연락드릴게예."
+
+
+def emergency_lines() -> dict[str, list[str]]:
+    """119 연결 확인 흐름에서 쓸 문장들 — **사투리 변환까지 마친 것**.
+
+    다급한 사람에게는 짧게 말해야 한다. 긴 문장은 안 들린다.
+
+    Returns:
+        ``{"ask": [...], "reask": [...], "confirmed": [...], "declined": [...], "button": [...]}``
+
+    사용 예::
+
+        lines = emergency_lines()
+        say(lines["ask"][0])                       # "119 불러 드릴까예?"
+        verdict = detect_consent(caller_text)
+        if verdict["next"] == "connect":
+            say(lines["confirmed"][0])
+        elif verdict["next"] == "reask":
+            say(lines["reask"][0])                 # 애매하면 한 번 더 묻는다
+        else:
+            say(lines["declined"][0])
+    """
+    try:
+        return {key: [to_dialect(line) for line in lines]
+                for key, lines in consent_prompts().items()}
+    except Exception:  # noqa: BLE001
+        return {"ask": ["119 불러 드릴까예?"], "reask": ["119 부를까예? 예 아니요로 말씀해 주이소."],
+                "confirmed": ["지금 바로 연결하겠습니더. 끊지 마이소."],
+                "declined": ["알겠습니더. 위험하시믄 바로 119 누르이소."],
+                "button": ["화면에 뜬 큰 단추 한 번만 눌러 주이소."]}

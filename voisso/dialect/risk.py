@@ -420,3 +420,131 @@ def detect_tense(text: str) -> dict[str, Any]:
     else:
         verdict = "불명"
     return {**found, "verdict": verdict}
+
+# --------------------------------------------------------------------------- #
+# 119 연결 확인 — 긍정 / 부정 / 애매
+# --------------------------------------------------------------------------- #
+
+import re as _re
+
+#: 문장부호·군말을 털어 낸다. 다급하면 "예!!" "어..." 처럼 들어온다.
+_CLEAN = _re.compile(r'''[\s.,!?…~"'’”·ㅣㅜ]+''')
+
+
+def consent_data() -> dict[str, Any]:
+    """119 연결 확인용 응답 사전."""
+    return load_risk_signals().get("consent", {})
+
+
+def consent_prompts() -> dict[str, list[str]]:
+    """119 연결 확인에 쓸 문장(표준어). :func:`~voisso.dialect.to_dialect` 를 태워 쓴다."""
+    return load_risk_signals().get("consent_prompts", {})
+
+
+def _short_match(cleaned: str, candidates: list[str]) -> str | None:
+    """발화 **전체**가 짧은 응답과 같은가. 반복형("예예", "어어")도 인정한다.
+
+    부분 문자열로 찾으면 안 된다. "예"가 "괜찮아예"(부정)에도 들어 있기 때문이다.
+    """
+    if not cleaned:
+        return None
+    for candidate in candidates:
+        if cleaned == candidate:
+            return candidate
+        # "예예", "어어어" 처럼 되풀이한 경우
+        if len(candidate) == 1 and cleaned == candidate * len(cleaned):
+            return candidate
+        if len(cleaned) <= len(candidate) * 3 and cleaned == candidate * (len(cleaned) // len(candidate)):
+            return candidate
+    return None
+
+
+def detect_consent(text: str, *, standard: str | None = None) -> dict[str, Any]:
+    """119 연결 물음에 대한 대답을 가른다. **애매를 부정으로 처리하지 않는다.**
+
+    응급 시 AI 가 "119 불러 드릴까예?" 라고 묻고 어르신이 답한다. 다급하면 대답이
+    아주 짧다 — "어", "야", "예". 이걸 놓치면 연결이 안 된다.
+
+    Args:
+        text: 어르신 대답 원문. 빈 문자열이면 **무응답**으로 본다.
+        standard: 정규화한 표준어. 생략하면 내부에서 정규화한다.
+
+    Returns:
+        딕셔너리::
+
+            {
+              "verdict": "긍정" | "부정" | "애매",
+              "confidence": "높음" | "낮음",
+              "matched": {"positive": [...], "negative": [...], "unclear": [...]},
+              "reason": "판정 근거",
+              "next": "connect" | "stop" | "reask",   # P6 이 탈 경로
+            }
+
+    판정 규칙
+
+    - 긍정만 걸리면 ``긍정``, 부정만 걸리면 ``부정``.
+    - **둘 다 걸리면 애매다.** "아니 빨리 해 주이소" 처럼 부정어가 군말로 앞에 붙는
+      경우가 실제로 흔하다. 단정하지 않고 한 번 더 묻는다.
+    - 아무것도 안 걸리면 애매다. 동문서답·침묵 포함.
+    - **애매를 부정으로 처리하면 위험하다.** 반드시 ``next="reask"`` 로 보낸다.
+    """
+    empty_reason = "무응답 — 대답이 없다"
+    try:
+        raw = text or ""
+        if not raw.strip():
+            return {"verdict": "애매", "confidence": "낮음",
+                    "matched": {"positive": [], "negative": [], "unclear": []},
+                    "reason": empty_reason, "next": "reask"}
+
+        if standard is None:
+            from .core import convert
+            standard = convert(raw, "to_standard")
+        data = consent_data()
+        cleaned_raw = _CLEAN.sub("", raw)
+        cleaned_std = _CLEAN.sub("", standard)
+
+        positive: list[str] = []
+        negative: list[str] = []
+        unclear: list[str] = []
+
+        # ① 한 글자·짧은 응답 — 발화 전체가 같을 때만
+        for cleaned in (cleaned_raw, cleaned_std):
+            hit = _short_match(cleaned, data.get("positive_short", []))
+            if hit and hit not in positive:
+                positive.append(hit)
+            hit = _short_match(cleaned, data.get("negative_short", []))
+            if hit and hit not in negative:
+                negative.append(hit)
+
+        # ② 긴 표현 — 부분 문자열
+        for key, bucket in (("positive_phrase", positive), ("negative_phrase", negative),
+                            ("unclear_phrase", unclear)):
+            for pattern in data.get(key, []):
+                if pattern and (pattern in raw or pattern in standard) and pattern not in bucket:
+                    bucket.append(pattern)
+
+        matched = {"positive": positive, "negative": negative, "unclear": unclear}
+
+        if positive and negative:
+            return {"verdict": "애매", "confidence": "낮음", "matched": matched,
+                    "reason": f"긍정({positive[0]!r})과 부정({negative[0]!r})이 함께 나왔다. "
+                              "단정하지 않고 한 번 더 묻는다.",
+                    "next": "reask"}
+        if positive:
+            return {"verdict": "긍정", "confidence": "높음", "matched": matched,
+                    "reason": f"긍정 응답({', '.join(repr(p) for p in positive[:2])})", "next": "connect"}
+        if negative:
+            return {"verdict": "부정", "confidence": "높음", "matched": matched,
+                    "reason": f"부정 응답({', '.join(repr(n) for n in negative[:2])})", "next": "stop"}
+        if unclear:
+            return {"verdict": "애매", "confidence": "낮음", "matched": matched,
+                    "reason": f"판단을 미루는 표현({unclear[0]!r})이다. 한 번 더 묻는다.",
+                    "next": "reask"}
+        return {"verdict": "애매", "confidence": "낮음", "matched": matched,
+                "reason": "긍정도 부정도 아니다(동문서답으로 보인다). 한 번 더 묻는다.",
+                "next": "reask"}
+    except Exception:  # noqa: BLE001 - 안전 판정이 통화를 끊게 두지 않는다
+        log.exception("119 연결 확인 판정 실패 — 한 번 더 묻는 쪽으로 돌려준다")
+        return {"verdict": "애매", "confidence": "낮음",
+                "matched": {"positive": [], "negative": [], "unclear": []},
+                "reason": "판정에 실패했다. 한 번 더 묻는다.", "next": "reask"}

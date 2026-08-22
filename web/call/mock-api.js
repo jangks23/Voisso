@@ -300,7 +300,7 @@ window.VoissoMockAPI = (function () {
     s.turns.push({ role: 'agent', dialect: line.dialect, standard: line.standard });
 
     const allText = s.turns.filter((t) => t.role === 'caller').map((t) => t.standard).join(' ');
-    const urgency = judgeUrgency(allText);
+    const urgency = judgeUrgency(allText, std);
     s.urgency = urgency;
 
     return {
@@ -375,12 +375,24 @@ window.VoissoMockAPI = (function () {
       reason: '방치하면 피해가 커지는 상황입니다.' },
   ];
 
-  function judgeUrgency(text) {
+  // 어르신이 말로 동의했는가 — "예 / 네 / 그래 주이소 / 연결해 주이소"
+  const YES = ['예', '네', '그래', '해 주이소', '연결', '부탁', '좋습니더', '응'];
+  const NO = ['아니', '됐습니더', '괜찮', '안 해도'];
+
+  function judgeUrgency(text, lastCaller) {
     for (const r of URGENCY_RULES) {
       const hit = r.kw.filter((k) => text.includes(k));
       if (hit.length) {
+        let refer = r.refer;
+        if (refer) {
+          const said = String(lastCaller || '');
+          // 짧은 동의 표현일 때만 확인으로 본다(긴 문장 속 '예' 어미와 구분).
+          const yes = said.length <= 12 && YES.some((y) => said.includes(y));
+          const no = NO.some((n) => said.includes(n));
+          refer = Object.assign({}, refer, { asked: true, confirmed: yes && !no, declined: no });
+        }
         return { level: r.level, reason: r.reason, signals: hit.slice(0, 3),
-                 decided_by: 'rule', safety_referral: r.refer };
+                 decided_by: 'rule', safety_referral: refer };
       }
     }
     return { level: '보통', reason: '정상 처리 일정으로 판단했습니다.',

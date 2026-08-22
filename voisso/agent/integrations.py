@@ -42,9 +42,17 @@ def _lookup(module_name: str, func_name: str) -> Callable[..., Any] | None:
     try:
         module = importlib.import_module(module_name)
         func = getattr(module, func_name)
-    except (ImportError, AttributeError) as exc:
+    except Exception as exc:
+        # ImportError/AttributeError 뿐 아니라 **SyntaxError 도 잡는다.**
+        # 옆 모듈이 편집 중에 깨져 있다고 통화가 죽으면 안 된다.
+        # 병렬 작업 중이라 실제로 일어난다.
         if missed is None:
-            log.info("%s 아직 없음 — 폴백으로 진행합니다 (%s)", key, exc.__class__.__name__)
+            log.warning(
+                "%s 를 쓸 수 없어 폴백으로 진행합니다 (%s: %s)",
+                key,
+                exc.__class__.__name__,
+                str(exc)[:120],
+            )
         _missed_at[key] = time.monotonic()
         return None
 

@@ -139,6 +139,35 @@ def llm_signals_risk(reply: str) -> bool:
     return bool(_LLM_RISK_RE.search(reply or ""))
 
 
+# 119 연결을 물었을 때의 대답. **부정을 먼저 본다** —
+# "괜찮아예" 안에 "예" 가 들어 있어서 순서를 바꾸면 긍정으로 잘못 읽힌다.
+_DECLINE_RE = re.compile(
+    r"아니|아뇨|아이라|괜찮|됐어|됐습니|됐다|필요\s*없|안\s*해도|"
+    r"내가\s*(하|걸|할)|직접\s*(하|걸)|제가\s*(하|걸)|하지\s*마|놔\s*두"
+)
+_ACCEPT_RE = re.compile(
+    r"^\s*(네|예|야|응|어|음)\s*[.!]*\s*$|"
+    r"그래|그러이소|그리\s*하|해\s*주|해주|부탁|연결\s*해|걸어\s*주|불러\s*주|"
+    r"좋(아|습니|겠)|맞(아|습니)|얼른|빨리\s*(해|좀)|그람|그라이소|어예"
+)
+
+
+def confirm_intent(text: str) -> str | None:
+    """119 연결 제안에 대한 대답. `"yes"` | `"no"` | None(불분명).
+
+    **애매하면 None 이다.** 부정으로 단정하지 않는다 — 위험 쪽으로 기울이되
+    강제하지 않기 위해 한 번 더 묻는 경로로 보낸다.
+    """
+    cleaned = (text or "").strip()
+    if not cleaned:
+        return None
+    if _DECLINE_RE.search(cleaned):
+        return "no"
+    if _ACCEPT_RE.search(cleaned):
+        return "yes"
+    return None
+
+
 def count_pressure(text: str) -> int:
     """재촉 신호의 총 개수. 강도 표시용이고 승급 판정에는 쓰지 않는다."""
     cleaned = (text or "").strip()

@@ -333,5 +333,39 @@ button { font: inherit; color: inherit; cursor: pointer; }
   applyDebug();
 })();
 </script>
+<script>
+(function () {
+  if (!new URLSearchParams(location.search).get('h')) return;
+  var w = function (m) { return new Promise(function (r) { setTimeout(r, m); }); };
+  function box(sel) {
+    try {
+      var e = document.querySelector(sel);
+      if (!e) return null;
+      var r = e.getBoundingClientRect();
+      return { y: Math.round(r.top), h: Math.round(r.height), b: Math.round(r.bottom) };
+    } catch (e) { return null; }
+  }
+  (async function () {
+    await w(3000);
+    var out = { 창: [innerWidth, innerHeight] };
+    try {
+      out.바 = box('.bar'); out.split = box('.split');
+      out.좌라벨 = box('.pane.left .pane-label'); out.우라벨 = box('.pane.right .pane-label');
+      out.좌프레임 = box('#callFrame'); out.우프레임 = box('#dashFrame');
+      out.페이지스크롤 = document.documentElement.scrollHeight > innerHeight;
+      try {
+        var dd = document.getElementById('dashFrame').contentDocument;
+        if (dd && dd.documentElement) {
+          out.대시 = { 문서: dd.documentElement.scrollHeight, 보임: dd.documentElement.clientHeight };
+          try { out.대시.body = Math.round(dd.body.getBoundingClientRect().height); } catch (e) {}
+          try { out.대시.overflowY = dd.defaultView.getComputedStyle(dd.body).overflowY; } catch (e) {}
+          out.대시.내부잘림 = out.대시.문서 > out.대시.보임 + 2;
+        } else { out.대시 = '읽기 실패'; }
+      } catch (e) { out.대시 = 'X ' + String(e.message).slice(0, 40); }
+    } catch (e) { out.오류 = String(e.message).slice(0, 60); }
+    document.title = 'H ' + JSON.stringify(out);
+  })();
+})();
+</script>
 </body>
 </html>
