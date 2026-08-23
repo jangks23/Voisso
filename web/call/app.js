@@ -556,10 +556,19 @@
     resetHandoff();
     resetEndButton();
     // 이 통화의 입력 경로를 지금 정하고 끝까지 유지한다.
-    state.pathLocked = null;
+    state.pathLocked = null;                   // 지난 통화의 잠금을 먼저 푼다
+    state.pathReason = null;
+    // 마이크 권한은 지금(=사용자 클릭 안에서) 받아 둔다. 첫 마이크 누름에서 권한창이 뜨면
+    // 그 통화의 첫 턴만 다르게 돈다 — 없애려는 불일치가 바로 그것이다.
+    warmUpMic();
+    // 서버 능력 확인이 아직 안 끝났으면 잠깐 기다린다. 프로브가 늦어서 첫 통화만
+    // 다른 경로로 도는 것을 막는다. 서버가 응답이 없어도 통화는 시작돼야 하므로 1.5초까지만.
+    if (probeDone) {
+      await Promise.race([probeDone, new Promise((r) => setTimeout(r, 1500))]);
+      if (!state.starting) return;             // 기다리는 사이에 취소됐다면 그만둔다
+    }
     state.pathLocked = resolveInputPath();
     applyInputPath();
-    warmUpMic();
     el.callee.classList.remove('is-handoff');
     el.callee.querySelector('.callee-meta strong').textContent = '경상북도 민원실';
     setScreen('call');
@@ -646,14 +655,15 @@
     let callerBubble = o.callerBubble || null;
     if (!callerBubble && !o.silentCaller) {
       callerBubble = payload.audio_b64
-        ? addBubble('caller', '받아쓰는 중…', '받아쓰는 중…', { pending: true, source: 'voice-server' })
+        ? addBubble('caller', '받아쓰는 중입니더', '받아쓰는 중입니더', { pending: true, source: 'voice-server' })
         : addBubble('caller', payload.text, payload.text, { source: o.source });
     }
     if (callerBubble) state.callerBubbles.push(callerBubble);   // 종료 후 서버 전사로 채운다
     const typing = addTyping();
 
     const t0 = Date.now();
-    say('잠시만예');
+    // 기다리는 이유를 그대로 말한다. 음성이면 지금 하는 일은 '받아쓰기' 다.
+    say(payload.audio_b64 ? '받아쓰는 중입니더' : '잠시만예');
     try {
       const r = await API.turn(state.sessionId, payload) || {};
       state.lastMs = Date.now() - t0;
@@ -1479,17 +1489,18 @@
     return !!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia && window.MediaRecorder);
   }
 
-  // 서버가 STT 를 켰는지 — 하드코딩하지 않고 /api/health 응답을 본다.
-  function serverSttAvailable() {
-    if (CFG.SERVER_STT === true) return true;
-    if (CFG.SERVER_STT === false) return false;
-    return state.serverStt === true;              // 'auto'
-  }
+  /* 서버 STT 를 쓸 수 있는가.
+     /api/health 가 "STT 없음" 이라고 **명시했을 때만** 못 쓰는 것으로 본다.
+     아직 확인 전(null)이라고 해서 폴백하지 않는다 — 그러면 프로브가 늦은 첫 통화만
+     다른 경로로 도는, 우리가 없애려던 바로 그 불일치가 생긴다.
+     대신 startCall 에서 프로브를 기다렸다가 경로를 정한다. */
+  function serverSttOff() { return state.serverStt === false; }
+  function canUseServerStt() { return mediaRecorderSupported() && !serverSttOff(); }
 
   // 지금 고를 수 있는 경로들 (칩을 눌러 순환한다)
   function availablePaths() {
     const out = [];
-    if (serverSttAvailable() && mediaRecorderSupported()) out.push('server');
+    if (canUseServerStt()) out.push('server');
     if (window.VoissoSpeech && window.VoissoSpeech.supported()) out.push('web');
     out.push('text');
     return out;
@@ -1500,17 +1511,15 @@
     // 통화가 시작되면 경로를 고정한다. 한 통화가 중간에 다른 경로로 바뀌면
     // 첫 턴만 자리표시자가 뜨고 두 번째부터 실시간으로 보이는 식으로 어긋난다.
     if (state.pathLocked) return state.pathLocked;
-    const forced = String(QS.get('stt') || CFG.STT_MODE || 'auto').toLowerCase();
+    const mode = String(QS.get('stt') || CFG.STT_MODE || 'server').toLowerCase();
     const web = window.VoissoSpeech && window.VoissoSpeech.supported();
-    if (forced === 'text') return 'text';
-    if (forced === 'web') return web ? 'web' : 'text';
-    if (forced === 'server') return mediaRecorderSupported() ? 'server' : 'text';
-    // auto — 브라우저 음성인식이 기본이다.
-    // 서버 STT 가 사투리 표면형은 더 잘 살리지만, 발화 종료 후 업로드라 **중간 결과가 없다.**
-    // 말하는 동안 글자가 채워지는 것이 사용자가 원하는 동작이고 데모에서도 그게 더 중요하다.
-    // 서버 STT 는 미지원 브라우저이거나 ?stt=server 로 명시할 때만 쓴다.
-    if (web) return 'web';
-    if (serverSttAvailable() && mediaRecorderSupported()) return 'server';
+    if (mode === 'text') return 'text';
+    // 브라우저 음성인식은 명시했을 때만 쓴다. 그것도 안 되면 서버 STT 로 내려간다.
+    if (mode === 'web') return web ? 'web' : (canUseServerStt() ? 'server' : 'text');
+    // 기본('server' / 'auto') — 서버 STT(Whisper) 고정.
+    // 근거는 config.js 의 STT_MODE 주석에 적었다. 요지는 "한 통화는 처음부터 끝까지 같은 경로".
+    if (canUseServerStt()) return 'server';
+    if (web) return 'web';                        // MediaRecorder 미지원·서버 STT 꺼짐 → 폴백
     return 'text';
   }
 
@@ -1627,8 +1636,7 @@
         if (liveBubble) { liveBubble.remove(); liveBubble = null; }
         // 브라우저 음성인식이 이 기기에서 못 쓰는 상태 — 여기서만 경로를 바꾼다.
         if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'network') {
-          const to = (code !== 'not-allowed' && serverSttAvailable() && mediaRecorderSupported())
-            ? 'server' : 'text';
+          const to = (code !== 'not-allowed' && canUseServerStt()) ? 'server' : 'text';
           fallbackPath(to, code === 'not-allowed'
             ? '마이크를 쓸 수 없어서'
             : '브라우저 음성인식이 지금 안 돼서');
@@ -1648,7 +1656,8 @@
   function stopSpeech() { window.VoissoSpeech.stop(); }
 
   /* ── 2) 서버 STT (MediaRecorder → audio_b64) ────────────── */
-  let rec = null, chunks = [], audioCtx = null, analyser = null, rafId = 0, micStream = null, recTimer = 0;
+  let rec = null, chunks = [], audioCtx = null, analyser = null, rafId = 0, micStream = null,
+      recTimer = 0, recStart = 0;
 
   function pickMime() {
     const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
@@ -1680,16 +1689,17 @@
     say('듣고 있습니더', 'listening');
     meter(micStream);
 
-    // 서버 STT 는 발화가 끝나야 받아쓴다 — 중간 결과가 원리적으로 없다.
-    // 그래도 화면이 멈춘 것처럼 보이면 안 되므로 경과 시간을 세어 보여준다.
+    /* 서버 STT 는 발화가 끝나야 받아쓴다 — 중간 결과가 원리적으로 없다. 그건 못 없앤다.
+       대신 **단계가 바뀌는 것**을 보여준다: 말하는 중 → 받아쓰는 중 → 받아쓴 글.
+       정지된 문구 하나만 떠 있으면 멈춘 화면으로 보이지만, 단계가 넘어가면 그렇지 않다. */
     liveBubble = addBubble('caller', '', '', { source: 'voice-server', listening: true, pending: true });
-    const t0 = Date.now();
+    showCaption('caller', '말씀하시는 중…', { live: true });   // 어르신 화면은 여기까지만
+    const t0 = recStart = Date.now();
     const dot = liveBubble.node.querySelector('.bubble-dialect');
     const tick = () => {
       if (!state.recording || !liveBubble) return;
       const sec = Math.max(1, Math.round((Date.now() - t0) / 1000));
-      // 말풍선(시연 모드에서 보이는 곳)에만 초를 센다.
-      // 어르신 모드는 마이크 버튼의 녹음 표시와 '듣고 있습니더' 하나로 충분하다 — 숫자는 과하다.
+      // 초 세기는 시연 모드 말풍선에만. 어르신 화면에 숫자가 올라가는 건 과하다.
       if (dot) dot.textContent = '말씀하시는 중… ' + sec + '초';
       recTimer = setTimeout(tick, 1000);
     };
@@ -1715,7 +1725,22 @@
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     const b = liveBubble; liveBubble = null;
     if (discard || !blob.size) { if (b) b.remove(); return; }
-    if (b) b.live('받아쓰는 중…');          // 업로드 뒤에는 상태를 바꿔 준다
+    /* 손이 미끄러져 두 번 눌린 경우. 소리가 거의 안 담긴 것을 올리면
+       받아쓰기가 엉뚱한 말을 지어내고(프라이밍 어휘를 그대로 뱉는 것을 실측했다)
+       STT 호출도 한 번 낭비된다. 그냥 다시 말씀해 달라고 한다. */
+    if (Date.now() - recStart < 700) {
+      if (b) b.remove();
+      // 상담원이 방금 물어본 말(위 자막)은 그대로 둔다 — 그걸 보고 대답해야 한다.
+      el.capCaller.classList.add('blank');
+      el.capCallerText.textContent = '';
+      el.hint.classList.add('alert');
+      el.hint.textContent = '너무 짧았니더. 마이크를 누르고 천천히 말씀해 주이소.';
+      say('다시 한 번 말씀해 주이소');
+      return;
+    }
+    // 2단계: 올려서 받아쓰는 중. 말풍선과 자막이 함께 바뀐다.
+    // 큰 글자(say)는 건드리지 않는다 — 바로 뒤에 sendTurn 이 같은 문구로 이어받는다.
+    if (b) b.live('받아쓰는 중입니더');
     const fr = new FileReader();
     fr.onload = () => {
       const b64 = String(fr.result).split(',')[1] || '';
@@ -1767,6 +1792,9 @@
     toast(msg, 4500);
     el.textIn.focus();
   }
+
+  /* /api/health 프로브가 끝났는지 — 통화 시작 전에 이걸 기다려 경로를 정한다 */
+  let probeDone = null;
 
   /* ── 이벤트 ───────────────────────────────────────────── */
   el.btnCall.addEventListener('click', startCall);
@@ -1875,9 +1903,12 @@
               ' · assets v' + (window.VOISSO_ASSET_VERSION || '?') +
               ' · page = ' + (location.origin || location.href));
 
-  (async function initModeChip() {
+  probeDone = (async function initModeChip() {
     const voice = ' · 음성 입력: <b>' + esc(PATH.long) + '</b>';
     if (API.isMock()) {
+      state.serverStt = true;                 // 목도 audio_b64 를 받아 처리한다(경로가 같아야 한다)
+      PATHS.server.long = '서버 음성인식 (목 API 가 Whisper 응답을 흉내낸다)';
+      applyInputPath();
       el.modeChip.innerHTML = '<b>데모 모드</b> · 목 API로 동작 중 (서버 없이 전 과정 시연 가능)' + voice;
       return;
     }
@@ -1885,6 +1916,10 @@
     const p = await API.probe();
     // 서버가 STT 를 켰는지 확인하고 경로를 다시 고른다(하드코딩 금지).
     state.serverStt = !!(p.stt && p.stt !== 'none');
+    // 칩 설명은 서버가 실제로 뭘 쓰는지 그대로 적는다.
+    // "Whisper 라고 써 있는데 진짜 Whisper 냐"는 물음이 나온 적이 있다 — 표시와 실제가 어긋나면 안 된다.
+    if (p.sttLabel) PATHS.server.long = '서버 음성인식 · ' + p.sttLabel;
+    else if (p.stt) PATHS.server.long = '서버 음성인식 · ' + p.stt;
     const after = applyInputPath();
     if (p.ok) {
       console.log('[Voisso] 서버 능력 — STT=' + (p.stt || 'none') +

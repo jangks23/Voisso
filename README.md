@@ -1,10 +1,16 @@
-# Voisso (보이소)
+<p align="center">
+  <img src="docs/images/logo.png" alt="Voisso" width="380">
+</p>
 
-[![CI](https://github.com/<your-org>/voisso/actions/workflows/ci.yml/badge.svg)](https://github.com/<your-org>/voisso/actions/workflows/ci.yml)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
-[![Python 3.10+](https://img.shields.io/badge/python-3.10%2B-blue.svg)](https://www.python.org/downloads/)
+<p align="center">
+  <a href="https://github.com/jangks23/Voisso/actions/workflows/ci.yml"><img src="https://github.com/jangks23/Voisso/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-blue.svg" alt="License: MIT"></a>
+  <a href="https://www.python.org/downloads/"><img src="https://img.shields.io/badge/python-3.10%2B-blue.svg" alt="Python 3.10+"></a>
+</p>
 
-> **경북 어르신이 사투리로 전화하면, AI가 알아듣고 담당 부서로 연결한다.**
+<p align="center">
+  <b>경북 어르신이 사투리로 전화하면, AI가 알아듣고 담당 부서로 연결한다.</b>
+</p>
 
 <!-- ═════════════════════════════════════════════════════════════════════
      데모 이미지 자리 — 촬영 후 아래 주석을 풀어 그대로 쓴다.
@@ -76,7 +82,7 @@ Voisso는 세 번째 문제를 **근거(evidence)** 로 푼다. 라우팅 결과
 단계를 하나씩 밟기 전에, 전부 자동으로 해 주는 스크립트가 있다.
 
 ```bash
-git clone https://github.com/<your-org>/voisso.git && cd voisso
+git clone https://github.com/jangks23/Voisso.git && cd Voisso
 
 ./scripts/demo.sh     # 데이터 준비 → 서버 기동 → 브라우저 열기까지 한 번에
 ./scripts/test.sh     # 지금 무엇이 동작하는지 한눈에 확인
@@ -97,8 +103,8 @@ git clone https://github.com/<your-org>/voisso.git && cd voisso
 
 ```bash
 # 저장소를 내려받는다
-git clone https://github.com/<your-org>/voisso.git
-cd voisso
+git clone https://github.com/jangks23/Voisso.git
+cd Voisso
 
 # 파이썬 가상환경을 만든다 (시스템 파이썬을 건드리지 않기 위함)
 python3 -m venv .venv
