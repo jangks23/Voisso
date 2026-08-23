@@ -1010,7 +1010,7 @@
 
   /**
    * AI 배정 대비 재배정 비율.
-   * 우리 라우팅 품질의 정직한 자기 평가 지표다(GOAL.md H3: 20% 미만).
+   * 우리 라우팅 품질의 정직한 자기 평가 지표다(목표: 20% 미만).
    * 분모는 AI 가 실제로 부서를 배정한 건수, 분자는 담당자가 그 배정을 뒤집은 건수.
    */
   function reassignRate(all) {
@@ -2161,7 +2161,7 @@
     ["상태",               function (c) { return WF[workflowOf(c)].label; }],
     // 신고자 연락처는 마스킹된 값만 내보낸다. 원본은 카드에도 없고, CSV 로도 절대 나가지 않는다.
     ["신고자연락처(마스킹)", function (c) { return (c.caller && c.caller.phone_masked) || ""; }],
-    // 아래 두 칸은 재배정 비율(GOAL.md H3)을 엑셀에서 직접 검산하기 위한 추가 열이다.
+    // 아래 두 칸은 재배정 비율을 엑셀에서 직접 검산하기 위한 추가 열이다.
     ["재배정여부",         function (c) { return statusOf(c) === "reassigned" ? "Y" : "N"; }],
     ["AI최초배정부서",     function (c) {
       var n = c.assigned && String(c.assigned.full_name || "").trim();

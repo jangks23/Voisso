@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""통합 리허설 — GOAL.md H1 성공 기준을 자동으로 재현한다.
+"""통합 리허설 — 데모가 끊김 없이 재현되는지 자동으로 검증한다.
 
     python3 scripts/rehearsal.py --runs 3       # 3회 연속 (H1 기준)
     python3 scripts/rehearsal.py                # 1회
@@ -1521,7 +1521,7 @@ DOC_HEADER = """# 통합 리허설 기록
 
 > `python3 scripts/rehearsal.py --runs 3` 이 자동으로 덧붙인다. **손으로 고치지 마라.**
 >
-> GOAL.md H1 성공 기준 — *"데모가 3회 연속 끊김 없이 재현된다."*
+> 성공 기준 — *"데모가 3회 연속 끊김 없이 재현된다."*
 > 데모는 6단계다(사투리 정규화 → 슬롯 채우기 → 사무분장 근거 → 대시보드 반영 →
 > **담당자 핸드오프** → **진행 안내 콜백**). 한 회차는 사전조건 → 서버기동 → 통화 완주 →
 > 민원카드 검증 → 대시보드 반영 → 담당자 핸드오프 → 진행 안내 콜백 → MCP 셀프테스트 →
@@ -1739,7 +1739,7 @@ def append_record(results: list[dict], audio: bool, host: str, port: int,
 
 def main() -> int:
     parser = argparse.ArgumentParser(
-        description="Voisso 통합 리허설 (GOAL.md H1 자동 검증)"
+        description="Voisso 통합 리허설 (데모 재현성 자동 검증)"
     )
     parser.add_argument("--runs", type=int, default=1, help="반복 횟수 (H1 기준은 3)")
     parser.add_argument("--host", default="127.0.0.1")
@@ -1879,7 +1879,7 @@ def main() -> int:
             print(f"  · {chaos['label']} ({chaos['ref']}) — {chaos['note'][:120]}", file=sys.stderr)
         return 1
     if len(results) >= 3:
-        print("\nGOAL.md H1 충족: 6단계 데모(핸드오프 + 진행 안내 콜백 포함)가 3회 연속 재현됐다.")
+        print("\n성공 기준 충족: 6단계 데모(핸드오프 + 진행 안내 콜백 포함)가 3회 연속 재현됐다.")
     return 0
 
 

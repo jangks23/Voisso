@@ -2,7 +2,7 @@
 
 > **조사·실측일:** 2026-08-22 · **담당:** H2 이식 실증
 > 이 문서는 추측이 아니라 **실제로 크롤링을 돌려 본 결과**다. 실행 가능한 재현 명령을 각 항목에 붙였다.
-> 관련 문서: [`GOAL.md`](../GOAL.md) H2 · [`docs/CONTRACT.md`](./CONTRACT.md) · [`docs/DATA_LICENSE.md`](./DATA_LICENSE.md)
+> 관련 문서: [`docs/CONTRACT.md`](./CONTRACT.md) · [`docs/DATA_LICENSE.md`](./DATA_LICENSE.md)
 
 ---
 
@@ -205,7 +205,7 @@ python3 scripts/scrape_andong_departments.py --refresh  # 재수집 (약 3분 10
 **상위가 없는 게 정상**이다. 숫자를 부풀리지 않으려고 최상위 조직과 미분류를 나눠 센다.
 
 **읍면동 24곳이 포함된다.** 강남동·풍산읍·와룡면 등. 실제 생활 민원의 1차 창구라
-[`GOAL.md`](../GOAL.md) H3 "시군 단위 확장"에 직접 기여한다.
+시군 단위 확장 목표에 직접 기여한다.
 
 ### 개인정보 처리
 
@@ -339,7 +339,7 @@ parse_staff_rows(page) -> list[{department, position, phone, duty}]
 ## 7. 남은 확인 사항 (TODO)
 
 - [x] **README·SUBMISSION 의 "URL만 바꾸면 된다" 문구 수정** — 완료. `README.md`(「다른 지자체에
-      이식하기」), `SUBMISSION.md`(Limits / 한계), `GOAL.md` H2 세 곳 모두 0절 문구로 고쳤다
+      이식하기」)와 제출 문서의 한계 항목을 0절 문구로 고쳤다
 - [x] `data/andong_departments.json` · `.csv` · `data/raw/andong/` ·
       `data/private/andong_phone_map.json` **`.gitignore` 추가** — 완료.
       `git check-ignore` 로 네 경로 모두 차단되는 것을 확인했다 (실번호가 든

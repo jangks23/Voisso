@@ -23,6 +23,7 @@ from datetime import datetime, timezone
 from typing import Any
 
 from ..voice import SpeechContext, synthesize, transcribe
+from ..voice.pronounce import for_speech
 from ..voice.tts import TTSResult, get_tts_provider
 from ..voice.vocabulary import score_transcript
 from . import integrations, prompts
@@ -58,7 +59,9 @@ MAX_WRAPUP_ROUNDS = int(os.getenv("VOISSO_MAX_WRAPUP_ROUNDS") or 4)
 # 어르신이 언제 끝나는지 몰라 전화기를 든 채 기다리는 것이 가장 나쁜 상태다.
 # 자막으로 한두 줄에 들어가야 한다. "전화를 끊고 계셔도 된다"는 정보는
 # 다음 턴(대기 안내)에서 next_step 으로 전달되므로 여기서 뺀다.
-HANDOFF_CLOSING = "접수했습니다. 담당자가 확인하면 이 화면으로 알려 드리겠습니다."
+# **"이 화면으로" 라고 하지 않는다.** 실제 전화 통화에는 화면이 없다.
+# 브라우저로 시연한다는 사실이 대사에 새어나오면 전화 은유가 깨진다.
+HANDOFF_CLOSING = "접수했습니다. 담당자가 확인하면 다시 연락드리겠습니다."
 WRAPUP_QUESTION = "더 얘기하실 사항 있으실까요?"
 
 # 정보를 더 받아야 하는 턴인데 선언으로 끝났을 때 붙이는 질문.
@@ -87,9 +90,13 @@ SAFETY_OFFER_AGAIN = "{number}에 연결해 드릴까요? 예나 아니오로 �
 # 브라우저는 사용자 조작 없이 tel: 을 실행하지 못한다. 말로 "네" 한 것은
 # 브라우저 입장에서 조작이 아니다. 그래서 확정 뒤에도 화면 버튼이 필요하다.
 # **실제 전화망 연동(H3)에서는 이 제약이 사라지고 바로 전환된다.**
+# 여기만 화면을 언급하는 **유일한 예외**다. 브라우저는 사용자 조작 없이 tel: 을
+# 실행하지 못해서 어르신이 직접 눌러야 한다. 실제 전화망 연동(H3)에서는 이
+# 제약이 사라지므로 "예, 119로 연결하겠습니다." 로 바꾸면 된다.
 SAFETY_CONFIRMED = "예, {number} 연결합니다. 화면 단추를 눌러 주세요."
 SAFETY_DECLINED = "예, 위험해지시면 말씀해 주세요."
 # 두 번 물어도 불분명하면 더 묻지 않는다. 공포를 주면 안 된다.
+# 위와 같은 예외. H3 에서는 "위험하시면 {number}를 눌러 주세요." 로 충분하다.
 SAFETY_FALLBACK = "위험하시면 화면의 {number} 단추를 눌러 주세요."
 
 # 한 통화에 연결 질문은 최대 이만큼. 계속 물으면 공포를 준다.
@@ -142,13 +149,36 @@ PRESSURE_ACKS = (
 # 상태 문장과 붙여 쓰므로 여기서 "접수"를 또 말하지 않는다.
 # 두 번 묻게 되므로 표현을 바꿔 둔다. 같은 문장이 연달아 나오면 고장처럼 들린다.
 EMERGENCY_ASK_WHERE = (
-    "어디신지만 알려 주시겠어요?",
-    "동네 이름만 말씀해 주시겠어요?",
+    "지금 어디 계신가요?",
+    "가까운 건물이나 동네 이름을 말씀해 주시겠어요?",
 )
 # 슬롯별로 더 자연스러운 되물음.
+# ── 슬롯 질문 순서 고정 ────────────────────────────────────────────────
+# 시연에서는 **예측 가능성이 유연함보다 중요하다.** LLM 이 매번 다른 순서로 묻거나
+# 건너뛰면 흐름이 불안정해 보인다. 그래서 **무엇을 물을지는 코드가 정하고**,
+# LLM 은 그 항목을 자연스러운 문장으로 묻기만 한다.
+#
+# **이해는 계속 유연하다.** 어르신이 순서를 건너뛰어 말하면 그대로 채우고
+# 정정도 반영한다. 고정하는 것은 '묻는 순서'뿐이다.
+#
+# VOISSO_SLOT_ORDER=free 로 끄면 LLM 이 알아서 고른다.
+SLOT_ORDER_FIXED = (os.getenv("VOISSO_SLOT_ORDER") or "fixed").strip().lower() != "free"
+
+# 응답이 목표 슬롯을 묻고 있는지 판별하는 단서.
+# **범용어를 넣으면 안 된다.** "말씀해" 같은 말은 거의 모든 응답에 들어 있어
+# 무엇을 묻든 what 을 묻는 것으로 잘못 읽힌다. 슬롯을 특정하는 말만 남긴다.
+_SLOT_ASK_HINTS = {
+    "what": ("어떤 일", "무슨 일", "어떤 문제", "무엇 때문", "어떻게 된", "어떤 불편"),
+    "where": ("어디", "어데", "위치", "동네", "시·군", "시군", "계신", "건물", "근처"),
+    "when": ("언제", "며칠", "얼마나 되", "언제부터"),
+    "contact": ("전화번호", "연락처", "연락받", "번호를"),
+}
+
 SLOT_NUDGE = {
     "what": "어떤 일 때문에 불편하신지 말씀해 주시겠어요?",
-    "where": "어느 시·군, 어느 동네인지 여쭤봐도 될까요?",
+    # 어르신은 행정구역 단위로 생각하지 않는다. "시·군" 을 물으면 되묻게 된다.
+    # 민원은 대개 **지금 계신 곳**에서 벌어진다. 응급이면 더 그렇다.
+    "where": "지금 어디 계신지 말씀해 주시겠어요?",
     "when": "언제부터 그랬는지 기억나세요?",
     "contact": "연락받으실 전화번호를 알려 주시겠어요?",
 }
@@ -376,6 +406,9 @@ class ConversationSession:
             # 안 된다. 카드를 만들어 담당자에게 넘기는 편이 낫다.
             if not self.urgency.reemphasize:
                 done = False
+
+        # 물어볼 항목은 코드가 정한 순서를 따른다(시연 예측 가능성).
+        reply = self._enforce_slot_order(reply, done=done)
 
         # 아직 받을 정보가 남았으면 질문으로 끝낸다.
         # **응급은 예외다** — 재촉에는 질문이 아니라 상태로 답해야 한다.
@@ -643,10 +676,13 @@ class ConversationSession:
             "channels": 1,
         }
 
+        # **합성 직전에만** 숫자를 낱자로 편다. 화면·저장 텍스트는 "119" 그대로다.
+        spoken = for_speech(dialect)
+
         try:
             if getattr(provider, "supports_streaming", False):
                 for chunk in provider.stream(
-                    dialect, context=SpeechContext(previous_text=previous)
+                    spoken, context=SpeechContext(previous_text=previous)
                 ):
                     if not chunk:
                         continue
@@ -660,8 +696,8 @@ class ConversationSession:
                     }
                     sent += 1
             else:
-                speech = synthesize(dialect, context=SpeechContext(previous_text=previous))
-                self._record_tts(dialect, speech.provider)
+                speech = synthesize(spoken, context=SpeechContext(previous_text=previous))
+                self._record_tts(spoken, speech.provider)
                 if speech.audio_b64:
                     first_at = time.perf_counter()
                     yield {"type": "audio_chunk", "index": index, "seq": 0, "b64": speech.audio_b64}
@@ -1084,6 +1120,32 @@ class ConversationSession:
         self.last_reply_full = text
         return shortened
 
+    @staticmethod
+    def _asks_about(reply: str, slot: str) -> bool:
+        """이 응답이 해당 슬롯을 묻고 있는가."""
+        text = reply or ""
+        return any(hint in text for hint in _SLOT_ASK_HINTS.get(slot, ()))
+
+    def _enforce_slot_order(self, reply: str, done: bool) -> str:
+        """물어볼 슬롯을 **코드가 정한 순서대로** 강제한다.
+
+        모델이 다른 항목을 묻거나 건너뛰면, 앞 문장(공감)은 살리고 질문만
+        우리 문장으로 갈아 끼운다. 자연스러움은 모델이, 순서는 코드가 맡는다.
+        """
+        if not SLOT_ORDER_FIXED or done or self.urgency.is_emergency:
+            return reply
+
+        target = self.slots.next_slot()
+        if target is None or self._asks_about(reply, target):
+            return reply
+
+        question = SLOT_NUDGE.get(target, NUDGE_QUESTION)
+        # 모델의 첫 문장이 공감이면 남기고, 질문만 바꾼다.
+        head = _SENTENCE_SPLIT.split((reply or "").strip())
+        lead = head[0].strip() if head and not head[0].strip().endswith(("?", "？")) else ""
+        log.info("슬롯 순서 교정: %s 를 묻도록 질문 교체", target)
+        return f"{lead} {question}".strip() if lead else question
+
     def _record_stt(self, result) -> None:
         if result.provider == "none":
             return
@@ -1163,8 +1225,9 @@ class ConversationSession:
         # 톤이 달라진다.
         if want_audio:
             with _timed(timings, "tts_ms"):
+                # 합성 직전에만 낱자로 편다. reply_dialect(화면·기록)는 그대로 둔다.
                 speech = synthesize(
-                    reply_dialect,
+                    for_speech(reply_dialect),
                     context=SpeechContext(previous_text=_last_caller_utterance(self.transcript)),
                 )
         else:

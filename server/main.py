@@ -44,6 +44,7 @@ from voisso.agent.urgency import revise as revise_urgency_block
 from voisso.agent.usage import PROCESS_TOTAL
 from voisso.voice import SpeechContext, get_tts_provider, stt_status, tts_status
 from voisso.voice import stream as tts_stream
+from voisso.voice.pronounce import for_speech
 from voisso.voice.vocabulary import vocabulary_status
 
 import os
@@ -374,7 +375,8 @@ def call_end(payload: EndRequest) -> dict:
                 "poll": f"/api/handoff/{complaint['id']}",
                 "also_poll": f"/api/callback/{complaint['id']}",
                 "waiting_for": "담당자가 민원을 확인하고 통화를 잇는 것",
-                "message": "담당자에게 전달했습니더. 담당자가 확인하면 이 화면으로 알려드릴게예.",
+                # 전화 통화에는 화면이 없다. "이 화면으로" 는 시연 흔적이다.
+                "message": "담당자에게 전달했습니더. 확인하면 다시 연락드릴게예.",
                 # 처리 시간은 담당 부서가 정한다. 우리가 약속하지 않는다.
                 "eta": None,
             },
@@ -435,7 +437,8 @@ def tts_stream_endpoint(payload: SpeakRequest):
 
     context = SpeechContext(previous_text=payload.previous_text or "")
     return StreamingResponse(
-        tts_stream(text, context=context),
+        # 합성 직전 변환 — 클라이언트가 보낸 "119" 를 "일일구" 로 읽게 한다.
+        tts_stream(for_speech(text), context=context),
         media_type="audio/wav",
         headers={"Cache-Control": "no-store"},
     )

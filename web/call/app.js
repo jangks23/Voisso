@@ -27,7 +27,6 @@
     delivery: $('delivery'), card: $('card'), btnAgain: $('btnAgain'),
     handoffWait: $('handoffWait'), btnAnswer: $('btnAnswer'),
     hwElapsed: $('hwElapsed'), hwNo: $('hwNo'),
-    hwIn: $('hwIn'), btnHwSend: $('btnHwSend'), hwQueue: $('hwQueue'),
     btnSimOfficer: $('btnSimOfficer'), btnSimOfficerMsg: $('btnSimOfficerMsg'),
     demoBarText: $('demoBarText'), btnSimMsg2: $('btnSimMsg2'),
     incomingTitle: $('incomingTitle'), incomingSub: $('incomingSub'), incomingNote: $('incomingNote'),
@@ -43,6 +42,9 @@
     callback: { status: 'none', open: false, rendered: 0, officer: null },
     callerBubbles: [],        // 통화 중 만든 내 말풍선들 (종료 후 서버 전사로 채운다)
     sttForced: null,          // 사용자가 화면에서 직접 고른 경로
+    pathLocked: null,         // 이 통화의 입력 경로 (통화 중에는 바뀌지 않는다)
+    micWarmed: false,         // 통화 시작 때 마이크 권한을 미리 물었는가
+    micReady: false,          // 그 결과 (거부여도 통화는 계속된다)
   };
 
   /* ── 유틸 ──────────────────────────────────────────────── */
@@ -528,6 +530,21 @@
     else renderSuggestions();
   }
 
+  /* 통화 시작 시 마이크 권한을 미리 받아 둔다.
+     첫 마이크 누름에서 권한 대화상자가 뜨면 그 사이에 음성인식이 준비되지 않아
+     경로가 흔들린다(첫 턴만 자리표시자가 뜨던 원인). 사용자 동작이 있는 지금 받는다. */
+  function warmUpMic() {
+    if (state.micWarmed || state.inputPath === 'text') return;
+    state.micWarmed = true;
+    if (!(navigator.mediaDevices && navigator.mediaDevices.getUserMedia)) return;
+    navigator.mediaDevices.getUserMedia({ audio: true }).then((stream) => {
+      stream.getTracks().forEach((t) => t.stop());        // 권한만 받고 바로 놓는다
+      state.micReady = true;
+    }).catch(() => {
+      state.micReady = false;                             // 거부해도 통화는 텍스트로 계속된다
+    });
+  }
+
   async function startCall() {
     // 연속으로 눌러도 통화는 하나만. (가드가 없으면 누를 때마다 새 세션이 생기고
     //  서버 호출도 그만큼 늘어난다 — 발표 중에 두 번 누르는 일은 흔하다.)
@@ -537,6 +554,11 @@
     stopReconnect();
     resetHandoff();
     resetEndButton();
+    // 이 통화의 입력 경로를 지금 정하고 끝까지 유지한다.
+    state.pathLocked = null;
+    state.pathLocked = resolveInputPath();
+    applyInputPath();
+    warmUpMic();
     el.callee.classList.remove('is-handoff');
     el.callee.querySelector('.callee-meta strong').textContent = '경상북도 민원실';
     setScreen('call');
@@ -549,8 +571,8 @@
     el.hint.classList.remove('alert');
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
     state.slots = {}; state.turns = []; state.done = false; state.ended = false;
-    state.callerBubbles = []; state.slotRevisions = []; state.pending = [];
-    if (el.hwQueue) el.hwQueue.innerHTML = '';
+    state.callerBubbles = []; state.slotRevisions = [];
+    if (state.finishTimer) { clearTimeout(state.finishTimer); state.finishTimer = 0; }
     state.safety = []; state.hurry = 0; state.safetyConfirmed = false; state.urgency = null;
     el.safetyBar.hidden = true;
     el.safetyBar.classList.remove('again', 'confirmed');
@@ -623,7 +645,7 @@
     let callerBubble = o.callerBubble || null;
     if (!callerBubble && !o.silentCaller) {
       callerBubble = payload.audio_b64
-        ? addBubble('caller', '(음성 전송 중…)', '(음성 전송 중…)', { pending: true, source: 'voice-server' })
+        ? addBubble('caller', '받아쓰는 중…', '받아쓰는 중…', { pending: true, source: 'voice-server' })
         : addBubble('caller', payload.text, payload.text, { source: o.source });
     }
     if (callerBubble) state.callerBubbles.push(callerBubble);   // 종료 후 서버 전사로 채운다
@@ -708,15 +730,13 @@
       if (r.done) {
         state.done = true;
         el.btnEnd.classList.add('ready');
-        el.hint.textContent = '필요한 내용은 다 들었니더. 아래 버튼을 누르면 접수됩니더.';
-        // 응급이면 같은 안내를 반복하며 붙잡아 두지 않는다. 바로 접수하고 담당자에게 넘긴다.
-        // (119 버튼은 화면에 고정돼 있고, 상태는 글자로 계속 보인다)
-        if ((state.safety || []).length && !state.ended) {
-          say('접수하고 있습니더');
-          el.hint.textContent = '접수하고 담당자한테 바로 넘길게예.';
-          setTimeout(() => { if (!state.ended) endCall(); },
-                     CFG.EMERGENCY_AUTO_END_MS == null ? 2000 : CFG.EMERGENCY_AUTO_END_MS);
-        }
+        el.hint.textContent = '접수하고 있습니더. 잠시만예.';
+        // 말과 화면이 어긋나면 어르신은 접수가 됐는지 모른다.
+        // 마무리 멘트가 끝나면 접수완료 화면으로 넘어간다(음성이면 재생이 끝난 뒤).
+        const urgent = (state.safety || []).length > 0;
+        if (urgent) say('접수하고 있습니더');
+        autoFinish(urgent ? (CFG.EMERGENCY_AUTO_END_MS == null ? 2000 : CFG.EMERGENCY_AUTO_END_MS)
+                          : (CFG.DONE_AUTO_END_MS == null ? 1200 : CFG.DONE_AUTO_END_MS));
       }
       setBusy(false);
     } catch (e) {
@@ -739,8 +759,30 @@
     sendTurn({ text: t });
   }
 
+  /* 마무리 멘트를 다 말한 뒤 접수완료 화면으로 넘어간다.
+     음성이 재생 중이면 그것이 끝날 때까지 기다린다(최대 6초). 말이 끝나기 전에
+     화면이 바뀌면 어르신이 안내를 놓친다. */
+  function autoFinish(delayMs) {
+    if (state.finishTimer) return;                 // 이미 예약돼 있으면 두 번 걸지 않는다
+    const go = () => {
+      state.finishTimer = 0;
+      if (!state.ended && state.sessionId) endCall();
+    };
+    const a = el.audio;
+    const playing = a && a.src && !a.paused && !a.ended && a.duration > 0;
+    if (playing) {
+      const done = () => { a.removeEventListener('ended', done); clearTimeout(state.finishTimer);
+                           state.finishTimer = setTimeout(go, delayMs); };
+      a.addEventListener('ended', done);
+      state.finishTimer = setTimeout(go, 6000);    // 재생이 안 끝나도 붙잡지 않는다
+      return;
+    }
+    state.finishTimer = setTimeout(go, delayMs);
+  }
+
   async function endCall() {
     if (!state.sessionId || state.ended) return;
+    if (state.finishTimer) { clearTimeout(state.finishTimer); state.finishTimer = 0; }
     stopReconnect();
     if (state.recording) stopRecording(true);
     if (state.recognizing) { window.VoissoSpeech.abort(); resetMicUI(); }
@@ -989,29 +1031,6 @@
   }
 
   // 민원카드를 보여준 뒤에도 화면을 닫지 않고 담당자 연결을 기다린다.
-  /* 담당자가 붙기 전에 한 말은 큐에 쌓았다가, 연결되는 순간 그대로 전달한다. */
-  function queueForOfficer(text) {
-    const t = String(text || '').trim();
-    if (!t) return;
-    state.pending = (state.pending || []).concat([t]);
-    renderQueue();
-    toast('적어 뒀습니더. 담당자가 연결되면 바로 전해 드릴게예.', 3200);
-  }
-
-  function renderQueue() {
-    const q = state.pending || [];
-    el.hwQueue.innerHTML = q.map((t) => '<li>' + esc(t) + '</li>').join('');
-  }
-
-  async function flushQueue() {
-    const q = (state.pending || []).slice();
-    state.pending = [];
-    renderQueue();
-    for (const t of q) {
-      try { await API.handoffSay(state.handoff.id, t); } catch (e) { /* 다음 것 계속 */ }
-    }
-    return q.length;
-  }
 
   function stopWaitClock() {
     if (state.waitTimer) { clearInterval(state.waitTimer); state.waitTimer = 0; }
@@ -1099,7 +1118,9 @@
     // 핸드오프 메시지 API 는 text 만 받는다. 서버 STT(오디오) 경로는 여기서 쓸 수 없다.
     if (state.inputPath === 'server') {
       state.sttForced = (window.VoissoSpeech && window.VoissoSpeech.supported()) ? 'web' : 'text';
+      state.pathLocked = state.sttForced;
       applyInputPath();
+      addNotice('담당자와는 글이나 브라우저 음성인식으로 이야기합니더.');
     }
 
     resetEndButton();
@@ -1111,14 +1132,6 @@
     setBusy(false);
     toast('담당자가 연결됐습니더.', 4000);
     renderHandoff(h);
-    // 기다리는 동안 적어 둔 말씀을 그대로 전달한다.
-    if ((state.pending || []).length) {
-      flushQueue().then((n) => {
-        if (!n) return;
-        addNotice('기다리시는 동안 적어 두신 말씀 ' + n + '건을 담당자한테 전했습니더.');
-        API.handoffGet(state.handoff.id).then(renderHandoff).catch(() => {});
-      });
-    }
   }
 
   function renderHandoff(h) {
@@ -1186,6 +1199,8 @@
 
   function goIdle() {
     state.starting = false;
+    state.pathLocked = null;
+    state.micWarmed = false;
     stopReconnect();
     resetHandoff();
     resetEndButton();
@@ -1332,7 +1347,7 @@
 
     el.card.innerHTML =
       '<div class="card-top">' +
-        '<div class="card-no">민원 접수번호 ' + esc(c.id || '----') + '</div>' +
+        '<div class="card-no">민원 접수번호<b>' + esc(c.id || '----') + '</b></div>' +
         '<h2 class="card-summary">' + esc(c.summary || '민원 요약 없음') + '</h2>' +
         '<div class="card-tags">' +
           (c.category ? '<span class="tag">' + esc(c.category) + '</span>' : '') +
@@ -1480,16 +1495,20 @@
 
   function resolveInputPath() {
     if (state.sttForced) return state.sttForced;          // 화면에서 직접 고른 값이 최우선
+    // 통화가 시작되면 경로를 고정한다. 한 통화가 중간에 다른 경로로 바뀌면
+    // 첫 턴만 자리표시자가 뜨고 두 번째부터 실시간으로 보이는 식으로 어긋난다.
+    if (state.pathLocked) return state.pathLocked;
     const forced = String(QS.get('stt') || CFG.STT_MODE || 'auto').toLowerCase();
     const web = window.VoissoSpeech && window.VoissoSpeech.supported();
     if (forced === 'text') return 'text';
     if (forced === 'web') return web ? 'web' : 'text';
     if (forced === 'server') return mediaRecorderSupported() ? 'server' : 'text';
-    // auto — 서버 STT 가 살아 있으면 그것이 기본이다.
-    // 근거: 서버 STT 는 사투리 어미를 그대로 받아쓴다(실측). 브라우저 음성인식은 표준어로
-    // 바꿔 적는 경향이 있어, 입력 단계에서 사투리가 지워지면 방언 레이어가 할 일이 없어진다.
-    if (serverSttAvailable() && mediaRecorderSupported()) return 'server';
+    // auto — 브라우저 음성인식이 기본이다.
+    // 서버 STT 가 사투리 표면형은 더 잘 살리지만, 발화 종료 후 업로드라 **중간 결과가 없다.**
+    // 말하는 동안 글자가 채워지는 것이 사용자가 원하는 동작이고 데모에서도 그게 더 중요하다.
+    // 서버 STT 는 미지원 브라우저이거나 ?stt=server 로 명시할 때만 쓴다.
     if (web) return 'web';
+    if (serverSttAvailable() && mediaRecorderSupported()) return 'server';
     return 'text';
   }
 
@@ -1545,6 +1564,22 @@
     return { text: r.text, top1: top1, changed: r.changed, scores: r.scores };
   }
 
+  /* 통화 중 경로 변경은 '실패했을 때'만 허용한다.
+     조용히 바꾸면 사용자는 화면이 왜 달라졌는지 알 수 없다 — 이유를 반드시 남긴다. */
+  function fallbackPath(to, reason) {
+    if (state.pathLocked === to) return;
+    state.pathLocked = to;
+    state.sttForced = to;
+    applyInputPath();
+    const how = to === 'server' ? '녹음해서 보내는 방식으로 바꿨습니더.'
+              : to === 'web'    ? '브라우저 음성인식으로 바꿨습니더.'
+              :                   '아래 칸에 글로 적어 주이소.';
+    addNotice(reason + ' ' + how);
+    el.hint.classList.add('alert');
+    el.hint.textContent = reason + ' ' + how;
+    toast(reason, 4500);
+  }
+
   function startSpeech() {
     liveBubble = null;
     window.VoissoSpeech.start({
@@ -1587,10 +1622,18 @@
       onError: (msg, code) => {
         resetMicUI();
         if (liveBubble) { liveBubble.remove(); liveBubble = null; }
+        // 브라우저 음성인식이 이 기기에서 못 쓰는 상태 — 여기서만 경로를 바꾼다.
+        if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'network') {
+          const to = (code !== 'not-allowed' && serverSttAvailable() && mediaRecorderSupported())
+            ? 'server' : 'text';
+          fallbackPath(to, code === 'not-allowed'
+            ? '마이크를 쓸 수 없어서'
+            : '브라우저 음성인식이 지금 안 돼서');
+          return;
+        }
         if (!msg) return;
         el.hint.classList.add('alert');
         el.hint.textContent = msg;
-        if (code === 'not-allowed' || code === 'service-not-allowed' || code === 'network') toast(msg, 5000);
       },
       onEnd: (delivered) => {
         resetMicUI();
@@ -1602,7 +1645,7 @@
   function stopSpeech() { window.VoissoSpeech.stop(); }
 
   /* ── 2) 서버 STT (MediaRecorder → audio_b64) ────────────── */
-  let rec = null, chunks = [], audioCtx = null, analyser = null, rafId = 0, micStream = null;
+  let rec = null, chunks = [], audioCtx = null, analyser = null, rafId = 0, micStream = null, recTimer = 0;
 
   function pickMime() {
     const cands = ['audio/webm;codecs=opus', 'audio/webm', 'audio/ogg;codecs=opus', 'audio/mp4'];
@@ -1616,9 +1659,7 @@
     try {
       micStream = await navigator.mediaDevices.getUserMedia({ audio: true });
     } catch (e) {
-      el.hint.classList.add('alert');
-      el.hint.textContent = '마이크를 쓸 수 없니더. 아래 칸에 글로 적어도 됩니더.';
-      toast('마이크 권한이 없습니다. 텍스트로 진행하세요.', 4500);
+      fallbackPath('text', '마이크를 쓸 수 없어서');
       return;
     }
     const mime = pickMime();
@@ -1635,6 +1676,21 @@
     if (el.micLabel) el.micLabel.textContent = '다 말했어예';
     say('듣고 있습니더', 'listening');
     meter(micStream);
+
+    // 서버 STT 는 발화가 끝나야 받아쓴다 — 중간 결과가 원리적으로 없다.
+    // 그래도 화면이 멈춘 것처럼 보이면 안 되므로 경과 시간을 세어 보여준다.
+    liveBubble = addBubble('caller', '', '', { source: 'voice-server', listening: true, pending: true });
+    const t0 = Date.now();
+    const dot = liveBubble.node.querySelector('.bubble-dialect');
+    const tick = () => {
+      if (!state.recording || !liveBubble) return;
+      const sec = Math.max(1, Math.round((Date.now() - t0) / 1000));
+      // 말풍선(시연 모드에서 보이는 곳)에만 초를 센다.
+      // 어르신 모드는 마이크 버튼의 녹음 표시와 '듣고 있습니더' 하나로 충분하다 — 숫자는 과하다.
+      if (dot) dot.textContent = '말씀하시는 중… ' + sec + '초';
+      recTimer = setTimeout(tick, 1000);
+    };
+    tick();
   }
 
   function stopRecording(discard) {
@@ -1649,15 +1705,18 @@
 
   function onRecStop() {
     const discard = rec && rec._discard;
+    if (recTimer) { clearTimeout(recTimer); recTimer = 0; }
     if (micStream) { micStream.getTracks().forEach((t) => t.stop()); micStream = null; }
     const blob = new Blob(chunks, { type: (rec && rec.mimeType) || 'audio/webm' });
     rec = null; chunks = [];
     el.hint.textContent = '마이크를 눌러 말하거나, 글로 적어도 됩니더.';
-    if (discard || !blob.size) return;
+    const b = liveBubble; liveBubble = null;
+    if (discard || !blob.size) { if (b) b.remove(); return; }
+    if (b) b.live('받아쓰는 중…');          // 업로드 뒤에는 상태를 바꿔 준다
     const fr = new FileReader();
     fr.onload = () => {
       const b64 = String(fr.result).split(',')[1] || '';
-      sendTurn({ audio_b64: b64 });
+      sendTurn({ audio_b64: b64 }, { callerBubble: b, source: 'voice-server' });
     };
     fr.readAsDataURL(blob);
   }
@@ -1723,6 +1782,7 @@
     const opts = availablePaths();
     const i = opts.indexOf(state.inputPath);
     state.sttForced = opts[(i + 1) % opts.length];
+    state.pathLocked = state.sttForced;          // 사람이 고른 값이 이 통화의 경로가 된다
     const P = applyInputPath();
     el.hint.classList.remove('alert');
     el.hint.textContent = P.long;
@@ -1731,15 +1791,6 @@
   el.btnEnd.addEventListener('click', () => (btnEndAction ? btnEndAction() : endCall()));
   el.btnAnswer.addEventListener('click', answerCallback);
 
-  function hwSubmit() {
-    const t = el.hwIn.value.trim();
-    if (!t) { el.hwIn.focus(); return; }
-    el.hwIn.value = '';
-    if (state.handoff.open) { sendHandoff(t); return; }   // 이미 연결됐으면 바로 보낸다
-    queueForOfficer(t);
-  }
-  el.btnHwSend.addEventListener('click', hwSubmit);
-  el.hwIn.addEventListener('keydown', (e) => { if (e.key === 'Enter') { e.preventDefault(); hwSubmit(); } });
 
   /* 시연 트리거 — 대시보드를 따로 열지 않고 한 화면에서 6단계를 흐르게 한다.
      어르신 모드에서는 CSS 로 숨겨져 있고, 시연 모드에서만 보인다. */

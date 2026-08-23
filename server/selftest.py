@@ -17,6 +17,8 @@
   9. 응급에서 마무리 질문 루프에 빠지지 않는가 (실사용 안전 결함)
  10. 119 연결을 **말로** 묻고 대답을 알아듣는가
  11. 응답이 자막 길이 안에 들어가는가 (일반 50자 / 응급 30자)
+ 12. 긴급번호가 낱자로 발음되는가 · 화면 텍스트는 그대로인가
+ 13. 슬롯 질문 순서가 고정돼 있는가
 """
 
 from __future__ import annotations
@@ -402,6 +404,73 @@ def check_reply_length() -> None:
     check("줄인 원문을 보관한다", session.last_reply_full == long_text)
 
 
+def check_pronunciation() -> None:
+    """119 는 화면에 "119", 발화는 "일일구". 변환은 TTS 직전에만 건다."""
+    from voisso.voice.pronounce import for_speech
+
+    print("\n발음 변환 (TTS 직전)")
+    check("119 -> 일일구", for_speech("119에 연결할까요?") == "일일구에 연결할까요?")
+    check("112 -> 일일이", "일일이" in for_speech("112 단추를 눌러 주세요"))
+    check(
+        "전화번호는 낱자로 끊어 읽는다",
+        for_speech("010-1234-5678 맞나요?").startswith("공일공 일이삼사 오육칠팔"),
+        for_speech("010-1234-5678 맞나요?"),
+    )
+    check(
+        "대표번호는 이름으로 읽는다",
+        "경상북도청 대표번호" in for_speech("1522-0120으로 전화 주세요"),
+        for_speech("1522-0120으로 전화 주세요"),
+    )
+    # 이름이 이미 있으면 같은 말이 두 번 나오면 안 된다.
+    dup = for_speech("경상북도청 대표번호 1522-0120 입니다")
+    check("대표번호를 두 번 읽지 않는다", dup.count("대표번호") == 1, dup)
+    check("일반 숫자는 건드리지 않는다", for_speech("접수번호는 0175번입니다") == "접수번호는 0175번입니다")
+
+    # 전화 통화에는 화면이 없다. 시연 흔적이 대사에 새면 안 된다.
+    from voisso.agent.session import HANDOFF_CLOSING
+
+    check("종료 멘트에 화면 언급이 없다", "화면" not in HANDOFF_CLOSING, HANDOFF_CLOSING)
+    check("종료 멘트가 다시 연락을 약속한다", "연락" in HANDOFF_CLOSING, HANDOFF_CLOSING)
+
+    # 화면·저장 텍스트에는 절대 섞이면 안 된다.
+    session = ConversationSession()
+    session.greet()
+    reply = session.turn(text="집에 물이 들어와요")["reply_text"]
+    check("화면 텍스트는 숫자 그대로다", "119" in reply and "일일구" not in reply, reply[:40])
+
+
+def check_slot_order() -> None:
+    """시연에서는 예측 가능성이 유연함보다 중요하다."""
+    from voisso.agent.session import SLOT_ORDER_FIXED, _SLOT_ASK_HINTS
+
+    print("\n슬롯 질문 순서")
+    check("기본이 고정 순서다", SLOT_ORDER_FIXED is True)
+
+    def asked(reply: str) -> str:
+        for slot in ("contact", "when", "where", "what"):
+            if any(hint in reply for hint in _SLOT_ASK_HINTS[slot]):
+                return slot
+        return "-"
+
+    orders = []
+    for _ in range(3):
+        session = ConversationSession()
+        session.greet()
+        seq = []
+        for line in ("집 앞에 물이 안 빠져예", "안동시 옥동입니더", "장마철부터예"):
+            seq.append(asked(session.turn(text=line)["reply_text"]))
+        orders.append(tuple(seq))
+    check("3회 모두 같은 순서로 물었다", len(set(orders)) == 1, str(orders[0]))
+    check("순서가 where→when→contact 다", orders[0] == ("where", "when", "contact"), str(orders[0]))
+
+    # 순서를 건너뛴 입력도 그대로 받는다 (묻는 순서만 고정, 받는 것은 유연)
+    skip = ConversationSession()
+    skip.greet()
+    skip.turn(text="안동 옥동인데 물이 안 빠져예")
+    filled = [k for k in ("what", "where") if skip.slots.is_filled(k)]
+    check("한 문장에 두 슬롯이 채워진다", filled == ["what", "where"], str(filled))
+
+
 def main() -> int:
     print("Voisso 자체 점검 — 키 0개 텍스트 모드\n")
     engine = engine_status()
@@ -428,6 +497,8 @@ def main() -> int:
     check_emergency_mode()
     check_safety_offer()
     check_reply_length()
+    check_pronunciation()
+    check_slot_order()
 
     print("\n검증")
 

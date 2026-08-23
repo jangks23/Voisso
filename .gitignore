@@ -62,3 +62,10 @@ mcp_server/fixtures/gb_departments.json
 # "스크레이퍼를 공개하고 데이터는 이용자가 생성한다"는 방침을 일관되게 지킨다.
 data/andong_departments.json
 data/andong_departments.csv
+
+# ── 내부 문서 (공개하지 않는다) ────────────────────────────
+# 대회 요구사항 원문, 팀 내부 로드맵, 제출문 초안.
+# 저장소를 보는 사람에게 필요한 설명은 README.md 와 ABOUT.md 에 있다.
+CHALLENGE_GOAL.md
+GOAL.md
+SUBMISSION.md

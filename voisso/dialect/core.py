@@ -447,3 +447,71 @@ def short_form_table() -> list[dict[str, str]]:
 def short_form_limits() -> dict[str, int]:
     """자막 길이 상한."""
     return load_lexicon().get("short_form_limits", {})
+
+# --------------------------------------------------------------------------- #
+# 숫자 낱자 읽기 (TTS 입력용)
+# --------------------------------------------------------------------------- #
+
+#: 전화번호·문서번호로 볼 수 있는 하이픈 묶음. 02-123-4567 부터 010-1234-5678 까지.
+#: 뒤에 단위가 붙으면 수량 범위다 — "1000-2000원"을 "일공공공 이공공공원"으로 읽으면 안 된다.
+_PHONE_RE = re.compile(
+    r"(?<![\d-])(\d{2,4})-(\d{3,4})(?:-(\d{4}))?(?![\d-])(?![원명개건회톤км])"
+)
+
+
+def digit_names() -> dict[str, str]:
+    """숫자 → 낱자 한글. 전화 문맥 기준(0=공, 6=육)."""
+    return load_lexicon().get("digit_names", {})
+
+
+def number_speech() -> list[dict[str, str]]:
+    """통째로 갈아끼우는 고정 번호 표 (119 → 일일구 등)."""
+    return load_lexicon().get("number_speech", [])
+
+
+def _spell(digits: str) -> str:
+    names = digit_names()
+    return "".join(names.get(ch, ch) for ch in digits)
+
+
+def for_tts(text: str) -> str:
+    """화면 표시용 문장을 **TTS 입력용**으로 바꾼다. 숫자를 낱자 한글로 적는다.
+
+    TTS 가 "119"를 "백십구"로 읽으면 어르신이 못 알아듣는다. 한국어 TTS 는 맨숫자를
+    한자어 수사로 읽는 것이 기본이고, 낱자 읽기는 엔진마다 판정이 다르다.
+    **한글로 적으면 휴리스틱이 개입할 자리가 없다.**
+
+    화면에는 숫자를 그대로 두고 **TTS 에 넣기 직전에만** 부른다::
+
+        display = "위험하시믄 119 눌러 주이소."          # 자막
+        speech  = for_tts(display)                      # "위험하시믄 일일구 눌러 주이소."
+
+    바꾸는 것은 두 가지뿐이다.
+
+    1. 고정 번호 (119 · 112 · 1522-0120 …) — 표에 있는 것
+    2. 하이픈이 든 전화번호 (010-1234-5678 → "공일공 일이삼사 오륙칠팔")
+
+    **날짜·개수·시각은 건드리지 않는다.** "3일 이내", "14일", "오전 9시", "2주" 는
+    한자어 수사로 읽는 것이 맞다. 낱자로 바꾸면 오히려 못 알아듣는다.
+
+    ⚠️ 이 표기는 **실제 음성 생성 없이** 정했다(계약서 5-D). 근거는 한국어 수사 읽기
+    규칙이며, 실제 확인은 촬영 전에 해야 한다.
+    """
+    if not text or not text.strip():
+        return text
+    try:
+        result = text
+        # ① 고정 번호 — 긴 것부터 (1522-0120 이 120 에 잡아먹히면 안 된다)
+        for item in sorted(number_speech(), key=lambda i: len(i["written"]), reverse=True):
+            written = item["written"]
+            if written in result:
+                result = re.sub(rf"(?<![\d-]){re.escape(written)}(?![\d-])",
+                                item["spoken"], result)
+        # ② 하이픈 전화번호 — 묶음마다 공백으로 끊는다
+        def phone(match: re.Match[str]) -> str:
+            groups = [g for g in match.groups() if g]
+            return " ".join(_spell(g) for g in groups)
+        return _PHONE_RE.sub(phone, result)
+    except Exception:  # noqa: BLE001 - 이 레이어가 통화를 끊게 두지 않는다
+        log.exception("숫자 낱자 변환 실패 — 원문 유지")
+        return text

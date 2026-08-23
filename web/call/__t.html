@@ -204,6 +204,38 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script>
+/* 가짜 SpeechRecognition — 실제 마이크 없이 중간결과/최종결과를 만들어 준다 */
+(function () {
+  const LINES = ['비가 마이 와가',  '비가 마이 와가 도로가', '비가 마이 와가 도로가 다 잠깄어예'];
+  function SR() { this.lang=''; this.continuous=false; this.interimResults=false; this.maxAlternatives=1; }
+  SR.prototype.start = function () {
+    const self = this;
+    setTimeout(() => { self.onstart && self.onstart(new Event('start')); }, 20);
+    LINES.forEach((t, i) => setTimeout(() => {
+      const last = i === LINES.length - 1;
+      const alt = [{ transcript: t, confidence: 0.9 }];
+      const res = Object.assign([alt[0]], { isFinal: last, length: 1, 0: alt[0] });
+      const results = Object.assign([res], { length: 1, 0: res });
+      self.onresult && self.onresult({ resultIndex: 0, results: results });
+      window.__SEEN = window.__SEEN || [];
+      window.__SEEN.push((last ? 'final:' : 'interim:') + t);
+    }, 300 + i * 400));
+  };
+  SR.prototype.stop = function () { setTimeout(() => this.onend && this.onend(new Event('end')), 30); };
+  SR.prototype.abort = SR.prototype.stop;
+  window.webkitSpeechRecognition = SR;
+  window.SpeechRecognition = SR;
+  /* 화면에 실제로 중간결과가 그려지는지 감시한다 (코드가 아니라 DOM 을 본다) */
+  window.__SNAP = [];
+  new MutationObserver(() => {
+    const cap = document.getElementById('capCallerText');
+    const b = document.querySelector('#transcript .bubble.caller:last-child .bubble-dialect');
+    window.__SNAP.push({ t: Date.now(), cap: cap ? cap.textContent : '', bub: b ? b.textContent : '' });
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+})();
+
+</script>
 <script src="config.js?v=50"></script>
 <script src="dialect-hints.js?v=50"></script>
 <script src="mock-api.js?v=50"></script>
