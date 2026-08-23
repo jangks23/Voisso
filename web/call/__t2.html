@@ -204,6 +204,57 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script>
+/* 권한이 아직 없는 상태: 음성인식이 not-allowed 로 실패한다 */
+(function () {
+  window.__GUM = [];
+  const md = navigator.mediaDevices || (navigator.mediaDevices = {});
+  md.getUserMedia = function () {
+    window.__GUM.push(Date.now());
+    return Promise.reject(new DOMException('Permission denied', 'NotAllowedError'));
+  };
+  function SR() {}
+  SR.prototype.start = function () {
+    setTimeout(() => {
+      this.onerror && this.onerror({ error: 'not-allowed' });
+      this.onend && this.onend(new Event('end'));
+    }, 100);
+  };
+  SR.prototype.stop = SR.prototype.abort = function () {};
+  window.webkitSpeechRecognition = SR; window.SpeechRecognition = SR;
+})();
+(function () {
+  const out = (o) => { const d = document.createElement('pre'); d.id = 'RESULT';
+    d.textContent = JSON.stringify(o, null, 1); document.body.appendChild(d); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  const chip = () => document.getElementById('pathChip').textContent.trim();
+  window.addEventListener('load', async () => {
+    await sleep(300);
+    document.getElementById('btnCall').click();
+    await sleep(600);
+    const warmedAtStart = window.__GUM.length;               // 통화 시작만으로 권한을 물었는가
+    await sleep(1900);
+    const pathAfterStart = chip();
+    document.getElementById('btnMic').click();               // 첫 턴 — 실패할 것이다
+    await sleep(1200);
+    const notice = [...document.querySelectorAll('#transcript .notice-line')]
+      .map((n) => n.textContent.trim());
+    const afterFail = chip();
+    document.getElementById('btnMic').click();               // 두 번째 눌러도 경로가 또 바뀌면 안 된다
+    await sleep(800);
+    out({
+      gum_called_at_call_start: warmedAtStart,
+      path_after_start: pathAfterStart,
+      path_after_failure: afterFail,
+      path_stays: chip() === afterFail,
+      hint: document.getElementById('composerHint').textContent.trim(),
+      notices: notice,
+      text_input_usable: !document.getElementById('textIn').disabled,
+    });
+  });
+})();
+
+</script>
 <script src="config.js?v=51"></script>
 <script src="dialect-hints.js?v=51"></script>
 <script src="mock-api.js?v=51"></script>

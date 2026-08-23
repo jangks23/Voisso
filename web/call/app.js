@@ -43,6 +43,7 @@
     callerBubbles: [],        // 통화 중 만든 내 말풍선들 (종료 후 서버 전사로 채운다)
     sttForced: null,          // 사용자가 화면에서 직접 고른 경로
     pathLocked: null,         // 이 통화의 입력 경로 (통화 중에는 바뀌지 않는다)
+    pathReason: null,         // 경로가 바뀌었다면 그 이유 (화면에 계속 보여준다)
     micWarmed: false,         // 통화 시작 때 마이크 권한을 미리 물었는가
     micReady: false,          // 그 결과 (거부여도 통화는 계속된다)
   };
@@ -1200,6 +1201,7 @@
   function goIdle() {
     state.starting = false;
     state.pathLocked = null;
+    state.pathReason = null;
     state.micWarmed = false;
     stopReconnect();
     resetHandoff();
@@ -1570,6 +1572,7 @@
     if (state.pathLocked === to) return;
     state.pathLocked = to;
     state.sttForced = to;
+    state.pathReason = reason;                 // 왜 바뀌었는지 계속 붙들고 있는다
     applyInputPath();
     const how = to === 'server' ? '녹음해서 보내는 방식으로 바꿨습니더.'
               : to === 'web'    ? '브라우저 음성인식으로 바꿨습니더.'
@@ -1754,8 +1757,11 @@
     if (state.busy) return;
     if (state.inputPath === 'web')    return state.recognizing ? stopSpeech() : startSpeech();
     if (state.inputPath === 'server') return state.recording ? stopRecording(false) : startRecording();
-    // 미지원 브라우저(Safari 등): 버튼을 숨기지 않고 안내한다
-    const msg = '이 브라우저는 음성 입력을 지원하지 않습니다. 아래에 입력해 주세요.';
+    // 음성이 안 되는 이유를 그대로 다시 말해 준다.
+    // 마이크가 거부돼서 텍스트로 내려온 사람에게 '브라우저 미지원'이라고 하면 거짓말이 된다.
+    const msg = state.pathReason
+      ? state.pathReason + ' 아래 칸에 글로 적어 주이소.'
+      : '이 브라우저는 음성 입력을 지원하지 않습니다. 아래에 입력해 주세요.';
     el.hint.classList.add('alert');
     el.hint.textContent = msg;
     toast(msg, 4500);

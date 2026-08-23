@@ -204,6 +204,55 @@
 <audio id="replyAudio" hidden></audio>
 <div class="toast" id="toast" role="status" aria-live="polite"></div>
 
+<script>
+/* 서버 STT 경로: 마이크와 MediaRecorder 를 가짜로 세워 녹음 표시만 본다 */
+(function () {
+  const md = navigator.mediaDevices || (navigator.mediaDevices = {});
+  md.getUserMedia = () => Promise.resolve({ getTracks: () => [{ stop() {} }] });
+  function MR(stream, opts) { this.mimeType = (opts && opts.mimeType) || 'audio/webm'; this.state = 'inactive'; }
+  MR.isTypeSupported = () => true;
+  MR.prototype.start = function () { this.state = 'recording'; };
+  MR.prototype.stop = function () {
+    this.state = 'inactive';
+    this.ondataavailable && this.ondataavailable({ data: new Blob(['x'.repeat(64)], { type: this.mimeType }) });
+    this.onstop && this.onstop();
+  };
+  window.MediaRecorder = MR;
+  window.__SNAP = [];
+  new MutationObserver(() => {
+    const b = document.querySelector('#transcript .bubble.caller:last-child .bubble-dialect');
+    const cap = document.getElementById('capCallerText');
+    if (b || cap) window.__SNAP.push((cap ? cap.textContent : '') + ' | ' + (b ? b.textContent : ''));
+  }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
+})();
+(function () {
+  const out = (o) => { const d = document.createElement('pre'); d.id = 'RESULT';
+    d.textContent = JSON.stringify(o, null, 1); document.body.appendChild(d); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  window.addEventListener('load', async () => {
+    await sleep(300);
+    document.getElementById('btnCall').click();
+    await sleep(2500);
+    const path = document.getElementById('pathChip').textContent.trim();
+    document.getElementById('btnMic').click();        // 녹음 시작
+    await sleep(3200);                                // 초가 올라가는 구간
+    const whileRec = (window.__SNAP || []).slice();
+    document.getElementById('btnMic').click();        // 녹음 끝 → 업로드
+    await sleep(400);
+    const afterStop = (window.__SNAP || []).slice(whileRec.length);
+    await sleep(2500);
+    out({
+      path: path,
+      counting: [...new Set(whileRec.filter((x) => /말씀하시는 중/.test(x)))],
+      after_upload: [...new Set(afterStop.filter((x) => /받아쓰는|중…/.test(x)))].slice(0, 3),
+      placeholder_gone: !document.body.textContent.includes('음성 전송 중'),
+      bubbles: [...document.querySelectorAll('#transcript .bubble')].map(
+        (b) => b.className.split(' ')[1] + ': ' + ((b.querySelector('.bubble-dialect')||{}).textContent||'')),
+    });
+  });
+})();
+
+</script>
 <script src="config.js?v=51"></script>
 <script src="dialect-hints.js?v=51"></script>
 <script src="mock-api.js?v=51"></script>

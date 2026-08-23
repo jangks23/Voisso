@@ -41,7 +41,7 @@ DATA_JSON = ROOT / "data" / "gb_departments.json"
 #: 합성한 어르신 발화를 재사용한다. 리허설을 돌 때마다 다시 합성하면 돈이 샌다.
 AUDIO_CACHE_DIR = ROOT / "data" / "rehearsal-cache"
 
-#: docs/DEMO_SCRIPT.md 와 server/selftest.py 가 쓰는 것과 같은 시나리오.
+#: server/selftest.py 가 쓰는 것과 같은 시나리오.
 #: 리허설이 실제 데모와 다른 문장을 쓰면 리허설의 의미가 없다.
 SCENARIO = [
     "집 앞에 물이 안 빠지고 자꾸 고이가꼬",

@@ -234,6 +234,34 @@
     window.__SNAP.push({ t: Date.now(), cap: cap ? cap.textContent : '', bub: b ? b.textContent : '' });
   }).observe(document.documentElement, { childList: true, subtree: true, characterData: true });
 })();
+/* 통화를 시작하고 첫 턴에 마이크를 눌러, 실시간 전사가 화면에 나타나는지 본다 */
+(function () {
+  const out = (o) => { const d = document.createElement('pre'); d.id = 'RESULT';
+    d.textContent = JSON.stringify(o, null, 1); document.body.appendChild(d); };
+  const sleep = (ms) => new Promise((r) => setTimeout(r, ms));
+  window.addEventListener('load', async () => {
+    await sleep(300);
+    const chip = () => document.getElementById('pathChip').textContent.trim();
+    const path0 = chip();
+    document.getElementById('btnCall').click();
+    await sleep(2500);
+    const path1 = chip();
+    document.getElementById('btnMic').click();           // ← 첫 턴
+    await sleep(1400);
+    const mid = (window.__SNAP || []).map((s) => s.cap + ' | ' + s.bub);
+    const live = mid.filter((x) => /비가 마이 와가/.test(x));
+    await sleep(3000);
+    out({
+      path_before_call: path0, path_after_call: path1, path_after_turn: chip(),
+      seen_events: window.__SEEN || [],
+      first_turn_live_shown: live.length > 0,
+      live_sample: live.slice(0, 6),
+      bubbles: [...document.querySelectorAll('#transcript .bubble')].map(
+        (b) => b.className.split(' ')[1] + ': ' + (b.querySelector('.bubble-dialect')||{}).textContent),
+      hint: document.getElementById('composerHint').textContent.trim(),
+    });
+  });
+})();
 
 </script>
 <script src="config.js?v=50"></script>
